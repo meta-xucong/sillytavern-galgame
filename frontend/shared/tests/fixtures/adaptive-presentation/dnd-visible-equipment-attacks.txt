@@ -1,0 +1,28 @@
+**Equipment**
+Greatsword
+Scale mail armor (14 AC)
+Explorer's pack
+Backpack
+Dagger
+Mysterious black token
+
+**Attacks**
+Greatsword: 2d6 slashing damage
+Longbow: 1d8 piercing damage (range 150/600)
+Dagger
+
+**Weapons/shield**
+Rusty shortsword: 1d4 piercing damage
+light
+thrown 20/60
+
+**Inventory**
+light
+thrown 30/90
+Unknown broken gear shard
+
+**Status**
+HP: 12/12
+AC: 15
+
+Andrei notices a sword-shaped shadow in the rain, but no new weapon is listed here.

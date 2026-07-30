@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-label="Summer classroom title scene">
+  <defs>
+    <linearGradient id="sky" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#8ec7d2"/>
+      <stop offset="0.55" stop-color="#f2b487"/>
+      <stop offset="1" stop-color="#4f5375"/>
+    </linearGradient>
+    <linearGradient id="floor" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0" stop-color="#574958"/>
+      <stop offset="1" stop-color="#25384b"/>
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="900" fill="#18202e"/>
+  <rect x="0" y="0" width="1600" height="520" fill="url(#sky)"/>
+  <rect x="0" y="520" width="1600" height="380" fill="url(#floor)"/>
+  <rect x="740" y="80" width="720" height="430" fill="#f8efe0" opacity=".18"/>
+  <g opacity=".78">
+    <rect x="780" y="120" width="190" height="340" fill="#d9f4ff" opacity=".58"/>
+    <rect x="1000" y="120" width="190" height="340" fill="#d9f4ff" opacity=".58"/>
+    <rect x="1220" y="120" width="190" height="340" fill="#d9f4ff" opacity=".58"/>
+    <rect x="755" y="106" width="680" height="20" fill="#fbf7ed"/>
+    <rect x="755" y="460" width="680" height="24" fill="#c69f7c"/>
+    <rect x="975" y="106" width="16" height="378" fill="#fbf7ed"/>
+    <rect x="1195" y="106" width="16" height="378" fill="#fbf7ed"/>
+  </g>
+  <g opacity=".36" fill="#faf0d4">
+    <circle cx="1292" cy="185" r="78"/>
+    <path d="M1014 214c96 44 189 45 276 0 80 58 156 70 228 35v264H1014z"/>
+  </g>
+  <g opacity=".86">
+    <path d="M870 580h350l82 210H760z" fill="#31313d"/>
+    <path d="M910 610h270l42 106H872z" fill="#566174"/>
+    <rect x="410" y="610" width="240" height="44" rx="4" fill="#345065"/>
+    <rect x="426" y="654" width="22" height="110" fill="#223443"/>
+    <rect x="612" y="654" width="22" height="110" fill="#223443"/>
+    <rect x="480" y="560" width="220" height="34" rx="4" fill="#28394a"/>
+  </g>
+  <path d="M0 690c242-72 505-88 790-48 280 40 536 32 810-60v318H0z" fill="#151823" opacity=".72"/>
+  <g opacity=".58" fill="#f6d0c3">
+    <circle cx="700" cy="180" r="7"/>
+    <circle cx="665" cy="230" r="5"/>
+    <circle cx="730" cy="275" r="4"/>
+    <circle cx="625" cy="320" r="6"/>
+    <circle cx="1460" cy="330" r="5"/>
+    <circle cx="1505" cy="288" r="4"/>
+  </g>
+</svg>

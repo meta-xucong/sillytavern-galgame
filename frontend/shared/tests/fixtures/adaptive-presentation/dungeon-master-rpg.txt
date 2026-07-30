@@ -1,0 +1,20 @@
+(Fighter Campaign)
+
+哥布林从树丛里跳出来，短刀锈得像刚从下水道里捞出来。
+
+❤ HP: 12/12
+⛨ AC: 15
+🏅 Level: 1
+📈 XP: 0/300
+⚔: Weapons/shield: Greatsword (2d6 slashing)
+🛡 Armor: Scale mail armor
+💼 Inventory: Explorer's pack, rope, torch
+🤸‍♂️ Abilities: Great Weapon Fighting, Second Wind (available), Action Surge (available)
+💰 Gold: 50
+📃 Status: Healthy and optimistic
+
+可选行动：
+A. 主动冲向 Gribble，挥舞巨剑开战
+B. 尝试用威吓让哥布林退走
+C. 小心绕开绊线，寻找更好的站位
+

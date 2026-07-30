@@ -1,0 +1,328 @@
+import assert from 'node:assert/strict';
+import { DEMO_SCENARIO } from '../src/demo-scenario.js';
+import {
+    buildMediaJobRequest,
+    bindAdaptivePresentationProfileHashes,
+    createActiveRelease,
+    createAdaptivePresentationProfileHash,
+    createMediaIdempotencyKey,
+    findArcBinding,
+    getAdaptivePresentationProfileForArc,
+    getAssetUrl,
+    getDefaultArcId,
+    getManifestArcBindings,
+    listPlayableStoryEntries,
+    listStoredStorySummaries,
+    materializeManifestForArc,
+    summarizeSillyTavernBindings,
+    validateAdaptivePresentationProfiles,
+    validateArcBindings,
+    validateReleaseArcSelection,
+    validateScenarioManifest,
+    validateSillyTavernBindings,
+} from '../src/protocol.js';
+
+const validation = validateScenarioManifest(DEMO_SCENARIO);
+assert.equal(validation.valid, true, validation.errors.join('\n'));
+assert.equal(DEMO_SCENARIO.story.mode, 'sillytavern-live');
+assert.equal(Object.values(DEMO_SCENARIO.story.nodes).every((node) => (node.lines || []).length === 0), true);
+assert.equal(Object.values(DEMO_SCENARIO.story.nodes).every((node) => (node.choices || []).length === 0), true);
+assert.equal(validateAdaptivePresentationProfiles(DEMO_SCENARIO).ready, true);
+
+const adaptiveAuthorityProfileValidation = validateScenarioManifest({
+    ...DEMO_SCENARIO,
+    adaptivePresentationProfiles: {
+        bad: {
+            ...DEMO_SCENARIO.adaptivePresentationProfiles[DEMO_SCENARIO.arcs[0].presentationProfileId],
+            profileId: 'bad',
+            hp: 12,
+            inventory: ['local sword'],
+        },
+    },
+    arcs: [
+        {
+            ...DEMO_SCENARIO.arcs[0],
+            presentationProfileId: 'bad',
+        },
+    ],
+});
+assert.equal(adaptiveAuthorityProfileValidation.valid, false);
+assert.equal(adaptiveAuthorityProfileValidation.errors.some((error) => error.includes('profile.hp')), true);
+assert.equal(adaptiveAuthorityProfileValidation.errors.some((error) => error.includes('profile.inventory')), true);
+
+const missingAdaptiveProfileValidation = validateScenarioManifest({
+    ...DEMO_SCENARIO,
+    arcs: [
+        {
+            ...DEMO_SCENARIO.arcs[0],
+            presentationProfileId: 'missing-profile',
+        },
+    ],
+});
+assert.equal(missingAdaptiveProfileValidation.valid, false);
+assert.equal(missingAdaptiveProfileValidation.errors.some((error) => error.includes('missing adaptivePresentationProfiles entry')), true);
+
+const authoredFlowValidation = validateScenarioManifest({
+    ...DEMO_SCENARIO,
+    story: {
+        ...DEMO_SCENARIO.story,
+        nodes: {
+            live: {
+                ...DEMO_SCENARIO.story.nodes.live,
+                lines: [{ id: 'fixed_line', kind: 'narration', text: '前端固定台词' }],
+                choices: [{ id: 'fixed_choice', label: '固定选择', intent: 'fixed' }],
+                nextNodeId: 'next',
+            },
+        },
+    },
+});
+assert.equal(authoredFlowValidation.valid, false);
+assert.equal(authoredFlowValidation.errors.some((error) => error.includes('story text must come from original SillyTavern play')), true);
+assert.equal(authoredFlowValidation.errors.some((error) => error.includes('choices must be empty')), true);
+assert.equal(authoredFlowValidation.errors.some((error) => error.includes('nextNodeId is not allowed')), true);
+
+const parallelStateValidation = validateScenarioManifest({
+    ...DEMO_SCENARIO,
+    story: {
+        ...DEMO_SCENARIO.story,
+        initialVariables: { route: 'local' },
+        initialRelationships: { Assistant: 5 },
+        initialInventory: ['local_item'],
+    },
+});
+assert.equal(parallelStateValidation.valid, false);
+assert.equal(parallelStateValidation.errors.some((error) => error.includes('story.initialVariables is not allowed')), true);
+assert.equal(parallelStateValidation.errors.some((error) => error.includes('story.initialRelationships is not allowed')), true);
+assert.equal(parallelStateValidation.errors.some((error) => error.includes('story.initialInventory is not allowed')), true);
+
+const oldInteractionValidation = validateScenarioManifest({
+    ...DEMO_SCENARIO,
+    interaction: {
+        mode: 'free',
+        allowFreeInputAt: ['live'],
+    },
+    runtimeRequirements: {
+        provider: 'custom',
+    },
+    story: {
+        ...DEMO_SCENARIO.story,
+        nodes: {
+            live: {
+                ...DEMO_SCENARIO.story.nodes.live,
+                allowFreeInput: true,
+                freeInputPrompt: '说些什么',
+            },
+        },
+    },
+});
+assert.equal(oldInteractionValidation.valid, false);
+assert.equal(oldInteractionValidation.errors.some((error) => error.includes('interaction is not allowed')), true);
+assert.equal(oldInteractionValidation.errors.some((error) => error.includes('runtimeRequirements is not allowed')), true);
+assert.equal(oldInteractionValidation.errors.some((error) => error.includes('allowFreeInput is not allowed')), true);
+assert.equal(oldInteractionValidation.errors.some((error) => error.includes('freeInputPrompt is not allowed')), true);
+
+const bindingStatus = validateSillyTavernBindings(DEMO_SCENARIO);
+assert.equal(bindingStatus.ready, true, bindingStatus.errors.join('\n'));
+const bindingSummary = summarizeSillyTavernBindings(DEMO_SCENARIO);
+assert.equal(bindingSummary.characters[0].id, DEMO_SCENARIO.sillyTavernBindings.characters[0].id);
+assert.equal(bindingSummary.worldBooks[0].name, DEMO_SCENARIO.sillyTavernBindings.worldBooks[0].name);
+assert.equal(
+    bindingSummary.settings.find((setting) => setting.key === 'presetId').bound,
+    Boolean(DEMO_SCENARIO.sillyTavernBindings.presetId),
+);
+
+const missingBindingStatus = validateSillyTavernBindings({ ...DEMO_SCENARIO, arcs: undefined, sillyTavernBindings: undefined });
+assert.equal(missingBindingStatus.ready, false);
+assert.equal(missingBindingStatus.warnings.some((warning) => warning.includes('sillyTavernBindings')), true);
+
+const missingChatSeedValidation = validateScenarioManifest({
+    ...DEMO_SCENARIO,
+    arcs: undefined,
+    sillyTavernBindings: {
+        ...DEMO_SCENARIO.sillyTavernBindings,
+        chatSeedId: '',
+    },
+});
+assert.equal(missingChatSeedValidation.valid, false);
+assert.equal(missingChatSeedValidation.errors.some((error) => error.includes('chatSeedId')), true);
+
+const embeddedBodyStatus = validateSillyTavernBindings({
+    ...DEMO_SCENARIO,
+    arcs: undefined,
+    sillyTavernBindings: {
+        ...DEMO_SCENARIO.sillyTavernBindings,
+        characters: [
+            {
+                id: 'duplicated.original.character',
+                role: 'main',
+                description: 'This would duplicate the original character card body.',
+            },
+        ],
+        worldBooks: [
+            {
+                name: 'summer-after-school.world',
+                mode: 'scene',
+                entries: [],
+            },
+        ],
+    },
+});
+assert.equal(embeddedBodyStatus.ready, false);
+assert.equal(embeddedBodyStatus.errors.some((error) => error.includes('references only')), true);
+
+const defaultArcId = getDefaultArcId(DEMO_SCENARIO);
+const defaultArc = findArcBinding(DEMO_SCENARIO, defaultArcId);
+assert.equal(defaultArcId, DEMO_SCENARIO.defaultArcId);
+assert.ok(getManifestArcBindings(DEMO_SCENARIO).length >= 1);
+assert.equal(findArcBinding(DEMO_SCENARIO, defaultArcId).title, defaultArc.title);
+const defaultArcManifest = materializeManifestForArc(DEMO_SCENARIO, defaultArcId);
+assert.equal(defaultArcManifest.arcId, defaultArcId);
+assert.equal(defaultArcManifest.sillyTavernBindings.worldBooks[0].name, DEMO_SCENARIO.sillyTavernBindings.worldBooks[0].name);
+assert.equal(validateSillyTavernBindings(DEMO_SCENARIO, { arcId: defaultArcId }).ready, true);
+assert.equal(validateArcBindings(DEMO_SCENARIO).ready, true);
+for (const arc of getManifestArcBindings(DEMO_SCENARIO)) {
+    assert.equal(validateReleaseArcSelection(DEMO_SCENARIO, arc.arcId).valid, true);
+}
+const profileBoundScenario = bindAdaptivePresentationProfileHashes(DEMO_SCENARIO, { arcId: defaultArcId });
+const profileBoundArc = findArcBinding(profileBoundScenario, defaultArcId);
+const profileForArc = getAdaptivePresentationProfileForArc(profileBoundScenario, defaultArcId);
+assert.equal(profileBoundArc.presentationProfileHash, createAdaptivePresentationProfileHash(profileForArc));
+assert.equal(validateReleaseArcSelection(profileBoundScenario, defaultArcId, { requirePresentationProfileHash: true }).valid, true);
+
+const missingProfileHashValidation = validateReleaseArcSelection(DEMO_SCENARIO, defaultArcId, { requirePresentationProfileHash: true });
+assert.equal(missingProfileHashValidation.valid, false);
+assert.equal(missingProfileHashValidation.errors.some((error) => error.includes('presentationProfileHash')), true);
+
+const staleProfileHashScenario = {
+    ...profileBoundScenario,
+    adaptivePresentationProfiles: {
+        ...profileBoundScenario.adaptivePresentationProfiles,
+        [profileBoundArc.presentationProfileId]: {
+            ...profileBoundScenario.adaptivePresentationProfiles[profileBoundArc.presentationProfileId],
+            template: 'romance-social',
+        },
+    },
+};
+const staleProfileHashValidation = validateReleaseArcSelection(staleProfileHashScenario, defaultArcId, { requirePresentationProfileHash: true });
+assert.equal(staleProfileHashValidation.valid, false);
+assert.equal(staleProfileHashValidation.errors.some((error) => error.includes('presentationProfileHash')), true);
+
+const missingArcSeedReleaseValidation = validateReleaseArcSelection({
+    ...DEMO_SCENARIO,
+    arcs: DEMO_SCENARIO.arcs.map((arc) => arc.arcId === defaultArcId
+        ? {
+            ...arc,
+            sillyTavernBindings: {
+                ...arc.sillyTavernBindings,
+                target: {
+                    ...arc.sillyTavernBindings.target,
+                    chatSeedId: '',
+                },
+            },
+        }
+        : arc),
+}, defaultArcId);
+assert.equal(missingArcSeedReleaseValidation.valid, false);
+assert.equal(missingArcSeedReleaseValidation.errors.some((error) => error.includes('chatSeedId')), true);
+
+const duplicateArcValidation = validateScenarioManifest({
+    ...DEMO_SCENARIO,
+    arcs: [
+        DEMO_SCENARIO.arcs[0],
+        {
+            ...DEMO_SCENARIO.arcs[0],
+            arcId: DEMO_SCENARIO.arcs[0].arcId,
+        },
+    ],
+});
+assert.equal(duplicateArcValidation.valid, false);
+assert.equal(duplicateArcValidation.errors.some((error) => error.includes('Duplicate arcId')), true);
+
+const formalArcBodyValidation = validateScenarioManifest({
+    ...DEMO_SCENARIO,
+    arcs: [
+        {
+            ...DEMO_SCENARIO.arcs[0],
+            sillyTavernBindings: {
+                ...DEMO_SCENARIO.arcs[0].sillyTavernBindings,
+                target: {
+                    ...DEMO_SCENARIO.arcs[0].sillyTavernBindings.target,
+                    characterRef: {
+                        ...DEMO_SCENARIO.arcs[0].sillyTavernBindings.target.characterRef,
+                        personality: 'not allowed',
+                    },
+                },
+            },
+        },
+    ],
+});
+assert.equal(formalArcBodyValidation.valid, false);
+assert.equal(formalArcBodyValidation.errors.some((error) => error.includes('references only')), true);
+
+const release = createActiveRelease(DEMO_SCENARIO);
+assert.equal(release.scenarioId, DEMO_SCENARIO.id);
+assert.equal(release.scenarioVersion, DEMO_SCENARIO.version);
+assert.equal(release.activeArcId, defaultArcId);
+assert.equal(release.presentationProfileId, defaultArc.presentationProfileId);
+assert.equal(release.presentationProfileHash, createAdaptivePresentationProfileHash(getAdaptivePresentationProfileForArc(DEMO_SCENARIO, defaultArcId)));
+assert.equal(getAssetUrl(DEMO_SCENARIO, 'default_stage'), 'assets/classroom-morning.svg');
+
+const alternateArcId = 'protocol-alt-arc';
+const multiArcScenario = bindAdaptivePresentationProfileHashes({
+    ...DEMO_SCENARIO,
+    arcs: [
+        DEMO_SCENARIO.arcs[0],
+        {
+            ...DEMO_SCENARIO.arcs[0],
+            arcBindingId: `${DEMO_SCENARIO.id}:${DEMO_SCENARIO.version}:${alternateArcId}`,
+            arcId: alternateArcId,
+            title: '第二幕',
+            order: DEMO_SCENARIO.arcs[0].order + 1,
+            sillyTavernBindings: {
+                ...DEMO_SCENARIO.arcs[0].sillyTavernBindings,
+                target: {
+                    ...DEMO_SCENARIO.arcs[0].sillyTavernBindings.target,
+                    chatSeedId: `${DEMO_SCENARIO.arcs[0].sillyTavernBindings.target.chatSeedId}-alt`,
+                },
+            },
+        },
+    ],
+});
+const playableStoryEntries = listPlayableStoryEntries([multiArcScenario]);
+assert.equal(playableStoryEntries.length, 1);
+assert.equal(playableStoryEntries[0].entryId, `${multiArcScenario.id}@${multiArcScenario.version}`);
+assert.equal(playableStoryEntries[0].arcId, defaultArcId);
+assert.equal(playableStoryEntries[0].playableArcCount, 2);
+const alternateRelease = createActiveRelease(multiArcScenario, { activeArcId: alternateArcId });
+const activePlayableStoryEntries = listPlayableStoryEntries([multiArcScenario], { activeRelease: alternateRelease });
+assert.equal(activePlayableStoryEntries.length, 1);
+assert.equal(activePlayableStoryEntries[0].arcId, alternateArcId);
+assert.equal(activePlayableStoryEntries[0].isDefault, true);
+const storedStorySummary = listStoredStorySummaries([multiArcScenario])[0];
+assert.equal(storedStorySummary.arcCount, 2);
+assert.equal(storedStorySummary.playableArcCount, 2);
+
+const state = {
+    sessionId: 'native_session',
+    chapterId: 'native',
+    sceneId: 'native',
+    nodeId: 'native',
+};
+const mediaRequest = buildMediaJobRequest({
+    release,
+    state,
+    manifest: DEMO_SCENARIO,
+    event: {
+        id: 'cg_native_moment',
+        kind: 'image',
+        summary: '原版游玩中标记的关键画面',
+        location: 'native',
+        fallbackAsset: 'default_stage',
+    },
+});
+assert.equal(mediaRequest.kind, 'image');
+assert.equal(mediaRequest.event.event_id, 'cg_native_moment');
+assert.equal(mediaRequest.policy.fallback_asset, 'default_stage');
+assert.equal(createMediaIdempotencyKey(release.releaseId, state.sessionId, 'cg_native_moment').includes('cg_native_moment'), true);
+
+console.log('shared protocol tests passed');

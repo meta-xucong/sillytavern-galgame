@@ -1,0 +1,68 @@
+# Original Runtime Bridge
+
+This optional local service delegates custom Galgame continuation to the original SillyTavern frontend runtime.
+
+It does not compose prompts, read character/world-book bodies, call bottom model generation endpoints directly, or store model credentials. It opens the original SillyTavern page in an isolated browser process, selects the bound original character/chat, calls the original runtime generate function, and returns the updated original chat.
+
+## Start
+
+For this repository's local Galgame setup, prefer the root script:
+
+```powershell
+.\StartGalgameServices.cmd
+```
+
+It starts the config service and this bridge with the same local proof secret,
+points both services at `http://127.0.0.1:8000`, and replaces stale local
+bridge/config-service processes before starting fresh ones.
+
+```powershell
+$env:SILLYTAVERN_BASE_URL = 'http://127.0.0.1:8000'
+$env:GALGAME_ALLOWED_ORIGINS = 'http://127.0.0.1:8000'
+$env:GALGAME_BRIDGE_PROOF_SECRET = '<runtime proof signing secret>'
+node external-modules\original-runtime-bridge\server.mjs
+```
+
+Default URL: `http://127.0.0.1:8795`
+
+If `HOST` is set to a non-loopback address, `GALGAME_BRIDGE_TOKEN` is required and requests must use `Authorization: Bearer ...`. CORS is only browser-origin filtering and is not treated as authentication.
+
+## Player Build
+
+Build `/game/` with:
+
+```powershell
+$env:GALGAME_ORIGINAL_RUNTIME_BRIDGE_URL = 'http://127.0.0.1:8795'
+node frontend\build-static.mjs
+```
+
+The player page only calls `/v1/generate-reply` with an original character avatar and original chat id.
+
+Generation requests also need a short-lived `galgame.original-runtime-bridge-proof.v1` binding proof. The proof is signed outside the browser with `GALGAME_BRIDGE_PROOF_SECRET`, covers audience, expiry, nonce, release, Arc, target character/group, and allowed chat ids, and is verified by the bridge before original `Generate()` is called. Plain client-supplied release/Arc/chat JSON is treated as an index only, not authorization.
+
+Operations can sign a binding reference JSON with:
+
+```powershell
+$env:GALGAME_BRIDGE_PROOF_SECRET = '<runtime proof signing secret>'
+node external-modules\original-runtime-bridge\sign-proof.mjs --binding .\binding.json
+```
+
+Never put `GALGAME_BRIDGE_PROOF_SECRET`, `GALGAME_BRIDGE_TOKEN`, API keys, or model credentials in static frontend files.
+
+## Boundary
+
+Allowed:
+
+- Run independently from the SillyTavern backend.
+- Use the original SillyTavern frontend runtime as the approved generation authority.
+- Return original chat snapshots for Galgame display.
+- Verify signed release/Arc/target/chat binding proofs and reject expired, replayed, forged, arbitrary, or cross-target requests.
+- Stop safely through `/v1/stop`, request original runtime stop for pending generation, return explicit `forced` / `stopMode` / `pendingTaskFailed` diagnostics on timeout, fail the in-flight request instead of returning a fabricated success, then reject new generation tasks until the process is restarted.
+
+Forbidden:
+
+- Modify `src/**`, `server.js`, `plugins.js`, original `public/script.js`, or original `public/index.html`.
+- Call `/api/backends/*/generate` or `/api/novelai/generate` from the custom player.
+- Copy `Generate()` into the custom frontend.
+- Add local scripted story text, choices, branches, endings, or plot state.
+- Accept unsigned frontend-provided allowlist JSON as authorization.

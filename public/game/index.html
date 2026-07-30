@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="galgame-config-service" content="http://127.0.0.1:8791">
+    <meta name="galgame-sillytavern-runtime-base" content="">
+    <meta name="galgame-original-runtime-bridge" content="">
+    <title>Galgame Player</title>
+    <link rel="stylesheet" href="./styles.css?v=auto-6490e3ff4a10">
+</head>
+<body>
+    <main class="app-shell">
+        <section id="titleScreen" class="screen title-screen" aria-label="标题画面">
+            <div class="title-backdrop" id="titleBackdrop"></div>
+            <div class="title-heroine" aria-hidden="true"></div>
+            <div class="title-content">
+                <div class="title-logo">
+                    <p class="title-kicker">Visual Novel</p>
+                    <h1 id="gameTitle">当前故事</h1>
+                    <p class="title-subtitle">物語は、ここから始まる。</p>
+                </div>
+                <section id="storyPicker" class="story-picker" aria-label="作品选择" hidden>
+                    <div class="story-picker-header">
+                        <span>选择作品</span>
+                        <small id="storyPickerStatus">正在整理</small>
+                    </div>
+                    <div id="storyChoiceList" class="story-choice-list"></div>
+                </section>
+                <nav class="title-actions" aria-label="标题菜单">
+                    <button id="startButton" class="primary-action" type="button">
+                        <span>开始游戏</span>
+                        <small>START</small>
+                    </button>
+                    <button id="continueButton" class="secondary-action" type="button">
+                        <span>继续游戏</span>
+                        <small>CONTINUE</small>
+                    </button>
+                    <button id="loadButtonTitle" class="secondary-action" type="button">
+                        <span>读取</span>
+                        <small>LOAD</small>
+                    </button>
+                    <button id="settingsButtonTitle" class="secondary-action" type="button">
+                        <span>设置</span>
+                        <small>CONFIG</small>
+                    </button>
+                </nav>
+            </div>
+            <p class="release-note" id="releaseNote"></p>
+        </section>
+
+        <section id="gameScreen" class="screen game-screen" aria-label="游戏画面" hidden>
+            <div class="stage-backdrop" id="stageBackdrop"></div>
+            <div class="stage-heroine" aria-hidden="true"></div>
+            <div class="stage-topbar">
+                <div class="hud-actions" aria-label="游戏菜单">
+                    <button id="historyButton" class="ghost-action" type="button">历史</button>
+                    <button id="saveButton" class="ghost-action" type="button">保存</button>
+                    <button id="loadButtonStage" class="ghost-action" type="button">读取</button>
+                    <button id="settingsButtonStage" class="ghost-action" type="button">设置</button>
+                    <button id="backButton" class="ghost-action" type="button">回到标题</button>
+                </div>
+                <p id="stageTitle">当前故事</p>
+            </div>
+            <section id="adaptivePanels" class="adaptive-panels" aria-label="当前信息" hidden></section>
+            <section id="dialogueBox" class="dialogue-panel" aria-label="剧情" aria-live="polite">
+                <p id="speakerName" class="speaker-name">系统</p>
+                <p id="dialogueText" class="dialogue-text">正在准备故事。</p>
+                <p id="stageStatus" class="stage-status" aria-live="polite"></p>
+                <div id="suggestedActions" class="suggested-actions" aria-label="可选行动" hidden></div>
+                <form id="playerInputForm" class="player-input-form">
+                    <textarea id="playerInput" rows="2" autocomplete="off" placeholder="输入你的行动或台词" disabled></textarea>
+                    <button id="sendButton" type="submit" disabled>送出</button>
+                </form>
+                <div id="recoveryActions" class="recovery-actions" hidden>
+                    <button id="refreshStoryButton" type="button">再试一次</button>
+                </div>
+            </section>
+        </section>
+
+        <div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
+
+        <aside id="historyDrawer" class="drawer history-drawer" aria-label="历史" hidden>
+            <header class="drawer-header">
+                <h2>历史</h2>
+                <button class="drawer-close" type="button" data-close-drawer>关闭</button>
+            </header>
+            <div id="historyList" class="drawer-list"></div>
+        </aside>
+
+        <aside id="saveLoadDrawer" class="drawer save-load-drawer" aria-label="存档与读取" hidden>
+            <header class="drawer-header">
+                <h2 id="saveLoadTitle">存档</h2>
+                <button class="drawer-close" type="button" data-close-drawer>关闭</button>
+            </header>
+            <div id="saveLoadList" class="save-slot-list"></div>
+        </aside>
+
+        <aside id="settingsDrawer" class="drawer settings-drawer" aria-label="设置" hidden>
+            <header class="drawer-header">
+                <h2>设置</h2>
+                <button class="drawer-close" type="button" data-close-drawer>关闭</button>
+            </header>
+            <div class="settings-list">
+                <button id="fontSizeButton" type="button">文字大小：标准</button>
+                <button id="motionButton" type="button">动态效果：开启</button>
+            </div>
+        </aside>
+
+        <aside id="adaptiveDetailDrawer" class="adaptive-detail-drawer" aria-label="当前信息详情" hidden>
+            <div class="adaptive-detail-scrim" data-close-adaptive-detail></div>
+            <section class="adaptive-detail-panel" role="dialog" aria-modal="true" aria-labelledby="adaptiveDetailTitle">
+                <header class="adaptive-detail-header">
+                    <h2 id="adaptiveDetailTitle">当前信息</h2>
+                    <button id="adaptiveDetailClose" class="drawer-close" type="button">关闭</button>
+                </header>
+                <div id="adaptiveDetailBody" class="adaptive-detail-body"></div>
+            </section>
+        </aside>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script type="module" src="./app.js?v=auto-6490e3ff4a10"></script>
+</body>
+</html>

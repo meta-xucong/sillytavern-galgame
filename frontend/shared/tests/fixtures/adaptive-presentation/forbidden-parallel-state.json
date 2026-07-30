@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "galgame.adaptive-presentation.v1",
+  "profileId": "bad-authority-profile",
+  "template": "rpg-adventure",
+  "preferredModules": ["rpg-status", "inventory"],
+  "hp": 12,
+  "inventory": ["local sword"],
+  "route": "good-ending"
+}

@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="galgame-config-service" content="http://127.0.0.1:8791">
+    <meta name="sillytavern-base-url" content="">
+    <meta name="galgame-script-import-assistant" content="">
+    <title>故事后台</title>
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+    <main class="admin-shell">
+        <aside class="sidebar">
+            <div class="brand">
+                <span class="brand-mark">游</span>
+                <div>
+                    <strong>故事后台</strong>
+                    <span>上传、整理、上架故事</span>
+                </div>
+            </div>
+            <nav class="nav-tabs" aria-label="管理页面">
+                <button class="is-active" type="button" data-tab="dashboard">一键导入</button>
+                <button type="button" data-tab="publish">故事上架</button>
+                <button type="button" data-tab="library">故事库</button>
+                <button type="button" data-tab="enhancements">画面设置</button>
+                <button type="button" data-tab="advanced">更多检查</button>
+            </nav>
+        </aside>
+
+        <section class="workspace">
+            <header class="workspace-header">
+                <div>
+                    <p class="eyebrow">小白模式</p>
+                    <h1 id="pageTitle">一键导入</h1>
+                </div>
+                <button id="refreshButton" class="secondary-button" type="button">重新检查</button>
+            </header>
+
+            <section id="dashboardPanel" class="panel" data-panel="dashboard">
+                <article class="script-assistant-card one-click-card" data-script-assistant-card="upload">
+                    <div class="section-row">
+                        <div>
+                            <span class="section-label">新手推荐</span>
+                            <h2>上传剧本，一键整理</h2>
+                        </div>
+                        <span id="scriptAssistantServiceStatus" class="service-pill">等待检查</span>
+                    </div>
+                    <p>把下载好的剧本包或文本放进来，后台会先帮你整理成草稿。你只需要检查结果，不满意就点重新整理。</p>
+                    <div class="one-click-flow" aria-label="导入流程">
+                        <span>1 上传文件</span>
+                        <span>2 自动整理</span>
+                        <span>3 确认草稿</span>
+                        <span>4 上架作品</span>
+                    </div>
+                    <div class="script-assistant-actions">
+                        <label class="file-button script-file-button">
+                            <input id="scriptFileInput" type="file" multiple accept=".txt,.md,.json,.yaml,.yml,text/plain,application/json,text/markdown">
+                            选择剧本文件
+                        </label>
+                        <button id="organizeScriptButton" class="primary-button" type="button">开始整理</button>
+                        <button id="redeployScriptButton" class="secondary-button" type="button" disabled>重新整理</button>
+                        <button id="confirmScriptDraftButton" class="secondary-button" type="button" disabled>确认草稿</button>
+                    </div>
+                    <div id="scriptFileSummary" class="soft-status">还没有选择文件。</div>
+                    <div id="scriptAssistantResult" class="status-box">整理服务未检查。</div>
+                    <div id="scriptDraftPreview" class="script-draft-preview" aria-live="polite"></div>
+                    <div class="parity-note">
+                        <strong>确认不等于上架</strong>
+                            <span>确认后会保存到故事库；玩家要看到新故事，还需要在“故事上架”里点上架。</span>
+                    </div>
+                </article>
+
+                <article class="hero-card">
+                    <div>
+                        <span class="section-label">默认推荐故事</span>
+                        <h2 id="activeTitle">-</h2>
+                        <p class="hero-meta">
+                            <span>版本 <strong id="activeVersion">-</strong></span>
+                            <span>章节 <strong id="activeArc">-</strong></span>
+                            <span>上架时间 <strong id="activePublishedAt">-</strong></span>
+                        </p>
+                    </div>
+                    <div class="hero-actions">
+                        <a class="primary-button link-button" href="../game/" target="_blank" rel="noreferrer">预览玩家页面</a>
+                        <button class="secondary-button" type="button" data-jump-tab="publish">去上架</button>
+                    </div>
+                </article>
+
+                <div class="summary-grid">
+                    <article class="summary-item">
+                        <span>故事检查</span>
+                        <strong id="dashboardStoryStatus">准备检查</strong>
+                    </article>
+                    <article class="summary-item">
+                        <span>回复通道</span>
+                        <strong id="dashboardRuntimeStatus">使用当前设置</strong>
+                    </article>
+                    <article class="summary-item">
+                        <span>画面增强</span>
+                        <strong id="dashboardEnhancementStatus">按需启用</strong>
+                    </article>
+                </div>
+
+                <article class="next-step-card">
+                    <span class="section-label">下一步</span>
+                    <ol>
+                        <li>先上传下载好的剧本文件。</li>
+                        <li>看一眼整理出的草稿；不满意就重新整理。</li>
+                        <li>确认草稿后，再去“故事上架”把故事给玩家使用。</li>
+                    </ol>
+                </article>
+            </section>
+
+            <section id="publishPanel" class="panel is-hidden" data-panel="publish">
+                <ol id="publishStepList" class="wizard-steps" aria-label="上架步骤">
+                    <li data-step="choose" class="is-active">选择故事</li>
+                    <li data-step="check">自动检查</li>
+                    <li data-step="chapter">章节和样式</li>
+                    <li data-step="publish">发布给玩家</li>
+                </ol>
+
+                <article class="wizard-card publish-intro-card">
+                    <span class="section-label">已经整理好以后</span>
+                    <h2>把草稿上架给玩家</h2>
+                    <p>这里用于最后确认和上架。上架后的作品会出现在玩家页面的作品选择里。</p>
+                    <div class="action-row">
+                        <button class="secondary-button" type="button" data-jump-tab="dashboard">回到一键导入</button>
+                    </div>
+                </article>
+
+                <div class="wizard-grid">
+                    <article class="wizard-card">
+                        <span class="step-pill">1</span>
+                        <h2>选择故事</h2>
+                        <p>使用已准备好的故事入口，日常不需要编辑开发文件。</p>
+                        <div id="storyPackageSummary" class="soft-status"></div>
+                        <div class="action-row">
+                            <button id="sampleButton" class="secondary-button" type="button">载入示例</button>
+                        </div>
+                    </article>
+
+                    <article class="wizard-card">
+                        <span class="step-pill">2</span>
+                        <h2>自动检查</h2>
+                        <p>检查角色资料、世界设定和开场记录是否已经准备好。</p>
+                        <div class="action-row">
+                            <button id="validateButton" class="secondary-button" type="button">检查故事</button>
+                            <button id="arcValidateButton" class="secondary-button" type="button">检查章节</button>
+                        </div>
+                        <ul id="publishCheckList" class="check-list"></ul>
+                        <div id="validationResult" class="validation-result"></div>
+                    </article>
+
+                    <article class="wizard-card">
+                        <span class="step-pill">3</span>
+                        <h2>章节和样式</h2>
+                        <label class="field-row compact-field">
+                            <span>让玩家进入</span>
+                            <select id="arcPublishSelect"></select>
+                        </label>
+                        <label class="field-row compact-field">
+                            <span>界面样式</span>
+                            <select id="wizardTemplateSelect"></select>
+                        </label>
+                        <div id="wizardStyleResult" class="soft-status"></div>
+                        <div id="arcResult" class="status-box"></div>
+                    </article>
+
+                    <article class="wizard-card">
+                        <span class="step-pill">4</span>
+                        <h2>上架</h2>
+                        <p>玩家可以在作品选择里看到它；已有存档仍保留原来的记录。</p>
+                        <div id="publishSummary" class="soft-status"></div>
+                        <div class="action-row">
+                            <a class="secondary-button link-button" href="../game/" target="_blank" rel="noreferrer">先预览</a>
+                            <button id="publishButton" class="primary-button" type="button">上架给玩家</button>
+                        </div>
+                        <div id="publishResult" class="status-box"></div>
+                    </article>
+                </div>
+
+                <details class="advanced-disclosure">
+                    <summary>开发者导入内容</summary>
+                    <p>这里只用于开发和排错，日常上架不需要打开。</p>
+                    <label class="file-button">
+                        <input id="fileInput" type="file" accept="application/json">
+                        导入开发文件
+                    </label>
+                    <textarea id="manifestEditor" class="manifest-editor" spellcheck="false"></textarea>
+                </details>
+            </section>
+
+            <section id="libraryPanel" class="panel is-hidden" data-panel="library">
+                <div class="section-row">
+                    <h2>已准备的故事</h2>
+                    <button id="arcRefreshButton" class="secondary-button" type="button">刷新章节</button>
+                </div>
+                <div id="storyLibrarySummary" class="story-library-grid"></div>
+                <div id="arcList" class="arc-list"></div>
+                <article class="save-binding-note">
+                    <strong>已有存档不会被改动</strong>
+                    <span>你恢复旧版本或上架新章节后，玩家作品列表会更新；已经开始游玩的玩家会继续使用他们存档里绑定的旧记录。</span>
+                </article>
+                <div class="section-row">
+                    <h2>上架记录</h2>
+                </div>
+                <div id="releaseHistory" class="release-history"></div>
+            </section>
+
+            <section id="enhancementsPanel" class="panel is-hidden" data-panel="enhancements">
+                <article class="enhancement-intro">
+                    <strong>这些只改变玩家看到的画面</strong>
+                    <span>角色、世界设定、回复方式和剧情走向仍由原版故事材料与聊天负责。这里不会保存密钥，也不会生成剧情。</span>
+                </article>
+                <div class="enhancement-grid">
+                    <article class="enhancement-card" data-enhancement-card="display-template">
+                        <div class="section-row">
+                            <h2>游戏界面样式</h2>
+                            <button id="profileRefreshButton" class="secondary-button" type="button">刷新</button>
+                        </div>
+                        <div class="form-grid">
+                            <label class="field-row">
+                                <span>应用章节</span>
+                                <strong id="profileArcName">-</strong>
+                            </label>
+                            <label class="field-row">
+                                <span>显示风格</span>
+                                <select id="profileTemplateSelect"></select>
+                            </label>
+                        </div>
+                        <div id="profileModuleList" class="profile-module-list" aria-label="可启用展示"></div>
+                        <div class="action-row">
+                            <button id="profileApplyButton" class="primary-button" type="button">保存显示方式</button>
+                        </div>
+                        <div id="profileResult" class="status-box"></div>
+                        <div class="parity-note">
+                            <strong>只影响显示</strong>
+                            <span>这里决定玩家页面是否显示状态、背包、好感、线索等信息栏；具体内容仍来自故事聊天。</span>
+                        </div>
+                    </article>
+
+                    <article class="enhancement-card" data-enhancement-card="media-provider">
+                        <h2>图片和视频接口</h2>
+                        <div class="form-grid">
+                            <label class="field-row">
+                                <span>启用</span>
+                                <input id="mediaEnabledInput" type="checkbox">
+                            </label>
+                            <label class="field-row">
+                                <span>接口地址</span>
+                                <input id="mediaEndpointInput" type="url" placeholder="https://example.com">
+                            </label>
+                        </div>
+                        <div class="action-row">
+                            <button id="saveMediaButton" class="primary-button" type="button">保存配置</button>
+                            <button id="testMediaButton" class="secondary-button" type="button">测试连接</button>
+                        </div>
+                        <div id="mediaResult" class="status-box"></div>
+                        <div class="parity-note">
+                            <strong>不影响剧情</strong>
+                            <span>图片和视频只增强画面，接口失败时故事文字仍会继续。</span>
+                        </div>
+                        <div class="parity-note">
+                            <strong>密钥不放这里</strong>
+                            <span>需要密钥时，请在外部媒体服务中配置；这个页面只保存开关和接口地址。</span>
+                        </div>
+                    </article>
+
+                    <article class="enhancement-card" data-enhancement-card="visual-assets">
+                        <h2>背景和立绘</h2>
+                        <p>按故事里已经出现的场景和人物，匹配玩家页面要显示的背景、立绘和氛围图。</p>
+                        <div class="enhancement-status-list">
+                            <span>素材映射：后续接入</span>
+                            <span>画面失败：自动使用默认背景</span>
+                        </div>
+                        <div class="parity-note">
+                            <strong>只影响画面</strong>
+                            <span>这里不会改角色设定、世界设定、聊天内容或回复方式。</span>
+                        </div>
+                    </article>
+
+                    <article class="enhancement-card" data-enhancement-card="content-notice">
+                        <h2>内容提示</h2>
+                        <p>给玩家显示简单的游玩提示，例如题材、节奏和可能出现的内容类型。</p>
+                        <div class="enhancement-status-list">
+                            <span>提示来源：管理员发布说明</span>
+                            <span>剧情内容：仍来自原版聊天</span>
+                        </div>
+                        <div class="parity-note">
+                            <strong>不写剧情</strong>
+                            <span>这里不能编写固定台词、选项、结局条件或剧情节点。</span>
+                        </div>
+                    </article>
+
+                    <article class="enhancement-card" data-enhancement-card="service-check">
+                        <h2>服务检查</h2>
+                        <p>用普通文案显示后台是否准备好，细节检查收在“更多检查”。</p>
+                        <div id="enhancementServiceStatus" class="enhancement-status-list">
+                            <span>故事通道：使用当前设置</span>
+                            <span>媒体接口：按需启用</span>
+                            <span>细节检查：在更多检查中查看</span>
+                        </div>
+                        <div class="parity-note">
+                            <strong>只看状态</strong>
+                            <span>这里不提供敏感运行设置，也不会改变故事回复方式。</span>
+                        </div>
+                    </article>
+                </div>
+            </section>
+
+            <section id="advancedPanel" class="panel is-hidden" data-panel="advanced">
+                <article class="security-note">
+                    <strong>更多检查</strong>
+                    <span>安全提醒：这里默认隐藏只是降低误触，不等于登录保护。真实访问控制应由外部服务或反向代理处理；不要把密钥写进前端页面。</span>
+                </article>
+
+                <div class="section-row">
+                    <h2>资源绑定</h2>
+                    <div class="inline-actions">
+                        <button id="resourceCheckButton" class="secondary-button" type="button">重新检查</button>
+                        <button id="resourceLiveCheckButton" class="secondary-button" type="button">测试原版连通</button>
+                    </div>
+                </div>
+                <div id="resourceResult" class="status-box"></div>
+                <div id="resourceLiveResult" class="status-box">尚未测试原版连通。</div>
+                <div class="advanced-evidence-grid" aria-label="高级证据分级">
+                    <article class="evidence-card" data-evidence-card="reference-exists">
+                        <h3>引用存在</h3>
+                        <p>只证明故事入口指向的原版资料能被找到，不代表它们已经在本次回复中生效。</p>
+                        <div id="referenceEvidenceList" class="evidence-list"></div>
+                    </article>
+                    <article class="evidence-card" data-evidence-card="runtime-evidence">
+                        <h3>运行中验证</h3>
+                        <p>只对已有真实生成、目标记录读回或明确 smoke 证据的项目显示验证结果。</p>
+                        <div id="runtimeEvidenceList" class="evidence-list"></div>
+                    </article>
+                    <article class="evidence-card" data-evidence-card="deferred-evidence">
+                        <h3>暂未接入</h3>
+                        <p>这些能力由原版维护，但当前自定义后台尚未桥接自动切换或自动验收。</p>
+                        <div id="deferredEvidenceList" class="evidence-list"></div>
+                    </article>
+                </div>
+                <div class="resource-layout">
+                    <article class="resource-section">
+                        <h3>角色资料</h3>
+                        <div id="characterBindingList" class="binding-list"></div>
+                    </article>
+                    <article class="resource-section">
+                        <h3>世界设定</h3>
+                        <div id="worldBookBindingList" class="binding-list"></div>
+                    </article>
+                    <article class="resource-section">
+                        <h3>运行风格</h3>
+                        <div id="settingBindingList" class="binding-list"></div>
+                    </article>
+                </div>
+                <div class="parity-note">
+                    <strong>原版维护边界</strong>
+                    <span>此页只保存故事对原版角色资料、世界设定、运行风格和开场记录的引用。资源本体、激活规则和敏感运行配置仍以原版维护入口为准。</span>
+                </div>
+
+                <div class="section-row">
+                    <h2>服务检查</h2>
+                </div>
+                <div id="systemStatus" class="status-grid"></div>
+            </section>
+        </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script type="module" src="./main.js"></script>
+</body>
+</html>

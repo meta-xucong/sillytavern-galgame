@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="520" height="860" viewBox="0 0 520 860" role="img" aria-label="Default character sprite">
+  <defs>
+    <linearGradient id="hairMain" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#4d315d"/>
+      <stop offset="0.55" stop-color="#2c2141"/>
+      <stop offset="1" stop-color="#151426"/>
+    </linearGradient>
+    <linearGradient id="hairLight" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0" stop-color="#6f4f86" stop-opacity=".76"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity=".08"/>
+    </linearGradient>
+    <linearGradient id="skin" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#ffd5bd"/>
+      <stop offset="1" stop-color="#e8ae93"/>
+    </linearGradient>
+    <linearGradient id="uniform" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#f8fcff"/>
+      <stop offset="1" stop-color="#bdd9e4"/>
+    </linearGradient>
+    <linearGradient id="shadowBlue" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#405f74"/>
+      <stop offset="1" stop-color="#20384e"/>
+    </linearGradient>
+    <linearGradient id="ribbon" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#df7a86"/>
+      <stop offset="1" stop-color="#b64f61"/>
+    </linearGradient>
+  </defs>
+
+  <ellipse cx="261" cy="790" rx="138" ry="24" fill="#111521" opacity=".22"/>
+
+  <path d="M257 40c96 0 168 68 174 170 4 68-25 126-14 204 10 71 50 149 65 237 16 93-34 156-112 158H142C63 807 16 742 38 650c20-85 55-162 64-236 9-76-21-137-17-204C91 108 160 40 257 40z" fill="url(#hairMain)"/>
+  <path d="M115 194c36-78 99-118 177-115 58 3 116 34 137 86-47-15-95-39-137-76-34 65-90 107-177 105z" fill="url(#hairLight)" opacity=".66"/>
+
+  <path d="M118 506c35-58 86-91 140-91 56 0 108 33 144 92 42 70 72 207 87 322H30c16-116 46-252 88-323z" fill="url(#uniform)"/>
+  <path d="M127 515c28 88 57 193 76 314H51c14-107 38-225 76-314z" fill="#d7edf5"/>
+  <path d="M392 515c-29 88-58 193-76 314h152c-14-107-38-225-76-314z" fill="#d7edf5"/>
+
+  <path d="M164 452l95 98 99-98 25 74-76 303h-99l-72-303z" fill="url(#shadowBlue)"/>
+  <path d="M197 493l62 63 66-63 37 41-72 80-31-39-31 39-70-80z" fill="#f7fbff"/>
+  <path d="M223 570h75l-11 234h-53z" fill="url(#ribbon)"/>
+  <path d="M151 460c34 31 69 52 107 63 39-11 77-32 112-63" fill="none" stroke="#263d56" stroke-width="14" stroke-linecap="round"/>
+
+  <path d="M178 219c0-77 35-133 82-133 48 0 84 56 84 133v84c0 77-37 132-84 132-47 0-82-55-82-132z" fill="url(#skin)"/>
+  <path d="M178 229c-24-22-25-78-4-115 26-47 78-73 128-58 56 17 88 65 92 124-43 1-91-20-132-63-18 49-48 86-84 112z" fill="url(#hairMain)"/>
+  <path d="M341 201c26 27 37 68 23 111-9-60-34-94-78-118z" fill="#171426" opacity=".42"/>
+
+  <ellipse cx="213" cy="275" rx="17" ry="25" fill="#241c34"/>
+  <ellipse cx="307" cy="275" rx="17" ry="25" fill="#241c34"/>
+  <ellipse cx="207" cy="264" rx="6" ry="8" fill="#fff" opacity=".92"/>
+  <ellipse cx="301" cy="264" rx="6" ry="8" fill="#fff" opacity=".92"/>
+  <ellipse cx="218" cy="286" rx="4" ry="5" fill="#8e6aa2" opacity=".76"/>
+  <ellipse cx="312" cy="286" rx="4" ry="5" fill="#8e6aa2" opacity=".76"/>
+
+  <path d="M235 337c17 16 39 16 56 0" fill="none" stroke="#b45e72" stroke-width="7" stroke-linecap="round"/>
+  <ellipse cx="180" cy="319" rx="24" ry="12" fill="#ef8ca0" opacity=".3"/>
+  <ellipse cx="337" cy="319" rx="24" ry="12" fill="#ef8ca0" opacity=".3"/>
+  <path d="M260 292c-6 20-9 35-5 44 4 6 14 5 22 2" fill="none" stroke="#d79c8b" stroke-width="5" stroke-linecap="round" opacity=".65"/>
+
+  <path d="M102 554c-35 52-54 100-60 145-5 41 28 70 66 58l52-16c-3-81 6-141 26-181z" fill="url(#skin)"/>
+  <path d="M418 554c36 52 55 100 60 145 5 41-28 70-66 58l-52-16c3-81-6-141-26-181z" fill="url(#skin)"/>
+  <path d="M110 525c-29 48-45 102-48 164l89 19c-1-76 10-137 33-182z" fill="#cbe5ee"/>
+  <path d="M410 525c30 48 46 102 49 164l-90 19c1-76-10-137-34-182z" fill="#cbe5ee"/>
+
+  <path d="M143 186c-19 58-18 126 4 205 13 48 9 97-13 147-30-117-50-222-35-306 6-34 20-60 44-46z" fill="#171426" opacity=".55"/>
+  <path d="M387 186c20 58 19 126-3 205-14 48-10 97 12 147 31-117 51-222 35-306-6-34-20-60-44-46z" fill="#171426" opacity=".55"/>
+</svg>

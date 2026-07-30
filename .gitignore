@@ -58,3 +58,6 @@ public/scripts/extensions/third-party
 yarn.lock
 *.code-workspace
 test-results/
+.codex-longrun/
+st_server*.log
+.avatar_gen_start.txt
