@@ -1,6 +1,6 @@
 # AI Galgame 代码开发 Backlog
 
-> 文档状态：implementation backlog v1.0  
+> 文档状态：implementation backlog v1.1
 > 生效日期：2026-07-25  
 > 前置材料：`docs/AI_GALGAME_PRE_IMPLEMENTATION_MATERIALS.md`  
 > UI 施工材料：`docs/AI_GALGAME_FRONTEND_UI_IMPLEMENTATION_SPEC.md`  
@@ -9,7 +9,7 @@
 > AI 剧本导入助手材料：`docs/AI_GALGAME_SCRIPT_IMPORT_ASSISTANT_SPEC.md`  
 > 终极自适应完善材料：`docs/AI_GALGAME_ULTIMATE_ADAPTIVE_COMPLETION_PLAN.md`  
 > 外置视觉系统总控：`docs/AI_GALGAME_VISUAL_ASSET_ENHANCEMENT_MODULE_PLAN.md`；详细规格：`docs/AI_GALGAME_VISUAL_SYSTEM_DEVELOPMENT_SPEC.md`；历史/未来附录：`docs/AI_GALGAME_VISUAL_SYSTEM_VS1_PI_ADMISSION_PLAN.md`、`docs/AI_GALGAME_VISUAL_SYSTEM_VS1_AS_ADMISSION_PLAN.md`、`docs/AI_GALGAME_VISUAL_SYSTEM_VS1_M_ADMISSION_PLAN.md`、`docs/AI_GALGAME_VISUAL_SYSTEM_VS1_M_CODE_ADMISSION_REQUEST.md`  
-> 约束：本清单包含历史路线和后续计划；当前视觉资产路线以 VS-DOCS 总控为唯一执行入口。当前只允许修改 docs/.codex-longrun，不代表已允许继续落视觉代码。
+> 当前目标：只推进独立视觉资产增强模块；AA/UAP/WE、Arc 发布和完整 Galgame 系统路线全部不属于当前目标。视觉代码必须从 VS-CODE-1 重新准入，不得恢复历史 VS1 原型。
 
 ## 1. 开发总原则
 
@@ -64,25 +64,23 @@ UAP1 之前必须先获得 UAP0 reviewer PASS。UAP 任何批次不得把展示�
 
 当前只维护视觉资产增强模块，不与 AA/UAP/WE、Arc 发布或原版运行桥接混合推进。模块的目标是五类素材库、可见 ST 文本匹配和 `/game/` 展示增强；原版 SillyTavern 仍是剧情、聊天、世界书、角色卡、上下文和 Generate 权威。
 
-2026-07-30 用户范围纠偏：本模块当前只交付开发文档。已有 VS1-SG / VS1-PI / VS1-AS / VS1-M 代码和证据保留作历史追溯，但全部暂停，不删除、不回滚、不继续收口；旧 reviewer PASS 不构成新一轮代码授权。
+2026-07-30 用户范围纠偏：当前产品目标只保留视觉资产增强模块的完整开发周期。已有 VS1-SG / VS1-PI / VS1-AS / VS1-M 代码和证据保留作历史追溯，但全部暂停；代码必须从 VS-CODE-1 重新准入，旧 reviewer PASS 不构成新一轮代码授权。
 
 | 批次 | 状态 | 目标 | 代码范围 | 验收口径 |
 | --- | --- | --- | --- | --- |
-| VS-DOCS-0 | verifying | 统一范围、路线和历史材料 | `docs/**`、`.codex-longrun/**` | 已完成当前唯一路线收束；只做文档整理，不落业务代码 |
-| VS-DOCS-1 | verifying | 资产库/五类 schema/unknown/上传与目录安全文档 | `docs/**`、`.codex-longrun/**` | 已写入五类 assetType/role、VisualAssetCatalog/Asset、immutable unknown、上传解码重编码、URI/CSP、管理员认证和已发布 revision 不原地替换 |
-| VS-DOCS-2 | verifying | 可见投影、deterministic matcher、score `<20` unknown 文档 | `docs/**`、`.codex-longrun/**` | 已写入唯一可见 ST 投影、bounded evidence、deterministic scorer、score band、character no-guess、equipment/item/skill explicit-label 和 prompt injection 防线；不实现 Projection Issuer、matcher 或 binding writer |
-| VS-DOCS-3 | verifying | `/game/` 背景/立绘/图标展示与降级文档 | `docs/**`、`.codex-longrun/**` | 已写入背景/立绘/图标 display-only、异步非阻塞、unknown/default 降级、移动端和无障碍；不修改 player/admin/shared/public |
-| VS-DOCS-4 | verifying | release/profile/catalog/save/old-save 兼容文档 | `docs/**`、`.codex-longrun/**` | 已写入 exact release/profile/catalog/asset/source binding、publish/rollback、old-save retention/hash mismatch unknown 和 save 禁止剧情事实；不写 manifest、ST 资源或玩法状态 |
-| VS-DOCS-5 | verifying | fixtures、浏览器、静态、安全和冻结边界验收矩阵 | `docs/**`、`.codex-longrun/**` | 已写入 docs 阶段 gate、未来 code fixture 矩阵、真实浏览器验收和冻结边界；完成后等待 reviewer，不自动申请代码 |
+| VS-DOCS-0..5 | done | 视觉增强模块文档闭环 | `docs/**`、`.codex-longrun/**` | 五类资产、可见证据、deterministic matcher、unknown、展示、存档兼容和验收矩阵已完成；不计入功能完成 |
 | VS1-SG/PI/AS/M | paused-historical | 历史 schema、Projection、素材服务、matcher/binding 代码及审查材料 | 既有内容保留 | 只作未来实现附录；不计入当前交付，不得依据旧 PASS 自动继续 |
-| VS1-P | pending | player visual presentation layer | `frontend/player/**`、`public/game/**` | scene/sprite/icon rendering only; no gameplay state; failures show unknown and never block ST Generate/input/save |
-| VS1-A | pending | admin catalog/profile UI | `frontend/admin/**`、`public/game-admin/**` | beginner-safe catalog/profile publish/rollback; real admin auth boundary; no hidden-route-as-auth |
-| VS1-R | pending | full visual regression and reviewer gate | tools/fixtures/evidence | desktop/mobile, accessibility, old save, service down, proof invalid, no ST backend/original public/root/startup diff; VS-LLM remains no-claim unless separately approved |
+| VS-CODE-1 | planning | 外置素材库、五类 schema、unknown、上传/目录/URI 安全 | `external-modules/**`、测试、docs/evidence | 当前下一批代码准入；不接 `/game/`，不接 matcher，不恢复历史代码 |
+| VS-CODE-P | pending | 受信可见文本投影与最小授权边界 | 独立受控服务边界 | VS-CODE-2 的前置依赖；避免 matcher 依赖未落地的生产投影 |
+| VS-CODE-2 | pending | deterministic matcher 和 display-only binding | `external-modules/**`、测试 | 只消费受信投影与已发布 catalog；不写玩法状态 |
+| VS-CODE-4 | pending | 管理员素材库和发布界面 | `frontend/admin/**`、`public/game-admin/**` | 真实 admin auth；catalog/profile publish/rollback |
+| VS-CODE-3 | pending | `/game/` 背景/立绘/图标展示 | `frontend/player/**`、`public/game/**` | scene/sprite/icon only；失败 unknown；不阻塞 ST Generate/input/save |
+| VS-CODE-5 | pending | 全模块回归与最终人工验收 | tools/fixtures/evidence | 桌面/移动、旧存档、服务故障、冻结路径和真实原版 Generate/readback |
 | VS-LLM | deferred | runtime visual LLM matcher strict-provider gate | future external service only after separate review | 服务端 provider-only、candidate assetId/score/reason code closed schema、no prompt/context/resource body、player no key/no provider call；当前禁止实现 |
 
-当前视觉路线的完整顺序、必要项/后置项和停机规则见 `AI_GALGAME_VISUAL_ASSET_ENHANCEMENT_MODULE_PLAN.md`。VS-DOCS-0 至 VS-DOCS-5 已形成文档闭环并等待 reviewer；即使 PASS，仍需用户明确授权，才能另开 VS-CODE-1。
+当前视觉路线的完整顺序、必要项/后置项和停机规则见 `AI_GALGAME_VISUAL_ASSET_ENHANCEMENT_MODULE_PLAN.md`。VS-DOCS-0..5 已完成；当前进入 VS-CODE-1 准入准备，不得直接落码或恢复旧 VS1 原型。
 
-VS current active deliverable is docs-only. Previous VS implementation work and evidence are preserved for traceability, but all VS1-SG / VS1-PI / VS1-AS / VS1-M implementation and verification are paused by user scope correction. The current backlog must not direct code changes to visual-asset-service, Projection Issuer, matcher/binding writer, player/admin visual UI, public builds, SillyTavern backend/original public, root dependencies, config or startup scripts. VS-LLM visual-only LLM matcher is explicitly deferred and requires a separate strict-provider gate before any implementation.
+VS current product target is the isolated visual asset enhancement module. Previous VS1-SG / VS1-PI / VS1-AS / VS1-M implementation and evidence remain historical and paused. VS-CODE-1 must be admitted as a fresh narrow batch; VS-CODE-P is required before VS-CODE-2; VS-LLM remains deferred and requires a separate strict-provider gate. No AA/UAP/WE/Arc or full-game system work belongs in this route.
 
 ## 1.1 自适应展示追加路线
 

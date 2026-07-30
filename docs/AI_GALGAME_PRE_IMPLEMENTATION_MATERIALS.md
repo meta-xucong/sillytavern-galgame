@@ -29,7 +29,7 @@
 | UI 实施规格 | `galgame.frontend-ui-implementation.v1` | 已定义，待复审 | `AI_GALGAME_FRONTEND_UI_IMPLEMENTATION_SPEC.md` | 视觉 token、组件 DOM/状态/交互、响应式、微交互、玩家文案、可访问性、素材和截图验收，不新增剧情权威 |
 | 管理端小白化规格 | `galgame.beginner-admin-redesign.v1` | 已定义，待复审 | `AI_GALGAME_BEGINNER_ADMIN_REDESIGN_SPEC.md` | 默认工作台、上架向导、作品库、演出增强、高级检查；原版能力只套壳不复刻；隐藏入口不是认证 |
 | AI 剧本导入助手规格 | `galgame.script-import-assistant.v1` / `galgame.script-import-draft.v1` | 已定义，待复审 | `AI_GALGAME_SCRIPT_IMPORT_ASSISTANT_SPEC.md` | 管理员上传 -> AI/导入期确定性整理 -> 确认上架；fail-closed 管理员认证；密钥只在服务端；导入期 deterministic summarizer 不得成为玩家剧情 fallback |
-| 视觉资产增强模块 | `galgame.visual-system.v1` / `galgame.visual-visible-projection.v1` / `galgame.visual-binding.v1` | VS-DOCS-1..5 文档闭环完成，等待 reviewer；代码暂停，历史 VS1-SG/PI/AS/M 不计入当前交付 | `AI_GALGAME_VISUAL_ASSET_ENHANCEMENT_MODULE_PLAN.md`; `AI_GALGAME_VISUAL_SYSTEM_DEVELOPMENT_SPEC.md`; VS1-* 文件为历史/未来附录 | 原版 ST 不动；五类素材库/schema、immutable unknown、上传/URI安全、可见聊天投影、deterministic baseline、score<20 unknown、no-guess、`/game` 背景/立绘/图标展示、异步降级、无障碍、release/profile/catalog/save/old-save 绑定和验收矩阵已写清；Projection/proof、素材服务、matcher/binding、player/admin UI 和 VS-LLM 只可作为后续独立准入，不得在本阶段实现 |
+| 视觉资产增强模块（当前唯一目标） | `galgame.visual-system.v1` / `galgame.visual-visible-projection.v1` / `galgame.visual-binding.v1` | VS-DOCS-1..5 已完成；当前进入 VS-CODE-1 准入准备；历史 VS1-SG/PI/AS/M 不计入功能完成 | `AI_GALGAME_VISUAL_ASSET_ENHANCEMENT_MODULE_PLAN.md`; `AI_GALGAME_VISUAL_SYSTEM_DEVELOPMENT_SPEC.md`; VS1-* 文件为历史/未来附录 | 只做外置五类素材库、可见 ST 文本匹配、deterministic score<20 unknown、`/game` 背景/立绘/图标展示、异步降级、旧存档兼容和验收；AA/UAP/WE/Arc/完整游戏系统不属于当前目标；VS-CODE-P 只实现视觉匹配所需的最小投影授权边界，不扩展为通用剧情基础设施；VS-LLM 继续后置 |
 | 验收矩阵 | `galgame.acceptance-matrix.v1` | 已定义，待复审 | UI 规范第 7.9 节与本文第 10 节 | 每项有命令、证据和通过标准 |
 
 ## 3. 存档与显示状态

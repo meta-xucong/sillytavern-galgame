@@ -1,8 +1,9 @@
 # 视觉资产增强模块独立开发文档
 
-> 文档状态：VS-DOCS-1..5 docs-only closure v1.1  
+> 文档状态：独立视觉增强模块完整开发目标 v1.2；VS-DOCS-1..5 已闭环
 > 生效日期：2026-07-30  
-> 当前阶段：只整理视觉资产增强模块的开发文档，不授权落代码  
+> 当前目标：只完成视觉资产增强模块，不推进完整 Galgame 系统其他路线
+> 当前阶段：VS-CODE-1 代码准入准备；尚未授权恢复历史视觉原型代码
 > 上位规则：`AGENTS.md`、`docs/GALGAME_NATIVE_FIRST_DEVELOPMENT_SPEC.md`  
 > 详细协议附录：`docs/AI_GALGAME_VISUAL_SYSTEM_DEVELOPMENT_SPEC.md`
 
@@ -20,9 +21,21 @@
 
 这不是新的剧情系统、战斗系统、背包系统或角色状态系统。图片永远只是对白和可见文本的演出增强。
 
+## 0.1 当前唯一产品目标
+
+当前工作目标是独立完成本模块的完整首期开发周期：
+
+1. 建立可移除的外置视觉资产库，管理 `scene`、`character`、`equipment`、`item`、`skill` 五类素材；
+2. 以原版 SillyTavern 目标聊天读回后、玩家已可见的文本投影为唯一匹配证据；
+3. 使用 deterministic matcher 对候选图片进行稳定匹配，分数低于 20 或证据不足时使用对应 unknown 图；
+4. 在自定义 `/game/` 中展示场景背景、透明人物立绘和装备/道具/技能图标；
+5. 完成素材导入、发布、回滚、失败降级、旧存档兼容和桌面/移动端验收。
+
+当前目标不包含完整游戏系统的其他建设，也不包含 AA 导入助手、UAP 自适应 HUD、Arc 发布、原版运行桥接深化或 VS-LLM。它们不是本模块的前置任务，也不得被混入本模块代码批次。
+
 ## 1. 当前唯一有效范围
 
-本阶段只做 `docs/**` 与 `.codex-longrun/**` 的文档、状态和证据整理。不得因为旧的 VS1-SG/PI/AS/M 审查通过，就继续实现或扩展视觉代码。
+本阶段的产品目标是完成本模块，但当前执行点先停在文档闭环和 VS-CODE-1 准入准备。不得直接恢复旧的 VS1-SG/PI/AS/M 原型；任何代码必须按下表重新逐批准入。
 
 ### 必须保留在本模块
 
@@ -37,7 +50,7 @@
 
 - 玩家运行时 LLM 视觉匹配、provider、生成图片或视频；这些属于单独的 `VS-LLM` 后续 gate。
 - 导入助手 AA、UAP 自适应展示、RPG HUD、装备解析、Arc 发布、原版运行桥接等其他路线。它们可以被视觉模块消费已发布的展示 profile，但不在本模块内重新设计或串联。
-- Projection Issuer、projection stub/proof、HMAC、service-to-service route、receipt、binding writer 的生产实现。它们可以作为未来安全边界写入附录，但不应成为当前文档整理之外的执行任务。
+- 完整通用的 Projection Issuer、跨业务 projection infrastructure、复杂 receipt/binding writer 平台不属于本模块；本模块只在 VS-CODE-P 实现完成视觉匹配所必需的最小可见投影和授权边界，不扩展成通用剧情或运行时基础设施。
 - 任何 ST 后端、原版前端、配置、根依赖、启动脚本或原版资源修改。
 
 ## 2. 目标架构
@@ -66,20 +79,16 @@
 
 | 阶段 | 当前定位 | 只解决什么 | 当前是否落代码 |
 | --- | --- | --- | --- |
-| VS-DOCS-0 | 当前阶段 | 统一范围、依赖、必需/后置项、证据和停机条件 | 否 |
-| VS-DOCS-1 | 文档子阶段 | 资产库、五类 schema、unknown 素材、上传/目录/URI 安全 | 否 |
-| VS-DOCS-2 | 文档子阶段 | 可见投影、确定性候选过滤、评分、阈值和 no-guess | 否 |
-| VS-DOCS-3 | 文档子阶段 | 背景/立绘/图标展示、异步降级、无障碍和移动端 | 否 |
-| VS-DOCS-4 | 文档子阶段 | release/profile/catalog/save/old-save 绑定与回滚兼容 | 否 |
-| VS-DOCS-5 | 文档子阶段 | fixture、静态、浏览器、服务不可用和冻结边界验收矩阵 | 否 |
-| VS-CODE-1 | 后续独立准入 | 外置素材库和目录安全实现 | 未授权 |
-| VS-CODE-2 | 后续独立准入 | deterministic matcher 和 display-only binding | 未授权 |
-| VS-CODE-3 | 后续独立准入 | `/game/` 背景/立绘/图标展示 | 未授权 |
-| VS-CODE-4 | 后续独立准入 | 管理员素材库和发布界面 | 未授权 |
-| VS-CODE-5 | 后续独立准入 | 全模块回归与最终人工验收 | 未授权 |
+| VS-DOCS-0..5 | 已完成 | 统一范围、依赖、必需/后置项、协议、验收和停机条件 | 已完成；仅 docs/.codex-longrun |
+| VS-CODE-1 | 当前准入准备 | 外置素材库、五类 schema、unknown、上传/目录/URI 安全 | 尚未落码 |
+| VS-CODE-P | VS-CODE-1 后置准入 | 受信可见文本投影与最小授权边界，供 matcher 使用 | 尚未落码 |
+| VS-CODE-2 | 后续独立准入 | deterministic matcher 和 display-only binding | 尚未落码 |
+| VS-CODE-4 | 后续独立准入 | 管理员素材库和发布界面 | 尚未落码 |
+| VS-CODE-3 | 后续独立准入 | `/game/` 背景/立绘/图标展示 | 尚未落码 |
+| VS-CODE-5 | 后续独立准入 | 全模块回归与最终人工验收 | 尚未落码 |
 | VS-LLM | 后续独立 gate | 可选服务端视觉 LLM 重排 | 明确后置 |
 
-“模块开发完”在当前语境下先指 VS-DOCS-0 至 VS-DOCS-5 的文档闭环完成；不等于已经授权 VS-CODE-1 至 VS-CODE-5。
+“模块开发完”在当前语境下指 VS-CODE-1、VS-CODE-P、VS-CODE-2、VS-CODE-4、VS-CODE-3、VS-CODE-5 全部通过验收；VS-DOCS-0..5 只是代码开发前置闭环，不代表视觉功能已经可用。
 
 ## 4. 必需项与可后置项
 
@@ -408,17 +417,20 @@ player save 只能保存视觉引用和 UI 展示状态，不保存剧情事实�
 - `public/game/**`、`public/game-admin/**` 只能由源码重建；
 - external modules 可移除，不 import/patch ST backend。
 
-## 10. VS-DOCS 完成后的停机条件
+## 10. 当前开发停机条件
 
-VS-DOCS-1..5 完成后只能停在 `verifying` 等待审查。不得标全项目 done，不得自动进入 VS-CODE。
+VS-DOCS-1..5 已完成并通过审查，当前停在 VS-CODE-1 code-admission preparation。即使用户确认本模块是当前唯一目标，也不能跳过逐批准入、源码审计和验证门禁。
 
-审查通过后，下一步也不是直接落代码，而是由用户明确授权某一个 VS-CODE 批次，再单独写 code-admission：
+本模块后续按以下顺序推进：
 
 1. VS-CODE-1：资产库和目录安全；
-2. VS-CODE-2：deterministic matcher 和 display-only binding；
-3. VS-CODE-3：`/game/` 背景/立绘/图标展示；
+2. VS-CODE-P：视觉匹配所需的最小受信可见投影/授权边界；
+3. VS-CODE-2：deterministic matcher 和 display-only binding；
 4. VS-CODE-4：管理员素材库和发布界面；
-5. VS-CODE-5：完整回归和人工验收。
+5. VS-CODE-3：`/game/` 背景/立绘/图标展示；
+6. VS-CODE-5：完整回归和人工验收。
+
+每一批都必须由独立 code-admission 明确允许；历史 VS1-SG/PI/AS/M 的 PASS 不能自动转为当前批次授权。
 
 ## 11. 历史材料如何处理
 

@@ -1,6 +1,6 @@
 # AI Galgame 外置视觉系统开发规格
 
-> 文档状态：visual asset docs-only review v1.5 / VS-DOCS-1..5 closure awaiting review  
+> 文档状态：独立视觉增强模块当前产品规格 v1.6 / VS-DOCS-1..5 已闭环
 > 生效日期：2026-07-30  
 > 上位规则：`AGENTS.md`、`docs/GALGAME_NATIVE_FIRST_DEVELOPMENT_SPEC.md`  
 > 总控文档：`docs/AI_GALGAME_VISUAL_ASSET_ENHANCEMENT_MODULE_PLAN.md`  
@@ -8,9 +8,9 @@
 
 ## 0. 当前用户范围纠偏
 
-2026-07-30 用户重新确认：当前只要求“视觉资产匹配与扩展方案”的开发文档，不授权继续落视觉系统业务代码。
+2026-07-30 用户重新确认：当前唯一产品目标是完成“视觉资产匹配与扩展”模块，不推进完整 Galgame 系统的其他路线。当前执行点为 VS-CODE-1 准入准备，历史视觉原型不能自动恢复，业务代码仍需逐批 code-admission。
 
-因此，本轮只保留和整理设计文档：
+因此，本文只定义当前独立视觉增强模块的产品和协议边界；后续代码必须按总控文档的 VS-CODE-1、VS-CODE-P、VS-CODE-2、VS-CODE-4、VS-CODE-3、VS-CODE-5 顺序单独准入：
 
 - 建立外置视觉资产库，资产类型限定为 `scene`、`character`、`equipment`、`item`、`skill`。
 - 每张图由管理员预设标签、来源、授权和安全元数据，后续实现时按已发布 catalog/version/hash 精确引用。
