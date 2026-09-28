@@ -135,13 +135,23 @@ try {
         visualPresentation: visualProfile,
         presentation: { defaultBackgroundAsset: '', titleBackgroundAsset: '' },
         resourceBindings: { assets: {}, characters: {} },
+        visualBindings: {
+            schemaVersion: 'galgame.visual-character-bindings.v1',
+            characters: [{
+                characterKey: '人类骑士',
+                aliases: ['人类骑士'],
+                assetId: catalog.assetRefs.find((ref) => ref.assetType === 'character')?.assetId || '',
+                assetVersion: 1,
+                channel: 'character',
+            }],
+        },
     };
     await evaluate(page.sessionId, 'window.__GALGAME_TEST_SET_MANIFEST__(' + JSON.stringify(manifest) + ', { release: ' + JSON.stringify(release) + ' });');
     const message = {
         role: 'character',
         speaker: '人类骑士',
-        displayText: '角色: 人类\\n场景: 森林\\n装备: 剑\\n道具: 钥匙\\n技能: 火球术',
-        text: '角色: 人类\\n场景: 森林\\n装备: 剑\\n道具: 钥匙\\n技能: 火球术',
+        displayText: '角色: 人类\n场景: 森林\n装备: 剑\n道具: 钥匙\n技能: 火球术',
+        text: '角色: 人类\n场景: 森林\n装备: 剑\n道具: 钥匙\n技能: 火球术',
     };
     result.request.currentMessageHash = digest(message.text);
     await evaluate(page.sessionId, 'window.__GALGAME_TEST_RENDER_CHAT__(' + JSON.stringify({

@@ -69,6 +69,7 @@ const coreVisualAvailability = {
     contextKey: '',
     baseContextKey: '',
     context: null,
+    contextPromise: null,
     nextProbeAt: 0,
 };
 let runtimeBridgeDiscoveryPromise = null;
@@ -1327,6 +1328,7 @@ function resetCoreVisualAvailability(baseContextKey = '') {
     coreVisualAvailability.contextKey = '';
     coreVisualAvailability.baseContextKey = baseContextKey;
     coreVisualAvailability.context = null;
+    coreVisualAvailability.contextPromise = null;
     coreVisualAvailability.nextProbeAt = 0;
 }
 
@@ -1365,37 +1367,45 @@ async function readCoreVisualContext(baseUrl) {
     if (coreVisualAvailability.context && now < coreVisualAvailability.nextProbeAt) {
         return coreVisualAvailability.context;
     }
-    try {
-        const response = await fetch(`${baseUrl}/v1/core/visual-context`, {
-            method: 'GET',
-            credentials: 'omit',
-            headers: { accept: 'application/json' },
-        });
-        const body = await response.json().catch(() => null);
-        if (!response.ok) {
-            markCoreVisualUnavailable(body?.error?.code || 'VISUAL_CORE_CONTEXT_UNAVAILABLE');
-            return null;
-        }
-        if (!(await validateCoreVisualContext(body))) {
-            markCoreVisualUnavailable('VISUAL_CORE_CONTEXT_INVALID');
-            return null;
-        }
-        coreVisualAvailability.contextKey = getCoreVisualContextKey(baseUrl, body);
-        coreVisualAvailability.nextProbeAt = Date.now() + VISUAL_CONTEXT_REVALIDATION_INTERVAL_MS;
-        coreVisualAvailability.reasonCode = '';
-        coreVisualAvailability.skipRequests = false;
-        if (!body.enabled) {
-            coreVisualAvailability.context = null;
-            coreVisualAvailability.skipRequests = true;
-            coreVisualAvailability.reasonCode = 'VISUAL_CORE_NO_ACTIVE_CATALOG';
-            return null;
-        }
-        coreVisualAvailability.context = body;
-        return body;
-    } catch (_error) {
-        markCoreVisualUnavailable('VISUAL_CORE_CONTEXT_UNAVAILABLE');
-        return null;
+    if (coreVisualAvailability.contextPromise) {
+        return coreVisualAvailability.contextPromise;
     }
+    coreVisualAvailability.contextPromise = (async () => {
+        try {
+            const response = await fetch(`${baseUrl}/v1/core/visual-context`, {
+                method: 'GET',
+                credentials: 'omit',
+                headers: { accept: 'application/json' },
+            });
+            const body = await response.json().catch(() => null);
+            if (!response.ok) {
+                markCoreVisualUnavailable(body?.error?.code || 'VISUAL_CORE_CONTEXT_UNAVAILABLE');
+                return null;
+            }
+            if (!(await validateCoreVisualContext(body))) {
+                markCoreVisualUnavailable('VISUAL_CORE_CONTEXT_INVALID');
+                return null;
+            }
+            coreVisualAvailability.contextKey = getCoreVisualContextKey(baseUrl, body);
+            coreVisualAvailability.nextProbeAt = Date.now() + VISUAL_CONTEXT_REVALIDATION_INTERVAL_MS;
+            coreVisualAvailability.reasonCode = '';
+            coreVisualAvailability.skipRequests = false;
+            if (!body.enabled) {
+                coreVisualAvailability.context = null;
+                coreVisualAvailability.skipRequests = true;
+                coreVisualAvailability.reasonCode = 'VISUAL_CORE_NO_ACTIVE_CATALOG';
+                return null;
+            }
+            coreVisualAvailability.context = body;
+            return body;
+        } catch (_error) {
+            markCoreVisualUnavailable('VISUAL_CORE_CONTEXT_UNAVAILABLE');
+            return null;
+        } finally {
+            coreVisualAvailability.contextPromise = null;
+        }
+    })();
+    return coreVisualAvailability.contextPromise;
 }
 
 async function validateCoreVisualContext(body) {
