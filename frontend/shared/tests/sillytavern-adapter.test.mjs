@@ -364,6 +364,30 @@ assert.equal(hiddenInstructionDisplayText.includes('scratchpad'), false);
 assert.equal(hiddenInstructionDisplayText.includes('树丛忽然晃动。'), true);
 assert.equal(hiddenInstructionDisplayText.includes('“把剑握稳。”'), true);
 
+const fencedThinkingDisplayText = formatVisualNovelDisplayText([
+    '```',
+    '[thinking]',
+    '1. Internal planning must stay hidden.',
+    '```',
+    '行动顺序：Lila > 你 > Pippa。',
+].join('\n'));
+assert.equal(fencedThinkingDisplayText.includes('Internal planning'), false);
+assert.equal(fencedThinkingDisplayText.includes('行动顺序：Lila > 你 > Pippa。'), true);
+
+const combatSegments = createVisualNovelDisplaySegments([
+    '他们的感知检定：d20 + 1 = 8。链锤卫兵先开口："赫娅怎么还没回报？"短戟卫兵笑得很贱："她还在里面。"',
+    '先攻检定：你 d20 + 0 = 14。行动顺序：Lila > 你 > Pippa。',
+].join('\n\n'), { fallbackSpeaker: 'Dungeon Master' });
+assert.equal(combatSegments.some((segment) => /^["*]+$/u.test(segment.text)), false);
+assert.equal(combatSegments.some((segment) => segment.speaker === '行动顺序'), false);
+
+const longMessageWithTailChoices = `${'这是一段较长的战斗叙述。'.repeat(400)}\n\n❤ HP: 27/32\n📃 Status: 战斗结束\n\n可选行动：\n1. 搜刮现场\n2. 检查暗门\n3. 带同伴离开`;
+assert.equal(longMessageWithTailChoices.length > 4000, true);
+assert.deepEqual(
+    extractSuggestedActionsFromOriginalText(longMessageWithTailChoices).suggestedActions.map((action) => action.label),
+    ['搜刮现场', '检查暗门', '带同伴离开'],
+);
+
 const singleLineThinkingMarkerText = formatVisualNovelDisplayText('``` [thinking] ``` 你用气若游丝的声音命令尼布：“放囚犯……制造混乱……逃。”');
 assert.equal(singleLineThinkingMarkerText.includes('thinking'), false);
 assert.equal(singleLineThinkingMarkerText.startsWith('你用气若游丝的声音'), true);

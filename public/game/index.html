@@ -4,10 +4,11 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="galgame-config-service" content="http://127.0.0.1:8791">
+    <meta name="galgame-visual-core-service" content="http://127.0.0.1:8798">
     <meta name="galgame-sillytavern-runtime-base" content="">
     <meta name="galgame-original-runtime-bridge" content="">
     <title>Galgame Player</title>
-    <link rel="stylesheet" href="./styles.css?v=auto-6490e3ff4a10">
+    <link rel="stylesheet" href="./styles.css?v=auto-dbada1e83e91">
 </head>
 <body>
     <main class="app-shell">
@@ -50,8 +51,7 @@
         </section>
 
         <section id="gameScreen" class="screen game-screen" aria-label="游戏画面" hidden>
-            <div class="stage-backdrop" id="stageBackdrop"></div>
-            <div class="stage-heroine" aria-hidden="true"></div>
+            <div class="stage-backdrop" id="stageBackdrop" aria-hidden="true"></div>
             <div class="stage-topbar">
                 <div class="hud-actions" aria-label="游戏菜单">
                     <button id="historyButton" class="ghost-action" type="button">历史</button>
@@ -62,9 +62,17 @@
                 </div>
                 <p id="stageTitle">当前故事</p>
             </div>
+            <section id="visualPresentation" class="visual-presentation" aria-label="画面素材">
+                <div id="visualIconStrip" class="visual-icon-strip" aria-label="视觉图标"></div>
+                <p id="visualStatus" class="visual-status" role="status" aria-live="polite"></p>
+            </section>
             <section id="adaptivePanels" class="adaptive-panels" aria-label="当前信息" hidden></section>
             <section id="dialogueBox" class="dialogue-panel" aria-label="剧情" aria-live="polite">
-                <p id="speakerName" class="speaker-name">系统</p>
+                <div class="dialogue-character-dock">
+                    <div class="stage-heroine" aria-hidden="true"></div>
+                </div>
+                <div class="dialogue-content">
+                    <p id="speakerName" class="speaker-name">系统</p>
                 <p id="dialogueText" class="dialogue-text">正在准备故事。</p>
                 <p id="stageStatus" class="stage-status" aria-live="polite"></p>
                 <div id="suggestedActions" class="suggested-actions" aria-label="可选行动" hidden></div>
@@ -74,6 +82,7 @@
                 </form>
                 <div id="recoveryActions" class="recovery-actions" hidden>
                     <button id="refreshStoryButton" type="button">再试一次</button>
+                </div>
                 </div>
             </section>
         </section>
@@ -121,6 +130,6 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-    <script type="module" src="./app.js?v=auto-6490e3ff4a10"></script>
+    <script type="module" src="./app.js?v=auto-dbada1e83e91"></script>
 </body>
 </html>

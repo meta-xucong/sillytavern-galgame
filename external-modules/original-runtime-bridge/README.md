@@ -13,15 +13,23 @@ For this repository's local Galgame setup, prefer the root script:
 ```
 
 It starts the config service and this bridge with the same local proof secret,
-points both services at `http://127.0.0.1:8000`, and replaces stale local
+points both services at `http://127.0.0.1:8001`, and replaces stale local
 bridge/config-service processes before starting fresh ones.
 
 ```powershell
-$env:SILLYTAVERN_BASE_URL = 'http://127.0.0.1:8000'
-$env:GALGAME_ALLOWED_ORIGINS = 'http://127.0.0.1:8000'
+$env:SILLYTAVERN_BASE_URL = 'http://127.0.0.1:8001'
+$env:GALGAME_SILLYTAVERN_BASE_URL = 'http://127.0.0.1:8001'
+$env:GALGAME_ALLOWED_ORIGINS = 'http://127.0.0.1:8001'
 $env:GALGAME_BRIDGE_PROOF_SECRET = '<runtime proof signing secret>'
 node external-modules\original-runtime-bridge\server.mjs
 ```
+
+The root startup scripts read the same local proof-secret file without putting
+the value in command arguments or logs. Missing or empty proof configuration
+fails closed; the config service health endpoint reports
+`runtimeProof.configured=false` and the issuer returns 503. The bridge health
+endpoint reports `proofRequired=true`; generation rejects every request when
+the proof secret is absent. The bridge never reads the SillyTavern API key.
 
 Default URL: `http://127.0.0.1:8795`
 

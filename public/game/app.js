@@ -1,22 +1,28 @@
-import { createReleaseStore } from './shared/config-service.js?v=auto-6490e3ff4a10';
+import { createReleaseStore } from './shared/config-service.js?v=auto-dbada1e83e91';
 import {
     getAssetUrl,
+    resolveVisualCharacterBinding,
+    getActiveSillyTavernBindings,
     materializeManifestForArc,
     resolveAdaptivePresentationProfileBinding,
-} from './shared/protocol.js?v=auto-6490e3ff4a10';
+} from './shared/protocol.js?v=auto-dbada1e83e91';
 import {
     AUTO_SAVE_ID,
     createCanonicalPlayerSaveRelease,
     createPlayerSaveStore,
     manualSaveIds,
-} from './shared/player-save.js?v=auto-6490e3ff4a10';
+} from './shared/player-save.js?v=auto-dbada1e83e91';
 import {
+    createCoreVisualDisplayEntityHints,
+    createCoreVisualDisplayEntityKey,
+    detectIncompleteRpgResponse,
     createVisualNovelDisplaySegments,
     OriginalRuntimeBridgeClient,
     SillyTavernOriginalChatBridge,
-} from './shared/sillytavern-adapter.js?v=auto-6490e3ff4a10';
-import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-6490e3ff4a10';
-import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-6490e3ff4a10';
+} from './shared/sillytavern-adapter.js?v=auto-dbada1e83e91';
+import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-dbada1e83e91';
+import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-dbada1e83e91';
+import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-dbada1e83e91';
 
 const releaseStore = createReleaseStore(null, { fallbackToLocal: false });
 const playerSaveStore = createPlayerSaveStore();
@@ -26,7 +32,56 @@ const runtimeBridge = new OriginalRuntimeBridgeClient({
     sillyTavernBaseUrl: getSillyTavernRuntimeBaseUrl(),
 });
 const ORIGINAL_RUNTIME_BRIDGE_PORTS = [8795, 8798, 8799, 8800, 8796, 8797];
+const VISUAL_ICON_TYPES = Object.freeze(['equipment', 'item', 'skill']);
+function getVisualCardModule(type) {
+    if (type === 'item') return 'inventory';
+    if (type === 'skill') return 'abilities';
+    return '';
+}
+
+function getVisualCardType(moduleId) {
+    if (moduleId === 'inventory') return 'item';
+    if (moduleId === 'abilities') return 'skill';
+    return '';
+}
+const RIGHT_TOP_ADAPTIVE_MODULES = new Set(['inventory', 'abilities']);
+const CORE_VISUAL_TYPES = Object.freeze(['scene', 'character', 'equipment', 'item', 'skill']);
+const CORE_VISUAL_DECISION_REQUEST_VERSION = 'galgame.visual-core-visual-decisions-request.v2';
+const CORE_VISUAL_DECISION_RESPONSE_VERSION = 'galgame.visual-core-visual-decisions-response.v2';
+const CORE_VISUAL_CONTEXT_RESPONSE_VERSION = 'galgame.visual-core-context.v1';
+const CORE_VISUAL_PLACEHOLDER_URL = './assets/visual-placeholder.svg';
+const VISUAL_CONTEXT_REVALIDATION_INTERVAL_MS = 30_000;
+const CORE_VISUAL_LOCAL_DISABLE_CODES = new Set([
+    'VISUAL_CORE_DISABLED',
+    'VISUAL_CORE_NO_ACTIVE_CATALOG',
+    'VISUAL_CORE_SERVICE_UNAVAILABLE',
+    'VISUAL_CORE_SERVICE_REJECTED',
+    'VISUAL_CORE_SERVICE_INVALID_RESPONSE',
+    'VISUAL_CORE_CONTEXT_FORBIDDEN_TRANSPORT',
+    'VISUAL_CORE_CONTEXT_ORIGIN_REJECTED',
+    'VISUAL_CORE_CONTEXT_METHOD_NOT_ALLOWED',
+    'VISUAL_CORE_CONTEXT_INVALID',
+    'VISUAL_CORE_CONTEXT_UNAVAILABLE',
+]);
+const coreVisualAvailability = {
+    skipRequests: false,
+    reasonCode: '',
+    contextKey: '',
+    baseContextKey: '',
+    context: null,
+    nextProbeAt: 0,
+};
 let runtimeBridgeDiscoveryPromise = null;
+let visualBundleRequestToken = 0;
+let coreVisualHasVerifiedPresentation = false;
+// Keep the last verified decision per visual layer. A new dialogue may update
+// one layer while the established scene, character or icon remains valid.
+const coreVisualPresentationState = new Map();
+// Keep every matched visible entity for the detail drawer. The render layer
+// uses the first decision for the icon, while the drawer can show all items.
+const coreVisualPresentationDetails = new Map();
+const activeVisualDetailHints = new Map();
+let immediateVisualCharacterIdentity = '';
 
 const ui = {
     titleBackdrop: document.querySelector('#titleBackdrop'),
@@ -35,6 +90,9 @@ const ui = {
     titleScreen: document.querySelector('#titleScreen'),
     stageBackdrop: document.querySelector('#stageBackdrop'),
     stageHeroine: document.querySelector('.stage-heroine'),
+    visualPresentation: document.querySelector('#visualPresentation'),
+    visualIconStrip: document.querySelector('#visualIconStrip'),
+    visualStatus: document.querySelector('#visualStatus'),
     gameTitle: document.querySelector('#gameTitle'),
     stageTitle: document.querySelector('#stageTitle'),
     releaseNote: document.querySelector('#releaseNote'),
@@ -83,8 +141,8 @@ const adaptiveTemplateMatrix = Object.freeze({
         order: ['actions', 'notes', 'events', 'relationships', 'locations', 'objectives'],
     },
     'rpg-adventure': {
-        primary: 'rpg-status',
-        order: ['rpg-status', 'dice', 'inventory', 'abilities', 'resources', 'objectives', 'quests', 'locations', 'factions', 'notes'],
+    primary: 'rpg-status',
+    order: ['rpg-status', 'dice', 'inventory', 'abilities', 'resources', 'objectives', 'quests', 'locations', 'factions', 'notes'],
     },
     'romance-social': {
         primary: 'affection',
@@ -124,6 +182,9 @@ let typewriterRunning = false;
 let typewriterFullText = '';
 let adaptiveDetailReturnFocus = null;
 let adaptiveDetailReturnModule = '';
+let activeAdaptivePanelResults = new Map();
+let visibleRuntimeChatKey = '';
+const visibleRuntimeMessages = new Map();
 
 if (!globalThis.__GALGAME_PLAYER_TEST_DISABLE_BOOTSTRAP__) {
     bootstrap().catch(() => {
@@ -132,9 +193,12 @@ if (!globalThis.__GALGAME_PLAYER_TEST_DISABLE_BOOTSTRAP__) {
 }
 
 if (globalThis.__GALGAME_PLAYER_TEMPLATE_MATRIX_SMOKE__) {
-    globalThis.__GALGAME_TEST_SET_MANIFEST__ = (nextManifest, { release: nextRelease = null } = {}) => {
+    globalThis.__GALGAME_TEST_SET_MANIFEST__ = (nextManifest, { release: nextRelease = null, render = true } = {}) => {
         manifest = nextManifest;
         release = nextRelease;
+        if (!render) {
+            return;
+        }
         ui.titleScreen.hidden = true;
         ui.gameScreen.hidden = false;
         renderTitle();
@@ -146,6 +210,14 @@ if (globalThis.__GALGAME_PLAYER_TEMPLATE_MATRIX_SMOKE__) {
         const message = snapshot?.messages?.[activeMessageIndex] || snapshot?.messages?.[0] || null;
         renderAdaptivePanels(message, snapshot, activeMessageIndex);
     };
+    globalThis.__GALGAME_TEST_RENDER_CHAT__ = (snapshot, options = {}) => {
+        activeChatSnapshot = snapshot;
+        renderChatSnapshot(snapshot, options);
+    };
+    globalThis.__GALGAME_TEST_START__ = () => startNewGame();
+    globalThis.__GALGAME_TEST_CONTINUE__ = () => continueFromSaveOrLatest();
+    globalThis.__GALGAME_TEST_LOAD_SAVE__ = (saveId = AUTO_SAVE_ID) => loadPlayerSave(saveId);
+    globalThis.__GALGAME_TEST_GET_ACTIVE_CHAT__ = () => activeChatSnapshot;
 }
 
 async function bootstrap() {
@@ -382,11 +454,13 @@ function playableEntryMatchesRelease(entry, targetRelease) {
 
 function renderStage() {
     clearDialoguePlayback();
+    resetCoreVisualAvailability();
     ui.stageTitle.textContent = manifest?.title || '故事尚未发布';
     ui.stageBackdrop.style.backgroundImage = manifest
         ? `url("${getAssetUrl(manifest, manifest.presentation?.defaultBackgroundAsset)}")`
         : '';
     ui.stageHeroine.style.backgroundImage = `url("${getTitleSpriteUrl()}")`;
+    resetVisualPresentation();
     ui.speakerName.textContent = getMainCharacterName();
     ui.dialogueText.textContent = '正在连接故事。';
     applySegmentPresentation({ type: 'narration' });
@@ -425,6 +499,23 @@ async function continueFromSaveOrLatest() {
     await ensureReleaseReady().catch(() => {});
     const autoSlot = await playerSaveStore.loadSlot(AUTO_SAVE_ID).catch(() => null);
     if (autoSlot && saveSlotMatchesCurrentRelease(autoSlot)) {
+        const latestRecovery = await tryRecoverLatestBoundChatForSeedAutoSlot({
+            autoSlot,
+            seedChatId: getCurrentBoundChatSeedId(),
+            loadLatestBoundChat: () => chatBridge.loadLatestBoundChat(manifest),
+        });
+        if (latestRecovery.snapshot?.ok) {
+            ui.titleScreen.hidden = true;
+            ui.gameScreen.hidden = false;
+            renderStage();
+            activeChatSnapshot = latestRecovery.snapshot;
+            renderChatSnapshot(latestRecovery.snapshot, getLatestSnapshotRenderOptions(latestRecovery.snapshot));
+            await persistAutoSave(latestRecovery.snapshot);
+            if (snapshotAwaitsReply(latestRecovery.snapshot)) {
+                void requestOriginalReply(latestRecovery.snapshot);
+            }
+            return;
+        }
         const loaded = await loadPlayerSave(autoSlot.saveId, { silentFailure: true });
         if (loaded) {
             return;
@@ -434,6 +525,62 @@ async function continueFromSaveOrLatest() {
         showToast('自动进度不属于当前故事，已改为读取当前故事');
     }
     await enterGalgameStage('continue');
+}
+
+function getCurrentBoundChatSeedId() {
+    const currentArcId = release?.activeArcId
+        || release?.arcId
+        || manifest?.arcId
+        || manifest?.defaultArcId
+        || '';
+    return getActiveSillyTavernBindings(manifest, currentArcId)?.chatSeedId || '';
+}
+
+function normalizeBoundChatId(value) {
+    return String(value || '')
+        .replace(/\\/g, '/')
+        .split('/')
+        .pop()
+        .replace(/\.jsonl$/i, '')
+        .trim();
+}
+
+async function tryRecoverLatestBoundChatForSeedAutoSlot({
+    autoSlot,
+    seedChatId,
+    loadLatestBoundChat,
+}) {
+    const normalizedAutoChatId = normalizeBoundChatId(autoSlot?.chatId);
+    const normalizedSeedChatId = normalizeBoundChatId(seedChatId);
+    if (!normalizedAutoChatId || !normalizedSeedChatId || normalizedAutoChatId !== normalizedSeedChatId) {
+        return {
+            attempted: false,
+            snapshot: null,
+        };
+    }
+
+    try {
+        const snapshot = await loadLatestBoundChat();
+        const normalizedSnapshotChatId = normalizeBoundChatId(snapshot?.fileName);
+        if (
+            snapshot?.ok
+            && snapshot.isSeed === false
+            && normalizedSnapshotChatId
+            && normalizedSnapshotChatId !== normalizedSeedChatId
+        ) {
+            return {
+                attempted: true,
+                snapshot,
+            };
+        }
+    } catch {
+        // The existing Continue fallback reads the seed exactly below.
+    }
+
+    return {
+        attempted: true,
+        snapshot: null,
+    };
 }
 
 async function openHistoryDrawer() {
@@ -957,6 +1104,9 @@ function renderChatSnapshot(snapshot, options = {}) {
     if (message) {
         const waitingForReply = snapshotAwaitsReply(snapshot);
         const displayingLatest = messageIndex === snapshot.messages.length - 1;
+        const incompleteReply = message.role === 'character'
+            && displayingLatest
+            && detectIncompleteRpgResponse(message.displayText || message.text || '');
         const segments = createVisualNovelDisplaySegments(message.displayText || message.text, {
             fallbackSpeaker: message.role === 'player' ? '你' : message.speaker || getMainCharacterName(),
             role: message.role,
@@ -974,16 +1124,1142 @@ function renderChatSnapshot(snapshot, options = {}) {
             message,
             waitingForReply,
             displayingLatest,
+            incompleteReply,
         };
         renderAdaptivePanels(message, snapshot, messageIndex);
         renderActiveDialogueSegment({
             animate: shouldAnimateMessage(message, waitingForReply, displayingLatest, options),
         });
+        rememberRenderedVisualRuntimeMessage(snapshot, message, messageIndex);
+        scheduleVisualBundleRefresh(snapshot, messageIndex);
         return;
     } else {
         renderBridgeUnavailable();
         return;
     }
+}
+
+function scheduleVisualBundleRefresh(snapshot, messageIndex) {
+    const token = visualBundleRequestToken + 1;
+    visualBundleRequestToken = token;
+    immediateVisualCharacterIdentity = '';
+    coreVisualPresentationDetails.clear();
+    renderCoreVisualFallback({ preserveVerified: true });
+    // Bind the active speaker locally as soon as the segment is shown. The
+    // remote visual decision still validates and corrects the result later.
+    void renderCoreVisualImmediateCharacter(snapshot, messageIndex, token);
+    void renderCoreVisualPresentation(snapshot, messageIndex, token);
+}
+
+function getActiveVisualSpeakerContext(message, messageIndex) {
+    const activeSegment = activeRenderContext && activeMessageIndex === messageIndex
+        ? activeMessageSegments[activeSegmentIndex]
+        : null;
+    if (!activeSegment) {
+        return {
+            role: message?.role === 'player' ? 'player' : 'character',
+            speaker: message?.role === 'player' ? '你' : message?.speaker || getMainCharacterName(),
+        };
+    }
+    if (message?.role === 'system') {
+        return { role: 'system', speaker: '系统' };
+    }
+    const role = activeSegment.type === 'narration'
+        ? 'narrator'
+        : activeSegment.type === 'player'
+            ? 'player'
+            : activeSegment.type === 'system'
+                ? 'system'
+                : 'character';
+    const speaker = activeSegment.type === 'narration'
+        ? '旁白'
+        : activeSegment.type === 'player'
+            ? '你'
+            : activeSegment.type === 'system'
+                ? '系统'
+                : activeSegment.speaker || message?.speaker || getMainCharacterName();
+    return { role, speaker };
+}
+
+async function renderCoreVisualImmediateCharacter(snapshot, messageIndex, token) {
+    try {
+        const baseUrl = getCoreVisualServiceUrl();
+        if (!baseUrl || token !== visualBundleRequestToken || !manifest) {
+            return;
+        }
+        const context = coreVisualAvailability.context || await readCoreVisualContext(baseUrl);
+        const profile = context?.visualProfile;
+        if (!profile || token !== visualBundleRequestToken) {
+            return;
+        }
+        const message = snapshot?.messages?.[messageIndex];
+        if (!message) {
+            return;
+        }
+        const speakerContext = getActiveVisualSpeakerContext(message, messageIndex);
+        if (speakerContext.role !== 'character') {
+            return;
+        }
+        const arcId = release?.activeArcId || release?.arcId || manifest?.defaultArcId || '';
+        const binding = resolveVisualCharacterBinding(manifest, {
+            name: speakerContext.speaker,
+            role: speakerContext.role,
+            arcId,
+            allowCharacterPoolFallback: false,
+        });
+        const assetVersion = Number(binding?.assetVersion || 0);
+        if (!binding?.assetId || !Number.isSafeInteger(assetVersion) || assetVersion <= 0) {
+            return;
+        }
+        const decision = {
+            entityType: 'character',
+            assetId: binding.assetId,
+            assetVersion,
+            contentPath: `/v1/core/catalogs/${profile.catalogId}/${profile.catalogRevision}/assets/${binding.assetId}/${assetVersion}/content`,
+        };
+        immediateVisualCharacterIdentity = `${decision.assetId}:${decision.assetVersion}`;
+        await applyCoreVisualCharacter(decision, baseUrl, token);
+    } catch (_error) {
+        // The validated remote request remains the authority if local binding
+        // cannot be applied (for example while reconnecting to the service).
+    }
+}
+
+function resetVisualPresentation() {
+    visualBundleRequestToken += 1;
+    coreVisualHasVerifiedPresentation = false;
+    immediateVisualCharacterIdentity = '';
+    coreVisualPresentationState.clear();
+    coreVisualPresentationDetails.clear();
+    restoreDefaultVisualLayers();
+    ui.visualIconStrip?.replaceChildren();
+    setVisualStatus('');
+}
+
+function renderCoreVisualFallback({ preserveVerified = false } = {}) {
+    if (preserveVerified && coreVisualHasVerifiedPresentation) {
+        return;
+    }
+    // Runtime failures and low-confidence matches use the same neutral
+    // placeholder for every visual layer. Authored defaults are only used
+    // when entering/resetting a stage, never as a visual-service fallback.
+    renderCoreVisualPlaceholder();
+    coreVisualHasVerifiedPresentation = false;
+    setVisualStatus('');
+}
+
+function renderCoreVisualPlaceholder() {
+    applyCoreVisualPlaceholderBackground();
+    applyCoreVisualPlaceholderCharacter();
+    renderCoreVisualIconStrip();
+}
+
+async function renderCoreVisualPresentation(snapshot, messageIndex, token) {
+    try {
+        const baseUrl = getCoreVisualServiceUrl();
+        if (!baseUrl) {
+            renderCoreVisualFallback({ preserveVerified: false });
+            return;
+        }
+        const context = await readCoreVisualContext(baseUrl);
+        if (!context?.enabled || !context.visualProfile) {
+            renderCoreVisualFallback({ preserveVerified: false });
+            return;
+        }
+        const message = snapshot?.messages?.[messageIndex];
+        if (!message) {
+            renderCoreVisualFallback({ preserveVerified: false });
+            return;
+        }
+        const request = await createCoreVisualDecisionRequest({
+            snapshot,
+            message,
+            messageIndex,
+            visualProfile: context.visualProfile,
+        });
+        const response = await fetch(`${baseUrl}/v1/core/visual-decisions`, {
+            method: 'POST',
+            credentials: 'omit',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(request),
+        });
+        if (token !== visualBundleRequestToken) {
+            return;
+        }
+        if (!response.ok) {
+            markCoreVisualUnavailable('VISUAL_CORE_SERVICE_REJECTED');
+            renderCoreVisualFallback({ preserveVerified: false });
+            setVisualStatus('');
+            return;
+        }
+        const body = await response.json();
+        if (body?.schemaVersion !== CORE_VISUAL_DECISION_RESPONSE_VERSION) {
+            markCoreVisualUnavailable('VISUAL_CORE_SERVICE_INVALID_RESPONSE');
+            renderCoreVisualFallback({ preserveVerified: false });
+            setVisualStatus('');
+            return;
+        }
+        if (body.ok !== true) {
+            markCoreVisualUnavailable(body?.error?.code || 'VISUAL_CORE_SERVICE_INVALID_RESPONSE');
+            renderCoreVisualFallback({ preserveVerified: false });
+            setVisualStatus('');
+            return;
+        }
+        if (!Array.isArray(body.decisions)) {
+            markCoreVisualUnavailable('VISUAL_CORE_SERVICE_INVALID_RESPONSE');
+            renderCoreVisualFallback({ preserveVerified: false });
+            setVisualStatus('');
+            return;
+        }
+        await renderCoreVisualDecisions(body.decisions, baseUrl, token, request, body);
+    } catch (_error) {
+        if (token === visualBundleRequestToken) {
+            markCoreVisualUnavailable('VISUAL_CORE_SERVICE_UNAVAILABLE');
+            renderCoreVisualFallback({ preserveVerified: false });
+            setVisualStatus('');
+        }
+    }
+}
+
+function resetCoreVisualAvailability(baseContextKey = '') {
+    coreVisualAvailability.skipRequests = false;
+    coreVisualAvailability.reasonCode = '';
+    coreVisualAvailability.contextKey = '';
+    coreVisualAvailability.baseContextKey = baseContextKey;
+    coreVisualAvailability.context = null;
+    coreVisualAvailability.nextProbeAt = 0;
+}
+
+function getCoreVisualBaseContextKey(baseUrl) {
+    return JSON.stringify([
+        baseUrl,
+        release?.releaseId || '',
+        release?.scenarioId || manifest?.id || manifest?.scenarioId || '',
+        release?.scenarioVersion || manifest?.version || '',
+        release?.activeArcId || release?.arcId || manifest?.defaultArcId || '',
+    ]);
+}
+
+function getCoreVisualContextKey(baseUrl, context) {
+    const profile = context?.visualProfile || null;
+    return JSON.stringify([
+        getCoreVisualBaseContextKey(baseUrl),
+        context?.contextHash || '',
+        profile?.visualProfileId || '',
+        profile?.profileHash || '',
+        profile?.catalogId || '',
+        profile?.catalogRevision || 0,
+        profile?.catalogHash || '',
+    ]);
+}
+
+async function readCoreVisualContext(baseUrl) {
+    const baseContextKey = getCoreVisualBaseContextKey(baseUrl);
+    if (coreVisualAvailability.baseContextKey !== baseContextKey) {
+        resetCoreVisualAvailability(baseContextKey);
+    }
+    const now = Date.now();
+    if (coreVisualAvailability.skipRequests && now < coreVisualAvailability.nextProbeAt) {
+        return null;
+    }
+    if (coreVisualAvailability.context && now < coreVisualAvailability.nextProbeAt) {
+        return coreVisualAvailability.context;
+    }
+    try {
+        const response = await fetch(`${baseUrl}/v1/core/visual-context`, {
+            method: 'GET',
+            credentials: 'omit',
+            headers: { accept: 'application/json' },
+        });
+        const body = await response.json().catch(() => null);
+        if (!response.ok) {
+            markCoreVisualUnavailable(body?.error?.code || 'VISUAL_CORE_CONTEXT_UNAVAILABLE');
+            return null;
+        }
+        if (!(await validateCoreVisualContext(body))) {
+            markCoreVisualUnavailable('VISUAL_CORE_CONTEXT_INVALID');
+            return null;
+        }
+        coreVisualAvailability.contextKey = getCoreVisualContextKey(baseUrl, body);
+        coreVisualAvailability.nextProbeAt = Date.now() + VISUAL_CONTEXT_REVALIDATION_INTERVAL_MS;
+        coreVisualAvailability.reasonCode = '';
+        coreVisualAvailability.skipRequests = false;
+        if (!body.enabled) {
+            coreVisualAvailability.context = null;
+            coreVisualAvailability.skipRequests = true;
+            coreVisualAvailability.reasonCode = 'VISUAL_CORE_NO_ACTIVE_CATALOG';
+            return null;
+        }
+        coreVisualAvailability.context = body;
+        return body;
+    } catch (_error) {
+        markCoreVisualUnavailable('VISUAL_CORE_CONTEXT_UNAVAILABLE');
+        return null;
+    }
+}
+
+async function validateCoreVisualContext(body) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+    const expectedKeys = ['ok', 'schemaVersion', 'enabled', 'activeCatalog', 'visualProfile', 'source', 'sourceVersion', 'contextHash'];
+    if (Object.keys(body).sort().join(',') !== expectedKeys.sort().join(',')) return false;
+    if (body.ok !== true || body.schemaVersion !== CORE_VISUAL_CONTEXT_RESPONSE_VERSION || typeof body.enabled !== 'boolean') return false;
+    if (body.source !== 'visual-control' || body.sourceVersion !== 'galgame.visual-control.v1' || !/^sha256:[a-f0-9]{64}$/.test(body.contextHash)) return false;
+    if (!body.enabled) {
+        if (body.activeCatalog !== null || body.visualProfile !== null) return false;
+    } else {
+        if (!body.activeCatalog || !body.visualProfile) return false;
+        const profileKeys = ['visualProfileId', 'profileHash', 'catalogId', 'catalogRevision', 'catalogHash'];
+        if (Object.keys(body.visualProfile).sort().join(',') !== profileKeys.sort().join(',')) return false;
+        if (!/^vprof_[a-z0-9_-]{8,80}$/.test(body.visualProfile.visualProfileId)
+            || !/^sha256:[a-f0-9]{64}$/.test(body.visualProfile.profileHash)
+            || !/^[a-z][a-z0-9_-]{2,79}$/.test(body.visualProfile.catalogId)
+            || !Number.isSafeInteger(body.visualProfile.catalogRevision)
+            || body.visualProfile.catalogRevision <= 0
+            || !/^sha256:[a-f0-9]{64}$/.test(body.visualProfile.catalogHash)) return false;
+        if (Object.keys(body.activeCatalog).sort().join(',') !== ['catalogId', 'catalogRevision', 'catalogHash'].sort().join(',')) return false;
+        if (body.activeCatalog.catalogId !== body.visualProfile.catalogId
+            || body.activeCatalog.catalogRevision !== body.visualProfile.catalogRevision
+            || body.activeCatalog.catalogHash !== body.visualProfile.catalogHash) return false;
+    }
+    const expectedContextHash = await sha256Digest(canonicalJson({
+        schemaVersion: body.schemaVersion,
+        enabled: body.enabled,
+        activeCatalog: body.activeCatalog,
+        visualProfile: body.visualProfile,
+        source: body.source,
+        sourceVersion: body.sourceVersion,
+    }));
+    return expectedContextHash === body.contextHash;
+}
+
+function markCoreVisualUnavailable(code) {
+    if (!CORE_VISUAL_LOCAL_DISABLE_CODES.has(code)) {
+        return;
+    }
+    coreVisualAvailability.skipRequests = true;
+    coreVisualAvailability.reasonCode = code;
+    coreVisualAvailability.context = null;
+    coreVisualAvailability.nextProbeAt = Date.now() + VISUAL_CONTEXT_REVALIDATION_INTERVAL_MS;
+}
+
+function renderCoreVisualIconStrip() {
+    if (!ui.visualIconStrip) {
+        return;
+    }
+    ui.visualIconStrip.replaceChildren();
+    for (const type of VISUAL_ICON_TYPES) {
+        const icon = document.createElement('figure');
+        icon.className = `visual-icon visual-icon-${type} is-unavailable is-placeholder`;
+        const image = document.createElement('img');
+        image.alt = `${getVisualTypeLabel(type)}暂时不可用`;
+        image.src = CORE_VISUAL_PLACEHOLDER_URL;
+        const caption = document.createElement('figcaption');
+        caption.textContent = getVisualTypeLabel(type);
+        icon.append(image, caption);
+        ui.visualIconStrip.append(icon);
+    }
+}
+
+function decorateCoreVisualDecision(decision, request) {
+    const entity = request?.projection?.entities?.find((candidate) => candidate.entityKey === decision?.entityKey);
+    if (!entity) {
+        return decision;
+    }
+    return {
+        ...decision,
+        displayLabel: entity.displayLabel || '',
+        visibleAttributes: Array.isArray(entity.visibleAttributes) ? entity.visibleAttributes : [],
+        confidenceBand: entity.confidenceBand || decision.confidenceBand || '',
+    };
+}
+
+async function renderCoreVisualDecisions(decisions, baseUrl, token, request, response) {
+    const byType = new Map();
+    for (const type of CORE_VISUAL_TYPES) {
+        const typeDecisions = decisions.filter((decision) => decision?.entityType === type);
+        const renderable = typeDecisions
+            .filter((decision) => isRenderableCoreVisualDecision(decision, type, request, response))
+            .map((decision) => decorateCoreVisualDecision(decision, request));
+        const selected = renderable[0] || null;
+        if (selected) {
+            coreVisualPresentationDetails.set(type, renderable);
+            coreVisualPresentationState.set(type, selected);
+            byType.set(type, selected);
+            continue;
+        }
+        // A locally bound avatar is already correct for the active segment.
+        // Do not let an incomplete remote response put the previous speaker
+        // back while the current request is still in flight.
+        if (type === 'character' && immediateVisualCharacterIdentity) {
+            continue;
+        }
+        // A valid response with no current portrait/scene match must not leave
+        // a previous turn's entity on screen. Small status icons are cumulative
+        // presentation details, so they may remain until a newer explicit
+        // status replaces them.
+        if (['equipment', 'item', 'skill'].includes(type)) {
+            const preserved = coreVisualPresentationState.get(type);
+            if (preserved && isRenderablePreservedCoreVisualDecision(preserved, request)) {
+                byType.set(type, preserved);
+                continue;
+            }
+        }
+        coreVisualPresentationState.delete(type);
+        coreVisualPresentationDetails.delete(type);
+    }
+    // The verified response is scoped to this visible message. Missing layers
+    // remain unknown instead of inheriting an unrelated earlier entity.
+    coreVisualHasVerifiedPresentation = coreVisualHasVerifiedPresentation || byType.size > 0;
+    await Promise.all([
+        byType.has('scene')
+            ? applyCoreVisualBackground(byType.get('scene'), baseUrl, token)
+            : Promise.resolve().then(() => applyCoreVisualPlaceholderBackground()),
+        byType.has('character')
+            ? applyCoreVisualCharacter(byType.get('character'), baseUrl, token)
+            : Promise.resolve().then(() => applyCoreVisualPlaceholderCharacter()),
+        applyCoreVisualIcons(byType, baseUrl, token),
+    ]);
+    if (token === visualBundleRequestToken) {
+        setVisualStatus('');
+    }
+}
+
+function isRenderablePreservedCoreVisualDecision(decision, request) {
+    if (!decision || String(decision.assetId || '').startsWith('unknown_')) {
+        return false;
+    }
+    const profile = request?.visualProfile;
+    return Number.isSafeInteger(decision.assetVersion)
+        && decision.assetVersion > 0
+        && Number(decision.score) >= 60
+        && ['medium', 'high'].includes(decision.scoreBand)
+        && decision.visualProfileId === profile?.visualProfileId
+        && decision.profileHash === profile?.profileHash
+        && decision.catalogId === profile?.catalogId
+        && decision.catalogRevision === profile?.catalogRevision
+        && decision.catalogHash === profile?.catalogHash
+        && /^sha256:[a-f0-9]{64}$/.test(String(decision.assetMetadataHash || ''))
+        && /^(?:sha256:)?[a-f0-9]{64}$/.test(String(decision.assetContentSha256 || ''));
+}
+
+function isRenderableCoreVisualDecision(decision, type, request, response) {
+    if (!decision || decision.entityType !== type || String(decision.assetId || '').startsWith('unknown_')) {
+        return false;
+    }
+    const projectedEntity = request?.projection?.entities?.find((entity) => entity.entityKey === decision.entityKey);
+    if (!projectedEntity || projectedEntity.entityType !== type) {
+        return false;
+    }
+    if (!Number.isSafeInteger(decision.assetVersion) || decision.assetVersion <= 0 || Number(decision.score) < 60) {
+        return false;
+    }
+    if (!['medium', 'high'].includes(decision.scoreBand)) {
+        return false;
+    }
+    if (!/^sha256:[a-f0-9]{64}$/.test(String(decision.profileHash || ''))
+        || !/^sha256:[a-f0-9]{64}$/.test(String(decision.catalogHash || ''))
+        || !/^sha256:[a-f0-9]{64}$/.test(String(decision.assetMetadataHash || ''))
+        || !/^(?:sha256:)?[a-f0-9]{64}$/.test(String(decision.assetContentSha256 || ''))) {
+        return false;
+    }
+    if (decision.projectionId !== request?.projection?.projectionId
+        || decision.sourceMessageIndex !== request?.projection?.sourceMessageIndex
+        || decision.sourceMessageHash !== request?.projection?.sourceMessageHash
+        || decision.visualProfileId !== request?.visualProfile?.visualProfileId
+        || decision.profileHash !== request?.visualProfile?.profileHash
+        || decision.catalogId !== request?.visualProfile?.catalogId
+        || decision.catalogRevision !== request?.visualProfile?.catalogRevision
+        || decision.catalogHash !== request?.visualProfile?.catalogHash) {
+        return false;
+    }
+    if (response?.schemaVersion === CORE_VISUAL_DECISION_RESPONSE_VERSION
+        && (response.projectionId !== request.projection.projectionId
+            || response.projectionHash !== request.projection.projectionHash
+            || response.sourceMessageIndex !== request.projection.sourceMessageIndex
+            || response.sourceMessageHash !== request.projection.sourceMessageHash
+            || response.catalogId !== request.visualProfile.catalogId
+            || response.catalogRevision !== request.visualProfile.catalogRevision
+            || response.catalogHash !== request.visualProfile.catalogHash)) {
+        return false;
+    }
+    return true;
+}
+
+const visualObjectUrlCache = new Map();
+const visualObjectUrlInflight = new Map();
+
+// Cross-origin CSS backgrounds can report a successful response yet remain unpainted in the player.
+// Fetch the bytes and render a same-origin blob URL instead.
+function supportsBlobVisualRender() {
+    if (typeof document?.createElement !== 'function'
+        || typeof HTMLElement === 'undefined'
+        || typeof URL?.createObjectURL !== 'function') {
+        return false;
+    }
+    return document.createElement('img') instanceof HTMLElement;
+}
+
+function loadDirectVisualImage(url) {
+    if (!url || typeof Image === 'undefined') {
+        return Promise.resolve(Boolean(url));
+    }
+    return new Promise((resolve) => {
+        const image = new Image();
+        image.crossOrigin = 'anonymous';
+        image.onload = () => resolve(true);
+        image.onerror = () => resolve(false);
+        image.src = url;
+    });
+}
+
+async function resolveVisualRenderUrl(url) {
+    if (!url) {
+        return '';
+    }
+    if (!supportsBlobVisualRender()) {
+        return (await loadDirectVisualImage(url)) ? url : '';
+    }
+    if (url.startsWith('blob:') || url.startsWith('data:')) {
+        return url;
+    }
+    const cached = visualObjectUrlCache.get(url);
+    if (cached) {
+        return cached;
+    }
+    const pending = visualObjectUrlInflight.get(url);
+    if (pending) {
+        return pending;
+    }
+    const request = fetch(url, { credentials: 'omit', mode: 'cors' }) // /v1/core/catalogs/<catalogId>/<revision>/assets/<assetId>/<version>/content
+        .then((response) => {
+            if (!response.ok) {
+                throw new Error(`visual asset request failed: ${response.status}`);
+            }
+            return response.blob();
+        })
+        .then((blob) => {
+            const objectUrl = URL.createObjectURL(blob);
+            visualObjectUrlCache.set(url, objectUrl);
+            return objectUrl;
+        })
+        .catch(() => '');
+    visualObjectUrlInflight.set(url, request);
+    try {
+        return await request;
+    } finally {
+        visualObjectUrlInflight.delete(url);
+    }
+}
+
+async function applyCoreVisualBackground(decision, baseUrl, token) {
+    if (!ui.stageBackdrop || !decision || String(decision.assetId || '').startsWith('unknown_')) {
+        return;
+    }
+    const sourceUrl = createCoreVisualContentUrl(decision, baseUrl);
+    const identity = `${decision.assetId}:${decision.assetVersion}`;
+    if (!sourceUrl || token !== visualBundleRequestToken) return;
+    const previousImage = ui.stageBackdrop.style.backgroundImage;
+    const previousIdentity = ui.stageBackdrop.dataset.visualAssetIdentity || '';
+    // Show the validated catalog URL immediately; replace it with a same-origin
+    // blob after the bytes arrive so large scenes never leave an empty stage.
+    applyVisualLayerImage(ui.stageBackdrop, sourceUrl, identity, token, 'background');
+    ui.stageBackdrop.classList.add('is-visual-active');
+    coreVisualHasVerifiedPresentation = true;
+    const renderUrl = await resolveVisualRenderUrl(sourceUrl);
+    if (token !== visualBundleRequestToken) return;
+    if (!renderUrl) {
+        restoreVisualLayerAfterLoadFailure(ui.stageBackdrop, previousImage, previousIdentity);
+        return;
+    }
+    applyVisualLayerImage(ui.stageBackdrop, renderUrl, identity, token, 'background');
+}
+
+async function applyCoreVisualCharacter(decision, baseUrl, token) {
+    if (!ui.stageHeroine || !decision || String(decision.assetId || '').startsWith('unknown_')) {
+        return;
+    }
+    const sourceUrl = createCoreVisualContentUrl(decision, baseUrl);
+    const identity = `${decision.assetId}:${decision.assetVersion}`;
+    if (!sourceUrl || token !== visualBundleRequestToken) return;
+    const previousImage = ui.stageHeroine.style.backgroundImage;
+    const previousIdentity = ui.stageHeroine.dataset.visualAssetIdentity || '';
+    // Keep the current portrait visible while the catalog bytes are fetched.
+    applyVisualLayerImage(ui.stageHeroine, sourceUrl, identity, token, 'character');
+    ui.stageHeroine.classList.add('is-visual-active');
+    ui.stageHeroine.classList.remove('is-visual-unknown');
+    coreVisualHasVerifiedPresentation = true;
+    const renderUrl = await resolveVisualRenderUrl(sourceUrl);
+    if (token !== visualBundleRequestToken) return;
+    if (!renderUrl) {
+        restoreVisualLayerAfterLoadFailure(ui.stageHeroine, previousImage, previousIdentity);
+        return;
+    }
+    applyVisualLayerImage(ui.stageHeroine, renderUrl, identity, token, 'character');
+}
+
+function restoreVisualLayerAfterLoadFailure(element, previousImage, previousIdentity) {
+    if (!element) return;
+    if (previousImage) {
+        element.style.backgroundImage = previousImage;
+        if (previousIdentity) {
+            element.dataset.visualAssetIdentity = previousIdentity;
+        } else {
+            delete element.dataset.visualAssetIdentity;
+            element.classList.remove('is-visual-active');
+        }
+    } else {
+        element.style.backgroundImage = `url("${CORE_VISUAL_PLACEHOLDER_URL}")`;
+        delete element.dataset.visualAssetIdentity;
+        element.classList.remove('is-visual-active');
+    }
+    if (typeof element.style.removeProperty === 'function') {
+        element.style.removeProperty('--visual-previous-image');
+    }
+    element.classList.remove('is-visual-transitioning');
+}
+
+function applyVisualLayerImage(element, renderUrl, identity, token, layer) {
+    const nextImage = `url("${renderUrl}")`;
+    const previousImage = element.style.backgroundImage;
+    const previousIdentity = element.dataset.visualAssetIdentity || '';
+    if (previousImage && previousIdentity && previousIdentity !== identity) {
+        const transitionToken = `${token}:${layer}:${identity}`;
+        element.dataset.visualTransitionToken = transitionToken;
+        element.style.setProperty('--visual-previous-image', previousImage);
+        element.style.backgroundImage = nextImage;
+        element.classList.remove('is-visual-transitioning');
+        void element.offsetWidth;
+        element.classList.add('is-visual-transitioning');
+        setTimeout(() => {
+            if (element.dataset.visualTransitionToken !== transitionToken) return;
+            if (typeof element.style.removeProperty === 'function') {
+        element.style.removeProperty('--visual-previous-image');
+    }
+            element.classList.remove('is-visual-transitioning');
+        }, 460);
+    } else {
+        element.style.backgroundImage = nextImage;
+    }
+    element.dataset.visualAssetIdentity = identity;
+}
+
+function findCoreVisualIcon(type) {
+    const selector = `.visual-icon-${type}`;
+    const direct = ui.visualIconStrip?.querySelector?.(selector);
+    if (direct) return direct;
+    return Array.from(ui.visualIconStrip?.children || []).find((child) => (
+        String(child?.className || '').split(/\s+/).includes(`visual-icon-${type}`)
+    )) || null;
+}
+
+function removeCoreVisualIcon(icon) {
+    if (!icon) return;
+    if (typeof icon.remove === 'function') {
+        icon.remove();
+        return;
+    }
+    const children = ui.visualIconStrip?.children;
+    if (Array.isArray(children)) {
+        const index = children.indexOf(icon);
+        if (index >= 0) children.splice(index, 1);
+    }
+}
+
+function createCoreVisualIconFigure(type, decision, imageUrl, { placeholder = false } = {}) {
+    const image = document.createElement('img');
+    image.crossOrigin = 'anonymous';
+    const loaded = !placeholder && Boolean(imageUrl);
+    image.alt = loaded
+        ? `${getVisualTypeLabel(type)}：${decision?.assetId || ''}`
+        : `${getVisualTypeLabel(type)}暂时不可用`;
+    image.src = loaded ? imageUrl : CORE_VISUAL_PLACEHOLDER_URL;
+    if (loaded) {
+        image.loading = 'lazy';
+    }
+    const icon = document.createElement('figure');
+    icon.className = `visual-icon visual-icon-${type}${loaded ? ' is-visual-active' : ' is-unavailable is-placeholder'}`;
+    if (decision?.assetId && decision?.assetVersion) {
+        icon.dataset.visualAssetIdentity = `${decision.assetId}:${decision.assetVersion}`;
+    }
+    const caption = document.createElement('figcaption');
+    caption.textContent = getVisualTypeLabel(type);
+    icon.dataset.visualType = type;
+    icon.setAttribute('role', 'button');
+    icon.setAttribute('tabindex', '0');
+    icon.setAttribute('aria-label', '打开' + getVisualTypeLabel(type) + '详情');
+    icon.setAttribute('title', '点击查看' + getVisualTypeLabel(type) + '详情');
+    icon.append(image, caption);
+    icon.addEventListener('click', () => openVisualDetailCard(type, icon));
+    icon.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            openVisualDetailCard(type, icon);
+        }
+    });
+    return icon;
+}
+
+async function applyCoreVisualIcons(byType, baseUrl, token) {
+    if (!ui.visualIconStrip) {
+        return;
+    }
+    for (const type of VISUAL_ICON_TYPES) {
+        const decision = byType.get(type);
+        const isUnknown = !decision || String(decision.assetId || '').startsWith('unknown_');
+        const candidateUrl = isUnknown ? '' : createCoreVisualContentUrl(decision, baseUrl);
+        const identity = decision?.assetId && decision?.assetVersion
+            ? `${decision.assetId}:${decision.assetVersion}`
+            : '';
+        const selector = `.visual-icon-${type}`;
+        const existing = findCoreVisualIcon(type);
+        if (!candidateUrl) {
+            if (existing?.classList?.contains?.('is-visual-active')) {
+                continue;
+            }
+            if (!existing || !existing.classList?.contains?.('is-placeholder')) {
+                removeCoreVisualIcon(existing);
+                ui.visualIconStrip.append(createCoreVisualIconFigure(type, null, '', { placeholder: true }));
+            }
+            continue;
+        }
+        if (!existing || existing.dataset?.visualAssetIdentity !== identity) {
+            removeCoreVisualIcon(existing);
+            ui.visualIconStrip.append(createCoreVisualIconFigure(type, decision, candidateUrl));
+        }
+        coreVisualHasVerifiedPresentation = true;
+        void resolveVisualRenderUrl(candidateUrl).then((renderUrl) => {
+            if (!renderUrl || token !== visualBundleRequestToken) {
+                return;
+            }
+            const current = findCoreVisualIcon(type);
+            if (!current || current.dataset?.visualAssetIdentity !== identity) {
+                return;
+            }
+            const image = current.querySelector?.('img');
+            if (image && image.src !== renderUrl) {
+                image.src = renderUrl;
+            }
+        });
+    }
+}
+function createCoreVisualContentUrl(decision, baseUrl) {
+    const contentPath = decision?.contentPath;
+    if (
+        !contentPath
+        || typeof contentPath !== 'string'
+        || !contentPath.startsWith('/v1/core/catalogs/')
+        || contentPath.includes('?')
+        || contentPath.includes('#')
+    ) {
+        return '';
+    }
+    try {
+        const url = new URL(contentPath, baseUrl);
+        const base = new URL(baseUrl);
+        if (
+            url.origin !== base.origin
+            || url.username
+            || url.password
+            || url.search
+            || url.hash
+            || !url.pathname.startsWith('/v1/core/catalogs/')
+        ) {
+            return '';
+        }
+        return url.href;
+    } catch (_error) {
+        return '';
+    }
+}
+
+function applyCoreVisualPlaceholderBackground() {
+    if (!ui.stageBackdrop) {
+        return;
+    }
+    ui.stageBackdrop.style.backgroundImage = `url("${CORE_VISUAL_PLACEHOLDER_URL}")`;
+    delete ui.stageBackdrop.dataset.visualAssetIdentity;
+    ui.stageBackdrop.classList.remove('is-visual-active', 'is-visual-transitioning');
+}
+
+function applyCoreVisualPlaceholderCharacter() {
+    if (!ui.stageHeroine) {
+        return;
+    }
+    ui.stageHeroine.style.backgroundImage = `url("${CORE_VISUAL_PLACEHOLDER_URL}")`;
+    delete ui.stageHeroine.dataset.visualAssetIdentity;
+    ui.stageHeroine.classList.remove('is-visual-active', 'is-visual-unknown', 'is-visual-transitioning');
+}
+
+export function restoreDefaultVisualLayers() {
+    restoreDefaultBackgroundLayer();
+    restoreDefaultCharacterLayer();
+}
+
+function restoreDefaultBackgroundLayer() {
+    if (ui.stageBackdrop) {
+        ui.stageBackdrop.style.backgroundImage = manifest
+            ? `url("${getAssetUrl(manifest, manifest.presentation?.defaultBackgroundAsset)}")`
+            : '';
+        delete ui.stageBackdrop.dataset.visualAssetIdentity;
+        ui.stageBackdrop.classList.remove('is-visual-active', 'is-visual-transitioning');
+    }
+}
+
+function restoreDefaultCharacterLayer() {
+    if (ui.stageHeroine) {
+        ui.stageHeroine.style.backgroundImage = `url("${getTitleSpriteUrl()}")`;
+        delete ui.stageHeroine.dataset.visualAssetIdentity;
+        ui.stageHeroine.classList.remove('is-visual-active', 'is-visual-unknown', 'is-visual-transitioning');
+    }
+}
+
+function setVisualStatus(message) {
+    if (ui.visualStatus) {
+        ui.visualStatus.textContent = message || '';
+        ui.visualStatus.hidden = !message;
+    }
+}
+
+function getVisualTypeLabel(type) {
+    return {
+        scene: '场景',
+        character: '角色',
+        equipment: '装备',
+        item: '道具',
+        skill: '技能',
+    }[type] || '素材';
+}
+
+function rememberRenderedVisualRuntimeMessage(snapshot, message, messageIndex) {
+    const chatKey = String(snapshot?.fileName || snapshot?.chatId || 'chat_core');
+    if (visibleRuntimeChatKey !== chatKey) {
+        visibleRuntimeChatKey = chatKey;
+        visibleRuntimeMessages.clear();
+    }
+    // Seed history only on the first render of a chat. Later renders keep the
+    // rendered-message guard so a replaced snapshot cannot leak unseen text.
+    const shouldHydrateSnapshot = visibleRuntimeMessages.size === 0;
+    const snapshotMessages = Array.isArray(snapshot?.messages) ? snapshot.messages : [];
+    for (const [index, remembered] of visibleRuntimeMessages.entries()) {
+        const snapshotMessage = snapshotMessages[index];
+        if (!snapshotMessage) {
+            visibleRuntimeMessages.delete(index);
+            continue;
+        }
+        const normalizedSnapshotMessage = normalizeVisualRuntimeMessage({
+            index,
+            role: snapshotMessage.role === 'player' ? 'player' : 'character',
+            speaker: snapshotMessage.role === 'player' ? '你' : snapshotMessage.speaker || getMainCharacterName(),
+            text: snapshotMessage.displayText || snapshotMessage.text || '',
+        });
+        if (!normalizedSnapshotMessage || canonicalJson(normalizedSnapshotMessage) !== canonicalJson(remembered)) {
+            visibleRuntimeMessages.delete(index);
+        }
+    }
+    const startIndex = Math.max(0, Number(messageIndex) - 3);
+    if (shouldHydrateSnapshot) {
+        for (let index = startIndex; index < Number(messageIndex); index += 1) {
+            const snapshotMessage = snapshotMessages[index];
+        if (!snapshotMessage) {
+            visibleRuntimeMessages.delete(index);
+            continue;
+        }
+        const normalizedSnapshotMessage = normalizeVisualRuntimeMessage({
+            index,
+            role: snapshotMessage.role === 'player' ? 'player' : 'character',
+            speaker: snapshotMessage.role === 'player' ? '你' : snapshotMessage.speaker || getMainCharacterName(),
+            text: snapshotMessage.displayText || snapshotMessage.text || '',
+        });
+            if (normalizedSnapshotMessage) {
+                visibleRuntimeMessages.set(index, normalizedSnapshotMessage);
+            } else {
+                visibleRuntimeMessages.delete(index);
+            }
+        }
+    }
+    const normalized = normalizeVisualRuntimeMessage({
+        index: messageIndex,
+        role: message?.role === 'player' ? 'player' : 'character',
+        speaker: message?.role === 'player' ? '你' : message?.speaker || getMainCharacterName(),
+        text: message?.displayText || message?.text || '',
+    });
+    if (normalized) {
+        visibleRuntimeMessages.set(messageIndex, normalized);
+    }
+}
+
+function getRenderedVisualRuntimeContext(snapshot, message, messageIndex) {
+    rememberRenderedVisualRuntimeMessage(snapshot, message, messageIndex);
+    const current = visibleRuntimeMessages.get(messageIndex);
+    if (!current) {
+        return null;
+    }
+    const recent = [...visibleRuntimeMessages.values()]
+        .filter((item) => item.index < current.index)
+        .sort((left, right) => right.index - left.index)
+        .slice(0, 3)
+        .reverse()
+        .map((item) => ({
+            ...item,
+            // The runtime contract allows up to 1,200 characters for history.
+            // Keep the tail so status and inventory lines remain available.
+            text: Array.from(item.text).slice(-1200).join(''),
+        }));
+    return { current, recent };
+}
+
+function sanitizeCoreVisualProtocolValue(value, maxLength = 120) {
+    return String(value || '')
+        .normalize('NFC')
+        .replace(/[^\p{L}\p{N}\p{P}\p{Zs}]/gu, ' ')
+        .replace(/\s+/gu, ' ')
+        .trim()
+        .slice(0, maxLength);
+}
+
+function sanitizeCoreVisualProtocolAttributes(attributes) {
+    const seen = new Set();
+    return (Array.isArray(attributes) ? attributes : [])
+        .map((attribute) => ({
+            ...attribute,
+            value: sanitizeCoreVisualProtocolValue(attribute?.value, 120),
+        }))
+        .filter((attribute) => {
+            if (!attribute.value || seen.has(attribute.code)) {
+                return false;
+            }
+            seen.add(attribute.code);
+            return true;
+        });
+}
+
+async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex, visualProfile }) {
+    const visibleContext = getRenderedVisualRuntimeContext(snapshot, message, messageIndex);
+    if (!visibleContext) {
+        throw new Error('VISIBLE_RUNTIME_CONTEXT_INVALID');
+    }
+    const activeSpeakerContext = getActiveVisualSpeakerContext(message, messageIndex);
+    const activeSegment = activeRenderContext && activeMessageIndex === messageIndex
+        ? activeMessageSegments[activeSegmentIndex]
+        : null;
+    const activeSegmentRole = activeSpeakerContext.role;
+    const activeSegmentSpeaker = activeSegment ? activeSpeakerContext.speaker : '';
+    const segmentMessage = activeSegment
+        ? normalizeVisualRuntimeMessage({
+            index: messageIndex,
+            role: activeSegmentRole,
+            speaker: activeSegmentSpeaker,
+            text: activeSegment.text || visibleContext.current.text || '',
+        })
+        : null;
+    const displayedMessage = segmentMessage || visibleContext.current;
+    const fullMessage = normalizeVisualRuntimeMessage({
+        index: messageIndex,
+        role: message?.role === 'player'
+            ? 'player'
+            : message?.role === 'system'
+                ? 'system'
+                : 'character',
+        speaker: message?.role === 'player'
+            ? '你'
+            : message?.role === 'system'
+                ? '系统'
+                : message?.speaker || getMainCharacterName(),
+        text: message?.displayText || message?.text || '',
+    });
+    // Keep the full visible text available to the runtime analyzer while
+    // retaining the active paragraph's speaker for avatar binding.
+    const decisionContextMessage = segmentMessage && fullMessage
+        ? {
+            ...fullMessage,
+            role: displayedMessage.role,
+            speaker: displayedMessage.speaker,
+        }
+        : (fullMessage || displayedMessage);
+    const effectiveVisibleContext = segmentMessage
+        ? { ...visibleContext, current: decisionContextMessage }
+        : visibleContext;
+    const sourceMessageHash = await sha256Digest(canonicalJson(decisionContextMessage));
+    const activeArcId = release?.activeArcId || release?.arcId || manifest?.defaultArcId || '';
+    const bindingMessage = displayedMessage.role === 'character' ? displayedMessage : fullMessage;
+    const characterBinding = bindingMessage?.role === 'character'
+        ? resolveVisualCharacterBinding(manifest, {
+            name: bindingMessage.speaker,
+            role: 'character',
+            arcId: activeArcId,
+            allowCharacterPoolFallback: false,
+        })
+        : null;
+    const hasActiveCharacterBinding = displayedMessage.role === 'character' && Boolean(characterBinding);
+    const entities = [];
+    // Extract equipment, item, skill and scene labels from the full visible
+    // message. The active paragraph is only the character/voice selection
+    // input; using it as the whole projection drops status lines that follow.
+    const fullHints = createCoreVisualDisplayEntityHints(fullMessage || displayedMessage);
+    const isExplicitCharacterHint = (hint) => hint.entityType === 'character'
+        && hint.visibleAttributes?.some((attribute) => attribute.code === 'character-explicit-appearance');
+    let hints = hasActiveCharacterBinding
+        ? fullHints
+        : fullHints.filter((hint) => hint.entityType !== 'character' || isExplicitCharacterHint(hint));
+    if (segmentMessage) {
+        const segmentHints = createCoreVisualDisplayEntityHints(segmentMessage);
+        const activeCharacterHint = hasActiveCharacterBinding
+            ? (segmentHints.find((hint) => hint.entityType === 'character') || {
+                entityKeySeed: `active-speaker:${displayedMessage.speaker}`,
+                entityType: 'character',
+                displayLabel: displayedMessage.speaker || '角色',
+                visibleAttributes: [{
+                    code: 'character-explicit-name',
+                    value: (displayedMessage.speaker || '角色').slice(0, 120),
+                    confidenceBand: 'explicit',
+                }],
+                confidenceBand: 'explicit',
+            })
+            : null;
+        hints = [
+            ...(activeCharacterHint ? [activeCharacterHint] : []),
+            ...fullHints.filter((hint) => hint.entityType !== 'character' || isExplicitCharacterHint(hint)),
+        ];
+    } else if (hasActiveCharacterBinding && !hints.some((hint) => hint.entityType === 'character')) {
+        hints = [{
+            entityKeySeed: `active-speaker:${displayedMessage.speaker}`,
+            entityType: 'character',
+            displayLabel: displayedMessage.speaker || '旁白',
+            visibleAttributes: [{
+                code: 'character-explicit-name',
+                value: (displayedMessage.speaker || '旁白').slice(0, 120),
+                confidenceBand: 'explicit',
+            }],
+            confidenceBand: 'explicit',
+        }, ...hints];
+    }
+    for (const hint of hints) {
+        if (!CORE_VISUAL_TYPES.includes(hint.entityType)) {
+            continue;
+        }
+        entities.push({
+            entityKey: await createCoreVisualDisplayEntityKey(hint.entityType, hint.entityKeySeed),
+            entityType: hint.entityType,
+            displayLabel: sanitizeCoreVisualProtocolValue(hint.displayLabel, 80)
+                || getVisualTypeLabel(hint.entityType),
+            visibleAttributes: sanitizeCoreVisualProtocolAttributes(
+                hint.entityType === 'character'
+                    ? [
+                        ...hint.visibleAttributes.filter((attribute) => attribute.code !== 'character-explicit-name'),
+                        ...(bindingMessage?.role === 'character' && bindingMessage.speaker
+                            ? [{
+                                code: 'character-explicit-name',
+                                value: bindingMessage.speaker.slice(0, 120),
+                                confidenceBand: 'explicit',
+                            }]
+                            : []),
+                        ...(characterBinding && bindingMessage?.speaker
+                            ? [{
+                                code: 'character-visual-binding',
+                                value: characterBinding.assetId,
+                                confidenceBand: 'explicit',
+                            }]
+                            : []),
+                    ]
+                    : hint.visibleAttributes,
+            ),
+            confidenceBand: hint.confidenceBand,
+        });
+    }
+    const projectedTypes = new Set(entities.map((entity) => entity.entityType));
+    for (const type of CORE_VISUAL_TYPES) {
+        if (type === 'character' && !hasActiveCharacterBinding && !projectedTypes.has('character')) {
+            continue;
+        }
+        if (projectedTypes.has(type)) {
+            continue;
+        }
+        entities.push({
+            entityKey: await createCoreVisualDisplayEntityKey(type, `runtime-slot:${displayedMessage.index}:${sourceMessageHash}`),
+            entityType: type,
+            displayLabel: getVisualTypeLabel(type),
+            visibleAttributes: [],
+            confidenceBand: 'unknown',
+        });
+    }
+    const baseProjection = {
+        projectionId: '',
+        projectionHash: '',
+        sourceMessageIndex: messageIndex,
+        sourceMessageHash,
+        releaseId: release?.releaseId || 'release_core_unknown',
+        scenarioId: release?.scenarioId || manifest?.id || 'scenario_core_unknown',
+        scenarioVersion: release?.scenarioVersion || manifest?.version || 'v1',
+        arcId: release?.activeArcId || release?.arcId || manifest?.defaultArcId || 'arc_core',
+        chatId: snapshot?.fileName || snapshot?.chatId || 'chat_core',
+        entities,
+    };
+    const projectionId = await createCoreVisualPrefixedId('vvp', [
+        baseProjection.releaseId,
+        baseProjection.arcId,
+        baseProjection.chatId,
+        baseProjection.sourceMessageIndex,
+        baseProjection.sourceMessageHash,
+    ]);
+    const projection = {
+        ...baseProjection,
+        projectionId,
+    };
+    projection.projectionHash = await sha256Digest(canonicalJson(projection));
+    return {
+        schemaVersion: CORE_VISUAL_DECISION_REQUEST_VERSION,
+        requestId: await createCoreVisualPrefixedId('req', [projection.projectionId, projection.sourceMessageHash, visualProfile.catalogHash]),
+        projection,
+        visibleContext: effectiveVisibleContext,
+        visualProfile,
+        expectedProjectionHash: projection.projectionHash,
+        expectedSourceMessageHash: projection.sourceMessageHash,
+        createdAt: new Date().toISOString(),
+    };
+}
+
+function getCoreVisualServiceUrl() {
+    const globalConfig = window.GALGAME_CORE_VISUAL_SERVICE || window.GALGAME_VISUAL_CORE_SERVICE || '';
+    const globalEndpoint = typeof globalConfig === 'string'
+        ? globalConfig
+        : globalConfig.endpoint || '';
+    const metaEndpoint = document
+        .querySelector?.('meta[name="galgame-visual-core-service"]')
+        ?.getAttribute?.('content') || '';
+    return String(globalEndpoint || metaEndpoint || '')
+        .trim()
+        .replace(/\/+$/, '');
+}
+
+async function createCoreVisualPrefixedId(prefix, parts) {
+    const digest = await sha256Hex(canonicalJson(parts));
+    return `${prefix}_${digest.slice(0, 32)}`;
+}
+
+async function sha256Digest(value) {
+    return `sha256:${await sha256Hex(value)}`;
+}
+
+async function sha256Hex(value) {
+    const bytes = new TextEncoder().encode(String(value ?? ''));
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest))
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
+}
+
+function canonicalJson(value) {
+    return JSON.stringify(sortCanonical(value));
+}
+
+function sortCanonical(value) {
+    if (Array.isArray(value)) {
+        return value.map(sortCanonical);
+    }
+    if (value && typeof value === 'object') {
+        return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortCanonical(value[key])]));
+    }
+    return value;
 }
 
 function renderBridgeUnavailable() {
@@ -1026,6 +2302,21 @@ function renderAdaptivePanels(message, snapshot, messageIndex) {
     }
 
     const text = message.displayText || message.text || '';
+    activeVisualDetailHints.clear();
+    const visualHints = createCoreVisualDisplayEntityHints({
+        index: messageIndex,
+        role: message.role,
+        speaker: message.speaker || getMainCharacterName(),
+        text,
+    });
+    for (const hint of visualHints) {
+        if (!CORE_VISUAL_TYPES.includes(hint.entityType)) {
+            continue;
+        }
+        const list = activeVisualDetailHints.get(hint.entityType) || [];
+        list.push(hint);
+        activeVisualDetailHints.set(hint.entityType, list);
+    }
     const profile = getAdaptivePresentationProfile();
     const extraction = extractAdaptivePresentation([
         {
@@ -1039,11 +2330,13 @@ function renderAdaptivePanels(message, snapshot, messageIndex) {
         messageIndex,
     });
     const panelResults = selectAdaptivePanelResults(extraction.results, profile);
+    activeAdaptivePanelResults = new Map(panelResults.map((result) => [result.module, result]));
+    const centralPanelResults = panelResults.filter((result) => !RIGHT_TOP_ADAPTIVE_MODULES.has(result.module));
 
-    if (!panelResults.length) {
+    if (!centralPanelResults.length) {
         return;
     }
-    ui.adaptivePanels.replaceChildren(createAdaptiveStatusBeltElement(panelResults, profile));
+    ui.adaptivePanels.replaceChildren(createAdaptiveStatusBeltElement(centralPanelResults, profile));
     ui.adaptivePanels.hidden = false;
 }
 
@@ -1075,6 +2368,8 @@ function hideAdaptivePanels() {
     }
     ui.adaptivePanels.replaceChildren();
     ui.adaptivePanels.hidden = true;
+    activeAdaptivePanelResults = new Map();
+    activeVisualDetailHints.clear();
     closeAdaptiveDetail();
 }
 
@@ -1416,13 +2711,87 @@ function normalizeAdaptiveDetailItem(item) {
     };
 }
 
+function openVisualDetailCard(type, returnFocusTarget = null) {
+    const adaptiveModule = getVisualCardModule(type);
+    const sourceResult = adaptiveModule ? activeAdaptivePanelResults.get(adaptiveModule) : null;
+    if (sourceResult) {
+        let detailResult = { ...sourceResult, module: type };
+        if (type === 'item' && Array.isArray(sourceResult.values?.groups)) {
+            const groups = sourceResult.values.groups.filter((group) => group?.id !== 'weapons');
+            if (groups.length) {
+                detailResult = {
+                    ...detailResult,
+                    values: { ...sourceResult.values, groups },
+                };
+            }
+        }
+        const fallbackItems = getAdaptivePanelItems(detailResult);
+        openAdaptiveDetail(detailResult, fallbackItems, returnFocusTarget);
+        return;
+    }
+    const result = createVisualDetailResult(type, coreVisualPresentationState.get(type));
+    openAdaptiveDetail(result, getAdaptivePanelItems(result), returnFocusTarget);
+}
+
+function getVisualDetailItems(type, decision) {
+    const decisionEntries = coreVisualPresentationDetails.get(type)
+        || (decision ? [decision] : []);
+    const hintEntries = activeVisualDetailHints.get(type) || [];
+    const entries = decisionEntries.length ? decisionEntries : hintEntries;
+    const items = [];
+    for (const entry of entries) {
+        const displayLabel = String(entry?.displayLabel || '').trim();
+        if (!displayLabel) {
+            continue;
+        }
+        const attributeValues = asArray(entry?.visibleAttributes)
+            .map((attribute) => String(attribute?.value || '').trim())
+            .filter((value) => value && value !== displayLabel);
+        const names = type === 'skill'
+            ? displayLabel.split(/[,，;；]/u).map((value) => value.trim()).filter(Boolean)
+            : [displayLabel];
+        for (const name of names) {
+            items.push({
+                name,
+                value: attributeValues.length ? attributeValues.join(' · ') : '',
+                raw: displayLabel,
+                traits: type === 'skill' && names.length > 1 ? ['当前技能'] : [],
+            });
+        }
+    }
+    return items;
+}
+
+function createVisualDetailResult(type, decision) {
+    const label = getVisualTypeLabel(type);
+    const items = getVisualDetailItems(type, decision);
+    const visibleItems = items.length
+        ? items
+        : [{
+            name: '当前未识别到' + label,
+            value: '当前对白或状态文本没有提供可展开的' + label + '信息',
+            raw: '',
+        }];
+    return {
+        module: type,
+        values: {
+            groups: [{
+                title: label + '明细',
+                tone: type === 'skill' ? 'skill' : type === 'item' ? 'item' : 'gold',
+                items: visibleItems,
+            }],
+        },
+    };
+}
+
 function openAdaptiveDetail(result, fallbackItems = [], returnFocusTarget = null) {
     if (!ui.adaptiveDetailDrawer || !ui.adaptiveDetailTitle || !ui.adaptiveDetailBody) {
         return;
     }
-    adaptiveDetailReturnFocus = returnFocusTarget instanceof HTMLElement
+    const isHtmlElement = (value) => typeof HTMLElement !== 'undefined' && value instanceof HTMLElement;
+    adaptiveDetailReturnFocus = isHtmlElement(returnFocusTarget)
         ? returnFocusTarget
-        : document.activeElement instanceof HTMLElement
+        : isHtmlElement(document.activeElement)
         ? document.activeElement
         : null;
     adaptiveDetailReturnModule = result?.module || '';
@@ -1488,6 +2857,14 @@ function closeAdaptiveDetail() {
 function getAdaptiveDetailReturnFocusTarget() {
     if (adaptiveDetailReturnFocus?.isConnected) {
         return adaptiveDetailReturnFocus;
+    }
+    const visualType = getVisualCardType(adaptiveDetailReturnModule)
+        || (['equipment', 'item', 'skill'].includes(adaptiveDetailReturnModule) ? adaptiveDetailReturnModule : '');
+    const visualTarget = visualType
+        ? ui.visualIconStrip?.querySelector?.('[data-visual-type="' + visualType + '"]')
+        : null;
+    if (visualTarget) {
+        return visualTarget;
     }
     if (!adaptiveDetailReturnModule || !ui.adaptivePanels) {
         return null;
@@ -1615,7 +2992,10 @@ function createAdaptiveDetailItem(item) {
         }
         article.append(traits);
     }
-    if (item.raw && item.raw !== item.label && item.raw !== `${item.label} ${item.value}`.trim()) {
+    if (item.raw
+        && item.raw !== item.label
+        && item.raw !== item.originalName
+        && item.raw !== `${item.label} ${item.value}`.trim()) {
         const raw = document.createElement('p');
         raw.className = 'adaptive-detail-raw';
         raw.textContent = item.raw;
@@ -1630,6 +3010,9 @@ function getAdaptiveModuleMeta(moduleId) {
         'rpg-status': { label, kicker: 'STATUS' },
         inventory: { label, kicker: 'PACK' },
         abilities: { label, kicker: 'ABILITY' },
+        equipment: { label, kicker: 'EQUIP' },
+        item: { label, kicker: 'ITEM' },
+        skill: { label, kicker: 'SKILL' },
         quests: { label, kicker: 'QUEST' },
         relationships: { label, kicker: 'BOND' },
         affection: { label, kicker: 'BOND' },
@@ -1655,6 +3038,7 @@ function formatRpgStatus(fields) {
     addValueItem(items, '等级', fields.level);
     addPairItem(items, '经验', fields.xp);
     addValueItem(items, '金币', fields.gold);
+    addTextItem(items, '行动顺序', fields.turnOrder);
     addTextItem(items, '状态', fields.status);
     return items;
 }
@@ -1666,6 +3050,7 @@ function getRpgHudStats(fields) {
     addHudValueStat(stats, 'level', '等级', fields.level, 'gold');
     addHudPairStat(stats, 'xp', '经验', fields.xp, 'skill');
     addHudValueStat(stats, 'gold', '金币', fields.gold, 'gold');
+    addHudTextStat(stats, 'turn-order', '行动顺序', fields.turnOrder, 'initiative');
     addHudTextStat(stats, 'status', '状态', fields.status, 'condition');
     return stats;
 }
@@ -1803,8 +3188,12 @@ function getActiveArcPresentationProfileId() {
 function getAdaptiveModuleLabel(moduleId) {
     return {
         'rpg-status': '状态',
+        'turn-order': '行动顺序',
         inventory: '背包',
         abilities: '技能',
+        equipment: '装备',
+        item: '道具',
+        skill: '技能',
         quests: '任务',
         relationships: '关系',
         affection: '好感',
@@ -1909,6 +3298,11 @@ function updateDialoguePlaybackStatus() {
     }
     if (activeRenderContext.waitingForReply && activeRenderContext.displayingLatest) {
         renderWaitingForReply();
+    } else if (activeRenderContext.incompleteReply && activeRenderContext.displayingLatest) {
+        setStageStatus('这一段回应可能没有生成完。你可以输入“继续”补完。');
+        setRecoveryVisible(false);
+        renderSuggestedActions();
+        setInputEnabled(canAcceptPlayerInput());
     } else if (!activeRenderContext.displayingLatest) {
         setStageStatus('正在回看历史');
         setRecoveryVisible(false);
@@ -1930,6 +3324,9 @@ function advanceDialoguePlayback() {
         activeSegmentIndex += 1;
         pageIndex = activeSegmentIndex;
         renderActiveDialogueSegment({ animate: shouldAnimateActiveSegment() });
+        // Re-project the active inline speaker so portrait and narration avatar
+        // follow the dialogue segment without clearing verified layers.
+        scheduleVisualBundleRefresh(activeRenderContext.snapshot, activeMessageIndex);
         void persistAutoSave(activeRenderContext.snapshot);
         return true;
     }

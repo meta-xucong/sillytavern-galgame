@@ -25,6 +25,7 @@ import {
     validateVisualProjectionProofShape,
     validateVisualProjectionStub,
     validateVisualVisibleProjection,
+    normalizeVisualRuntimeMessage,
 } from '../src/visual-system-schema.js';
 
 const HASH_A = digest('a');
@@ -489,6 +490,22 @@ const unknownTypeResolution = resolveVisualMatchResultForScope({ ...matchResult,
 assert.equal(unknownTypeResolution.ok, false);
 assert.equal(unknownTypeResolution.unknownAsset, null);
 assert.equal(unknownTypeResolution.errors.some((error) => error.includes('valid bindable type')), true);
+
+const runtimeMessage = normalizeVisualRuntimeMessage({
+    index: 4,
+    role: 'character',
+    speaker: 'Guide',
+    text: 'Cafe\u0301',
+});
+assert.deepEqual(runtimeMessage, {
+    index: 4,
+    role: 'character',
+    speaker: 'Guide',
+    text: 'Caf\u00e9',
+});
+assert.equal(normalizeVisualRuntimeMessage({ ...runtimeMessage, extra: 'forbidden' }), null);
+assert.equal(normalizeVisualRuntimeMessage({ ...runtimeMessage, text: 'x'.repeat(4001) }), null);
+assert.equal(normalizeVisualRuntimeMessage({ ...runtimeMessage, role: 'assistant' }), null);
 
 const exportNames = Object.keys(visualSchema).sort();
 assert.equal(exportNames.some((name) => /verify|authorize|hmac|signer|replay|stubReadback/i.test(name)), false);

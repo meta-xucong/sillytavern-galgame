@@ -144,6 +144,16 @@ const naturalWeaponMention = extractAdaptivePresentationFromText('Andrei notices
 });
 assert.equal(naturalWeaponMention.moduleIds.includes('inventory'), false);
 
+const initiative = extractAdaptivePresentationFromText([
+    '❤ HP: 27/32',
+    '**行动顺序:** **Lila > 你 > Pippa**',
+    '当前轮到 Lila 行动',
+].join('\n'), { profile: rpgProfile });
+const initiativeStatus = findModule(initiative, 'rpg-status');
+assert.equal(initiativeStatus.values.fields.turnOrder.value, 'Lila → 你 → Pippa');
+assert.equal(initiativeStatus.values.fields.turnOrder.current, 'Lila');
+assert.equal(initiativeStatus.values.groups.some((group) => group.id === 'turn-order'), true);
+
 const romance = extractAdaptivePresentation(await readFixture('romance-affection.txt'), {
     profile: romanceProfile,
 });

@@ -1,0 +1,165 @@
+{
+  "schemaVersion": "galgame.visual-runtime-4-provider-contract-record.v1",
+  "status": "BLOCKED_CONTRACT_UNKNOWN",
+  "createdAt": "",
+  "updatedAt": "",
+  "repository": {
+    "path": "D:\\AI\\SillyTavern",
+    "branch": "verya-main",
+    "sourceCommit": ""
+  },
+  "provider": {
+    "owner": "",
+    "providerName": "",
+    "providerVersion": "",
+    "model": "",
+    "endpointOrigin": "",
+    "requestStyle": "anthropic_messages_vision+anthropic_messages_text",
+    "responseDigest": ""
+  },
+  "visionRequest": {
+    "method": "POST",
+    "normalizedEndpoint": "/v1/messages",
+    "headers": [
+      "content-type: application/json",
+      "accept: application/json",
+      "anthropic-version: 2023-06-01",
+      "x-api-key: server-only"
+    ],
+    "bearerHeader": false,
+    "bodyKeys": [
+      "model",
+      "max_tokens",
+      "messages"
+    ],
+    "sendsOnlyBoundedPngAndFixedTask": true,
+    "sendsSillyTavernKey": false,
+    "sendsHiddenContext": false
+  },
+  "visionResponse": {
+    "envelope": {
+      "allowedKeys": [
+        "content",
+        "id",
+        "type",
+        "role",
+        "model",
+        "stop_reason",
+        "stop_sequence",
+        "usage",
+        "container",
+        "context_management",
+        "service_tier"
+      ],
+      "isObject": null,
+      "contentLength": null,
+      "singleTextBlock": null,
+      "unknownKeysRejected": null,
+      "duplicateKeysRejected": null,
+      "bomRejected": null
+    },
+    "innerKeys": [
+      "description",
+      "tagCodes",
+      "attributeCodes",
+      "confidence",
+      "analyzerVersion"
+    ],
+    "descriptionContract": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "urlOrMarkupAllowed": false
+    },
+    "codeContract": {
+      "tagCodesFromCurrentAssetTypeDictionary": null,
+      "attributeCodesFromCurrentAssetTypeDictionary": null,
+      "crossArrayDuplicatesAllowed": false
+    },
+    "confidenceContract": {
+      "jsonNumberOnly": true,
+      "strictlyGreaterThan": 0,
+      "lessThanOrEqualTo": 1,
+      "percentageConversion": false
+    },
+    "analyzerVersionContract": {
+      "type": "string",
+      "safeString": null
+    }
+  },
+  "runtimeRequest": {
+    "method": "POST",
+    "normalizedEndpoint": "/v1/messages",
+    "headers": [
+      "content-type: application/json",
+      "accept: application/json",
+      "anthropic-version: 2023-06-01",
+      "x-api-key: server-only"
+    ],
+    "bearerHeader": false,
+    "bodyKeys": [
+      "model",
+      "max_tokens",
+      "messages"
+    ],
+    "sendsOnlyVisibleContext": true,
+    "currentTextMaxCodePoints": 4000,
+    "recentMessageMaxCount": 3,
+    "recentTextMaxCodePoints": 1200,
+    "timeoutMs": 3000,
+    "maxTransportRetries": 1
+  },
+  "runtimeResponse": {
+    "rootKeys": [
+      "schemaVersion",
+      "status",
+      "dictionaryVersion",
+      "dictionaryHash",
+      "entities"
+    ],
+    "schemaVersion": "galgame.visual-runtime-hints.v1",
+    "dictionaryVersion": 2,
+    "dictionaryHashFromCurrentSource": "",
+    "entityKeys": [
+      "entityType",
+      "codes",
+      "confidence",
+      "confidenceBand"
+    ],
+    "maxEntities": 5,
+    "maxCodesPerEntity": 8,
+    "readyRequiresEntity": true,
+    "ambiguousOrUnavailableRequiresEmptyEntities": true,
+    "assetIdAllowed": false,
+    "urlAllowed": false,
+    "storyOrChoiceAllowed": false
+  },
+  "providerCorrection": {
+    "required": null,
+    "providerRelease": "",
+    "releaseDate": "",
+    "rollbackPlan": "",
+    "approvedBy": "",
+    "approvedAt": ""
+  },
+  "localDecision": {
+    "contractStatus": "BLOCKED_CONTRACT_UNKNOWN",
+    "localAdapterChangeRequired": null,
+    "fixtureIdsToRun": [],
+    "realReplayAllowed": false,
+    "reason": "Await explicit provider output contract or approved provider-side correction."
+  },
+  "security": {
+    "providerTokenRecorded": false,
+    "stKeyRead": false,
+    "rawProviderResponsePersisted": false,
+    "rawTaskPersisted": false,
+    "browserCredentialSeen": false
+  },
+  "review": {
+    "providerReviewer": "",
+    "localReviewer": "",
+    "result": "pending",
+    "reviewedAt": ""
+  }
+}

@@ -6,8 +6,10 @@
     <meta name="galgame-config-service" content="http://127.0.0.1:8791">
     <meta name="sillytavern-base-url" content="">
     <meta name="galgame-script-import-assistant" content="">
+    <meta name="galgame-visual-asset-service" content="">
+    <meta name="galgame-visual-asset-csrf-token" content="">
     <title>故事后台</title>
-    <link rel="stylesheet" href="./styles.css?v=auto-6490e3ff4a10">
+    <link rel="stylesheet" href="./styles.css?v=auto-dbada1e83e91">
 </head>
 <body>
     <main class="admin-shell">
@@ -16,15 +18,12 @@
                 <span class="brand-mark">游</span>
                 <div>
                     <strong>故事后台</strong>
-                    <span>上传、整理、上架故事</span>
+                    <span>上传剧本和图片</span>
                 </div>
             </div>
             <nav class="nav-tabs" aria-label="管理页面">
-                <button class="is-active" type="button" data-tab="dashboard">一键导入</button>
-                <button type="button" data-tab="publish">故事上架</button>
-                <button type="button" data-tab="library">故事库</button>
-                <button type="button" data-tab="enhancements">画面设置</button>
-                <button type="button" data-tab="advanced">更多检查</button>
+                <button class="is-active" type="button" data-tab="dashboard">上传剧本</button>
+                <button type="button" data-tab="enhancements">上传图片</button>
             </nav>
         </aside>
 
@@ -32,9 +31,9 @@
             <header class="workspace-header">
                 <div>
                     <p class="eyebrow">小白模式</p>
-                    <h1 id="pageTitle">一键导入</h1>
+                    <h1 id="pageTitle">上传剧本</h1>
                 </div>
-                <button id="refreshButton" class="secondary-button" type="button">重新检查</button>
+                <button id="refreshButton" class="secondary-button" type="button" hidden>重新检查</button>
             </header>
 
             <section id="dashboardPanel" class="panel" data-panel="dashboard">
@@ -42,12 +41,12 @@
                     <div class="section-row">
                         <div>
                             <span class="section-label">新手推荐</span>
-                            <h2>上传剧本，一键整理</h2>
+                            <h2>上传剧本</h2>
                         </div>
-                        <span id="scriptAssistantServiceStatus" class="service-pill">等待检查</span>
+                        <span id="scriptAssistantServiceStatus" class="service-pill" hidden>等待检查</span>
                     </div>
-                    <p>把下载好的剧本包或文本放进来，后台会先帮你整理成草稿。你只需要检查结果，不满意就点重新整理。</p>
-                    <div class="one-click-flow" aria-label="导入流程">
+                    <p>选择已经准备好的剧本文件；本页不需要填写任何复杂设置。</p>
+                    <div class="one-click-flow" aria-label="导入流程" hidden>
                         <span>1 上传文件</span>
                         <span>2 自动整理</span>
                         <span>3 确认草稿</span>
@@ -56,22 +55,22 @@
                     <div class="script-assistant-actions">
                         <label class="file-button script-file-button">
                             <input id="scriptFileInput" type="file" multiple accept=".txt,.md,.json,.yaml,.yml,text/plain,application/json,text/markdown">
-                            选择剧本文件
+                            上传剧本
                         </label>
-                        <button id="organizeScriptButton" class="primary-button" type="button">开始整理</button>
-                        <button id="redeployScriptButton" class="secondary-button" type="button" disabled>重新整理</button>
-                        <button id="confirmScriptDraftButton" class="secondary-button" type="button" disabled>确认草稿</button>
+                        <button id="organizeScriptButton" class="primary-button" type="button" hidden disabled>开始整理</button>
+                        <button id="redeployScriptButton" class="secondary-button" type="button" hidden disabled>重新整理</button>
+                        <button id="confirmScriptDraftButton" class="secondary-button" type="button" hidden disabled>确认草稿</button>
                     </div>
                     <div id="scriptFileSummary" class="soft-status">还没有选择文件。</div>
-                    <div id="scriptAssistantResult" class="status-box">整理服务未检查。</div>
-                    <div id="scriptDraftPreview" class="script-draft-preview" aria-live="polite"></div>
-                    <div class="parity-note">
+                    <div id="scriptAssistantResult" class="status-box" hidden>整理服务未检查。</div>
+                    <div id="scriptDraftPreview" class="script-draft-preview" aria-live="polite" hidden></div>
+                    <div class="parity-note" hidden>
                         <strong>确认不等于上架</strong>
                             <span>确认后会保存到故事库；玩家要看到新故事，还需要在“故事上架”里点上架。</span>
                     </div>
                 </article>
 
-                <article class="hero-card">
+                <article class="hero-card" hidden>
                     <div>
                         <span class="section-label">默认推荐故事</span>
                         <h2 id="activeTitle">-</h2>
@@ -87,7 +86,7 @@
                     </div>
                 </article>
 
-                <div class="summary-grid">
+                <div class="summary-grid" hidden>
                     <article class="summary-item">
                         <span>故事检查</span>
                         <strong id="dashboardStoryStatus">准备检查</strong>
@@ -102,7 +101,7 @@
                     </article>
                 </div>
 
-                <article class="next-step-card">
+                <article class="next-step-card" hidden>
                     <span class="section-label">下一步</span>
                     <ol>
                         <li>先上传下载好的剧本文件。</li>
@@ -214,7 +213,7 @@
                     <span>角色、世界设定、回复方式和剧情走向仍由原版故事材料与聊天负责。这里不会保存密钥，也不会生成剧情。</span>
                 </article>
                 <div class="enhancement-grid">
-                    <article class="enhancement-card" data-enhancement-card="display-template">
+                    <article class="enhancement-card" data-enhancement-card="display-template" hidden>
                         <div class="section-row">
                             <h2>游戏界面样式</h2>
                             <button id="profileRefreshButton" class="secondary-button" type="button">刷新</button>
@@ -240,7 +239,7 @@
                         </div>
                     </article>
 
-                    <article class="enhancement-card" data-enhancement-card="media-provider">
+                    <article class="enhancement-card" data-enhancement-card="media-provider" hidden>
                         <h2>图片和视频接口</h2>
                         <div class="form-grid">
                             <label class="field-row">
@@ -267,20 +266,68 @@
                         </div>
                     </article>
 
-                    <article class="enhancement-card" data-enhancement-card="visual-assets">
-                        <h2>背景和立绘</h2>
-                        <p>按故事里已经出现的场景和人物，匹配玩家页面要显示的背景、立绘和氛围图。</p>
-                        <div class="enhancement-status-list">
-                            <span>素材映射：后续接入</span>
-                            <span>画面失败：自动使用默认背景</span>
+                    <article class="enhancement-card visual-catalog-card" data-enhancement-card="visual-assets">
+                        <div class="section-row">
+                            <div>
+                                <h2>视觉素材库</h2>
+                                <p>背景和立绘、装备、道具、技能图标都在这里管理；只影响画面，不写剧情。</p>
+                            </div>
+                        </div>
+                        <div id="visualServiceStatus" class="status-box">请选择一种素材图片上传；页面会自动保存并发布。</div>
+                        <div id="simpleVisualUploadGrid" class="simple-visual-upload-grid" aria-label="五类视觉素材上传">
+                            <article class="simple-visual-upload-card" data-simple-visual-type="scene">
+                                <strong>场景</strong>
+                                <span>舞台背景图片</span>
+                                <label class="file-button">
+                                    <input class="simple-visual-upload-input" type="file" accept="image/png" data-visual-upload-type="scene">
+                                    上传场景图片
+                                </label>
+                                <div class="simple-visual-upload-status">等待选择 8 位、非隔行 RGB/RGBA PNG。</div>
+                            </article>
+                            <article class="simple-visual-upload-card" data-simple-visual-type="character">
+                                <strong>人物</strong>
+                                <span>透明人物立绘</span>
+                                <label class="file-button">
+                                    <input class="simple-visual-upload-input" type="file" accept="image/png" data-visual-upload-type="character">
+                                    上传人物图片
+                                </label>
+                                <div class="simple-visual-upload-status">等待选择 8 位、非隔行 RGB/RGBA PNG。</div>
+                            </article>
+                            <article class="simple-visual-upload-card" data-simple-visual-type="equipment">
+                                <strong>装备</strong>
+                                <span>装备图标</span>
+                                <label class="file-button">
+                                    <input class="simple-visual-upload-input" type="file" accept="image/png" data-visual-upload-type="equipment">
+                                    上传装备图片
+                                </label>
+                                <div class="simple-visual-upload-status">等待选择 8 位、非隔行 RGB/RGBA PNG。</div>
+                            </article>
+                            <article class="simple-visual-upload-card" data-simple-visual-type="item">
+                                <strong>道具</strong>
+                                <span>道具图标</span>
+                                <label class="file-button">
+                                    <input class="simple-visual-upload-input" type="file" accept="image/png" data-visual-upload-type="item">
+                                    上传道具图片
+                                </label>
+                                <div class="simple-visual-upload-status">等待选择 8 位、非隔行 RGB/RGBA PNG。</div>
+                            </article>
+                            <article class="simple-visual-upload-card" data-simple-visual-type="skill">
+                                <strong>技能</strong>
+                                <span>技能图标</span>
+                                <label class="file-button">
+                                    <input class="simple-visual-upload-input" type="file" accept="image/png" data-visual-upload-type="skill">
+                                    上传技能图片
+                                </label>
+                                <div class="simple-visual-upload-status">等待选择 8 位、非隔行 RGB/RGBA PNG。</div>
+                            </article>
                         </div>
                         <div class="parity-note">
                             <strong>只影响画面</strong>
-                            <span>这里不会改角色设定、世界设定、聊天内容或回复方式。</span>
+                            <span>这里不会改角色设定、世界设定、聊天内容、回复方式或玩家存档。</span>
                         </div>
                     </article>
 
-                    <article class="enhancement-card" data-enhancement-card="content-notice">
+                    <article class="enhancement-card" data-enhancement-card="content-notice" hidden>
                         <h2>内容提示</h2>
                         <p>给玩家显示简单的游玩提示，例如题材、节奏和可能出现的内容类型。</p>
                         <div class="enhancement-status-list">
@@ -293,7 +340,7 @@
                         </div>
                     </article>
 
-                    <article class="enhancement-card" data-enhancement-card="service-check">
+                    <article class="enhancement-card" data-enhancement-card="service-check" hidden>
                         <h2>服务检查</h2>
                         <p>用普通文案显示后台是否准备好，细节检查收在“更多检查”。</p>
                         <div id="enhancementServiceStatus" class="enhancement-status-list">
@@ -370,6 +417,6 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-    <script type="module" src="./app.js?v=auto-6490e3ff4a10"></script>
+    <script type="module" src="./app.js?v=auto-dbada1e83e91"></script>
 </body>
 </html>

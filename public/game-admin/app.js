@@ -1,5 +1,5 @@
-import { DEFAULT_SILLYTAVERN_SCENARIO } from './shared/demo-scenario.js?v=auto-6490e3ff4a10';
-import { createReleaseStore } from './shared/config-service.js?v=auto-6490e3ff4a10';
+import { DEFAULT_SILLYTAVERN_SCENARIO } from './shared/demo-scenario.js?v=auto-dbada1e83e91';
+import { createReleaseStore } from './shared/config-service.js?v=auto-dbada1e83e91';
 import {
     bindAdaptivePresentationProfileHashes,
     getDefaultArcId,
@@ -10,7 +10,7 @@ import {
     validateAdaptivePresentationProfiles,
     validateScenarioManifest,
     validateSillyTavernBindings,
-} from './shared/protocol.js?v=auto-6490e3ff4a10';
+} from './shared/protocol.js?v=auto-dbada1e83e91';
 import {
     createDefaultAdaptivePresentationProfile,
     PRESENTATION_MODULES,
@@ -19,12 +19,12 @@ import {
     PRESENTATION_SAFE_WARNING_CODES,
     PRESENTATION_TEMPLATES,
     validateAdaptivePresentationProfile,
-} from './shared/adaptive-presentation-schema.js?v=auto-6490e3ff4a10';
+} from './shared/adaptive-presentation-schema.js?v=auto-dbada1e83e91';
 import {
     getMediaConfig,
     saveMediaConfig,
-} from './shared/storage.js?v=auto-6490e3ff4a10';
-import { SillyTavernAdapter } from './shared/sillytavern-adapter.js?v=auto-6490e3ff4a10';
+} from './shared/storage.js?v=auto-dbada1e83e91';
+import { SillyTavernAdapter } from './shared/sillytavern-adapter.js?v=auto-dbada1e83e91';
 
 const releaseStore = createReleaseStore(DEFAULT_SILLYTAVERN_SCENARIO, { fallbackToLocal: true });
 const scriptAssistantState = {
@@ -42,9 +42,16 @@ const scriptAssistantState = {
         error: '',
     },
 };
+const visualAssetState = {
+    service: {
+        url: '',
+        configured: false,
+    },
+    busy: false,
+};
 
 const pageTitles = {
-    dashboard: '一键导入',
+    dashboard: '上传剧本',
     publish: '故事上架',
     library: '故事库',
     enhancements: '画面设置',
@@ -113,8 +120,18 @@ const ui = {
     saveMediaButton: document.querySelector('#saveMediaButton'),
     testMediaButton: document.querySelector('#testMediaButton'),
     mediaResult: document.querySelector('#mediaResult'),
+    visualServiceStatus: document.querySelector('#visualServiceStatus'),
+    simpleVisualUploadInputs: [...document.querySelectorAll('.simple-visual-upload-input')],
     systemStatus: document.querySelector('#systemStatus'),
     toast: document.querySelector('#toast'),
+};
+
+const visualAssetTypeLabels = {
+    scene: '场景',
+    character: '人物',
+    equipment: '装备',
+    item: '道具',
+    skill: '技能',
 };
 
 const templateLabels = {
@@ -227,6 +244,7 @@ async function bootstrap() {
     renderPublishWizard();
     renderResourceBindings();
     renderAdaptiveProfileControls();
+    renderVisualAssetControls();
     void renderMediaSettings();
     void renderSystemStatus();
     await refreshActiveManifest();
@@ -318,6 +336,15 @@ function bindEvents() {
             setMediaResult('接口暂时不可用。', false);
         });
     });
+    ui.simpleVisualUploadInputs.forEach((input) => {
+        input.addEventListener('change', () => {
+            uploadSimpleVisualFileForType(input).catch((error) => {
+                setSimpleVisualCardStatus(input.dataset.visualUploadType, formatVisualError(error), false);
+                setVisualServiceStatus(formatVisualError(error), false);
+                setVisualBusy(false);
+            });
+        });
+    });
 
     ui.fileInput.addEventListener('change', async () => {
         const file = ui.fileInput.files?.[0];
@@ -375,6 +402,7 @@ async function switchTab(tab) {
     }
     if (tab === 'enhancements') {
         renderAdaptiveProfileControls();
+        renderVisualAssetControls();
         await renderMediaSettings();
     }
     if (tab === 'advanced') {
@@ -391,6 +419,7 @@ async function renderAll() {
     renderPublishWizard();
     renderResourceBindings();
     renderAdaptiveProfileControls();
+    renderVisualAssetControls();
     await renderMediaSettings();
     await renderSystemStatus();
 }
@@ -1615,6 +1644,244 @@ function applyAdaptiveProfileToDraft() {
     renderResourceBindings();
     renderAdaptiveProfileControls();
     showToast('已应用展示配置');
+}
+
+function renderVisualAssetControls() {
+    if (!visualAssetState.service.configured) {
+        visualAssetState.service.url = getVisualAssetServiceBaseUrl();
+        visualAssetState.service.configured = Boolean(visualAssetState.service.url);
+    }
+    const message = isLocalVisualAdminEntry() && visualAssetState.service.configured
+        ? '本地视觉后台已接入；请选择一种素材图片上传。'
+        : visualAssetState.service.configured
+        ? '视觉素材服务已配置；请选择一种素材图片上传。'
+        : '未配置视觉素材服务。请先通过受控管理员部署边界接入，浏览器页面不会保存服务密钥。';
+    setVisualServiceStatus(message, visualAssetState.service.configured);
+}
+
+async function uploadSimpleVisualFileForType(input) {
+    const assetType = input?.dataset?.visualUploadType || '';
+    if (!Object.prototype.hasOwnProperty.call(visualAssetTypeLabels, assetType)) {
+        throw new Error('VISUAL_ASSET_BAD_TYPE');
+    }
+    const file = input.files?.[0];
+    if (!file) {
+        setSimpleVisualCardStatus(assetType, '请选择 8 位、非隔行 RGB/RGBA PNG 图片。', false);
+        return;
+    }
+    if (file.type && file.type !== 'image/png') {
+        setSimpleVisualCardStatus(assetType, '当前只支持 8 位、非隔行的 RGB/RGBA PNG 图片。', false);
+        return;
+    }
+    const uploadBody = {
+        schemaVersion: 'galgame.visual-simple-upload-request.v1',
+        assetType,
+        title: createSimpleVisualTitle(assetType, file),
+        imageBase64: await fileToBase64(file),
+        tagCodes: [],
+        fileName: sanitizeVisualUploadFileName(file?.name || ''),
+    };
+    setVisualBusy(true);
+    setSimpleVisualCardStatus(assetType, '正在上传。', true);
+    setVisualServiceStatus('正在保存图片。', true);
+    const uploadResult = await visualAdminFetch('/v1/admin/visual/upload', {
+        method: 'POST',
+        body: uploadBody,
+        timeoutMs: 15000,
+    });
+    if (!uploadResult.ok) {
+        throw new Error(uploadResult.error?.code || 'VISUAL_ASSET_UPLOAD_FAILED');
+    }
+    setSimpleVisualCardStatus(assetType, formatVisualAnalysisStatus(uploadResult.asset?.analysis, '图片已保存，正在应用。'), true);
+    const publishResult = await visualAdminFetch('/v1/admin/visual/publish', {
+        method: 'POST',
+        body: {},
+        timeoutMs: 15000,
+    });
+    setVisualBusy(false);
+    if (!publishResult.ok) {
+        throw new Error(publishResult.error?.code || 'VISUAL_SIMPLE_PUBLISH_FAILED');
+    }
+    setSimpleVisualCardStatus(assetType, '已上传并应用到游戏画面。', true);
+    setVisualServiceStatus('图片已上传并应用。可以继续上传其它类型。', true);
+    showToast(`${visualAssetTypeLabels[assetType]}图片已上传`);
+}
+
+function formatVisualAnalysisStatus(analysis, fallback) {
+    if (analysis?.status === 'ready') return '图片已保存，识别已完成，正在发布。';
+    if (analysis?.status === 'failed') return '图片已保存，识别未完成，图片仍可使用，正在发布。';
+    if (analysis?.status === 'unavailable') return '图片已保存，识别未完成，图片仍可使用，正在发布。';
+    return fallback;
+}
+
+function createSimpleVisualTitle(assetType, file) {
+    const rawName = String(file?.name || '').replace(/\.[^.]+$/, '').trim();
+    const base = rawName ? clampText(rawName, 56) : `${visualAssetTypeLabels[assetType]}图片`;
+    return `${visualAssetTypeLabels[assetType]}-${base}`.slice(0, 80);
+}
+
+function setSimpleVisualCardStatus(assetType, message, ok) {
+    const status = document.querySelector(`[data-simple-visual-type="${CSS.escape(assetType)}"] .simple-visual-upload-status`);
+    if (!status) {
+        return;
+    }
+    status.textContent = message;
+    status.classList.toggle('is-ok', Boolean(ok));
+    status.classList.toggle('is-error', ok === false);
+}
+
+function sanitizeVisualUploadFileName(value) {
+    const name = String(value || '').split(/[\\/]/).pop() || '';
+    return name.replace(/[^\w .()-]/g, '_').slice(0, 120) || 'upload.png';
+}
+
+function updateVisualSimpleButtons() {
+    const busy = visualAssetState.busy;
+    ui.simpleVisualUploadInputs.forEach((input) => {
+        input.disabled = busy;
+    });
+}
+
+function setVisualBusy(busy) {
+    visualAssetState.busy = busy;
+    updateVisualSimpleButtons();
+}
+
+function setVisualServiceStatus(message, ok) {
+    if (!ui.visualServiceStatus) {
+        return;
+    }
+    ui.visualServiceStatus.textContent = message;
+    ui.visualServiceStatus.classList.toggle('is-ok', Boolean(ok));
+    ui.visualServiceStatus.classList.toggle('is-error', !ok);
+}
+
+function getVisualAssetServiceBaseUrl() {
+    return window.GALGAME_VISUAL_ASSET_SERVICE_URL
+        || document.querySelector('meta[name="galgame-visual-asset-service"]')?.content
+        || '';
+}
+
+function requireVisualAssetServiceBaseUrl() {
+    const baseUrl = getVisualAssetServiceBaseUrl().replace(/\/+$/, '');
+    visualAssetState.service.url = baseUrl;
+    visualAssetState.service.configured = Boolean(baseUrl);
+    if (!baseUrl) {
+        throw new Error('VISUAL_ASSET_SERVICE_NOT_CONFIGURED');
+    }
+    return baseUrl;
+}
+
+function isLocalVisualAdminEntry() {
+    return window.GALGAME_VISUAL_ASSET_LOCAL_ADMIN === true
+        || document.querySelector('meta[name="galgame-visual-asset-local-admin"]')?.content === 'true';
+}
+
+function getVisualAdminRequestPath(path) {
+    if (!isLocalVisualAdminEntry()) {
+        return path;
+    }
+    if (path === '/v1/admin/visual/upload') return '/v1/local-admin/visual/upload';
+    if (path === '/v1/admin/visual/publish') return '/v1/local-admin/visual/publish';
+    return path;
+}
+
+async function visualAdminFetch(path, { method = 'GET', body = null, timeoutMs = 8000 } = {}) {
+    const visualMediaServiceBaseUrl = requireVisualAssetServiceBaseUrl();
+    const requestPath = getVisualAdminRequestPath(path);
+    const normalizedMethod = String(method || 'GET').toUpperCase();
+    const headers = {};
+    if (body) {
+        headers['content-type'] = 'application/json';
+    }
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(normalizedMethod)) {
+        const csrfToken = getVisualAssetCsrfToken();
+        if (!csrfToken) {
+            return {
+                ok: false,
+                error: { code: 'VISUAL_ASSET_CSRF_NOT_CONFIGURED' },
+            };
+        }
+        headers['x-galgame-csrf-token'] = csrfToken;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(`${visualMediaServiceBaseUrl}${requestPath}`, {
+            method: normalizedMethod,
+            credentials: 'include',
+            headers,
+            body: body ? JSON.stringify(body) : undefined,
+            signal: controller.signal,
+        });
+        const text = await response.text();
+        const parsed = text ? safeJsonParse(text, null) : null;
+        if (!response.ok || !parsed?.ok) {
+            return {
+                ok: false,
+                error: parsed?.error || { code: `HTTP_${response.status}` },
+            };
+        }
+        return parsed;
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            throw new Error('VISUAL_ASSET_SERVICE_TIMEOUT');
+        }
+        throw error;
+    } finally {
+        window.clearTimeout(timer);
+    }
+}
+
+function getVisualAssetCsrfToken() {
+    const token = window.GALGAME_VISUAL_ASSET_CSRF_TOKEN
+        || document.querySelector('meta[name="galgame-visual-asset-csrf-token"]')?.content
+        || '';
+    return /^[A-Za-z0-9._:-]{16,256}$/.test(token) ? token : '';
+}
+
+async function fileToBase64(file) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+    }
+    return btoa(binary);
+}
+
+function formatVisualError(error) {
+    const code = error?.message || String(error || '');
+    if (code === 'VISUAL_ASSET_PNG_UNSUPPORTED') {
+        return '当前只支持 8 位、非隔行的 RGB/RGBA PNG 图片。请转换后重试。';
+    }
+    if (code === 'VISUAL_ASSET_SERVICE_NOT_CONFIGURED') {
+        return '视觉素材服务未配置。请先通过受控管理员部署边界接入。';
+    }
+    if (code === 'VISUAL_ASSET_CSRF_NOT_CONFIGURED') {
+        return '管理员写入保护未配置。请通过受控部署边界完成安全校验后再操作。';
+    }
+    if (/TIMEOUT|Abort/i.test(code)) {
+        return '视觉素材服务响应超时，请稍后重试。';
+    }
+    if (/401|403|AUTH|ORIGIN|CSRF/i.test(code)) {
+        return '管理员访问边界未通过，请检查外部登录或反向代理配置。';
+    }
+    if (/409|CONFLICT|STATE/i.test(code)) {
+        return '目录状态已变化，请刷新后再操作。';
+    }
+    if (/HTTP_5|5\d\d|SERVER/i.test(code)) {
+        return '视觉素材服务出错，请稍后重试或联系管理员。';
+    }
+    if (/VALID|BAD|UNKNOWN_CODE|ROLE|LICENSE|IMAGE|SIZE/i.test(code)) {
+        return '素材或目录信息未通过校验，请检查字段后重试。';
+    }
+    return '视觉素材服务暂时不可用。';
+}
+
+function clampText(value, maxLength) {
+    const text = String(value || '');
+    return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
 }
 
 function applyWizardTemplateToDraft() {

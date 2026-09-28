@@ -112,6 +112,10 @@ export function validateScenarioManifest(manifest) {
     errors.push(...adaptiveProfileStatus.errors);
     warnings.push(...adaptiveProfileStatus.warnings);
 
+    const visualBindingStatus = validateVisualCharacterBindings(manifest);
+    errors.push(...visualBindingStatus.errors);
+    warnings.push(...visualBindingStatus.warnings);
+
     if (Array.isArray(manifest.arcs)) {
         const arcStatus = validateArcBindings(manifest);
         errors.push(...arcStatus.errors);
@@ -123,6 +127,246 @@ export function validateScenarioManifest(manifest) {
     }
 
     return { valid: errors.length === 0, errors, warnings };
+}
+
+const VISUAL_BINDING_CHANNELS = Object.freeze(['any', 'character', 'player', 'narrator', 'system']);
+const VISUAL_BINDING_DEFAULT_ASSET_KEYS = Object.freeze({
+    character: 'characterAssetId',
+    player: 'playerAssetId',
+    narrator: 'narratorAssetId',
+    system: 'systemAssetId',
+});
+
+function validateVisualBindingAssetId(value, label, errors) {
+    if (value !== undefined && (!value || !/^asset_character_[a-z0-9_-]{6,80}$/.test(String(value)))) {
+        errors.push(`${label} must reference a character catalog asset.`);
+    }
+}
+
+export function validateVisualCharacterBindings(manifest) {
+    const errors = [];
+    const warnings = [];
+    const bindings = manifest?.visualBindings;
+    if (bindings === undefined) {
+        return { valid: true, errors, warnings };
+    }
+    if (!bindings || typeof bindings !== 'object' || Array.isArray(bindings)) {
+        return { valid: false, errors: ['visualBindings must be an object.'], warnings };
+    }
+    if (bindings.schemaVersion && bindings.schemaVersion !== 'galgame.visual-character-bindings.v1') {
+        errors.push('visualBindings.schemaVersion is unsupported.');
+    }
+    if (!Array.isArray(bindings.characters)) {
+        errors.push('visualBindings.characters must be an array.');
+    }
+    if (Array.isArray(bindings.characters) && bindings.characters.length > 64) {
+        errors.push('visualBindings.characters may contain at most 64 entries.');
+    }
+    const validateBindingList = (list, listName, { rejectDuplicateKeys = true } = {}) => {
+        const keys = new Set();
+        (Array.isArray(list) ? list : []).forEach((binding, index) => {
+            const label = `visualBindings.${listName}[${index}]`;
+            if (!binding || typeof binding !== 'object' || Array.isArray(binding)) {
+                errors.push(`${label} must be an object.`);
+                return;
+            }
+            requireString(binding.characterKey, `${label}.characterKey`, errors);
+            requireString(binding.assetId, `${label}.assetId`, errors);
+            validateVisualBindingAssetId(binding.assetId, `${label}.assetId`, errors);
+            if (binding.assetVersion !== undefined && (!Number.isSafeInteger(binding.assetVersion) || binding.assetVersion <= 0)) {
+                errors.push(`${label}.assetVersion must be a positive integer.`);
+            }
+            const aliases = binding.aliases === undefined ? [] : binding.aliases;
+            if (!Array.isArray(aliases) || aliases.length > 32) {
+                errors.push(`${label}.aliases must be an array with at most 32 strings.`);
+            } else {
+                aliases.forEach((alias, aliasIndex) => {
+                    if (typeof alias !== 'string' || !alias.trim() || alias.length > 160) {
+                        errors.push(`${label}.aliases[${aliasIndex}] must be a non-empty string.`);
+                    }
+                });
+            }
+            const key = String(binding.characterKey || '').trim().toLocaleLowerCase();
+            if (key && rejectDuplicateKeys) {
+                if (keys.has(key)) errors.push(`Duplicate visual character binding "${binding.characterKey}".`);
+                keys.add(key);
+            }
+            if (binding.channel && !VISUAL_BINDING_CHANNELS.includes(binding.channel)) {
+                errors.push(`${label}.channel must be ${VISUAL_BINDING_CHANNELS.join(', ')}.`);
+            }
+            if (binding.assetVersion === undefined) {
+                warnings.push(`${label}.assetVersion is omitted; version 1 will be used.`);
+            }
+        });
+    };
+    validateBindingList(bindings.characters, 'characters');
+    if (bindings.characterPool !== undefined && !Array.isArray(bindings.characterPool)) {
+        errors.push('visualBindings.characterPool must be an array.');
+    }
+    if (Array.isArray(bindings.characterPool) && bindings.characterPool.length > 64) {
+        errors.push('visualBindings.characterPool may contain at most 64 entries.');
+    }
+    validateBindingList(bindings.characterPool, 'characterPool', { rejectDuplicateKeys: false });
+    const defaults = bindings.defaults;
+    if (defaults !== undefined) {
+        if (!defaults || typeof defaults !== 'object' || Array.isArray(defaults)) {
+            errors.push('visualBindings.defaults must be an object.');
+        } else {
+            for (const key of Object.keys(defaults)) {
+                if (!Object.values(VISUAL_BINDING_DEFAULT_ASSET_KEYS).includes(key)) {
+                    errors.push(`visualBindings.defaults.${key} is not supported.`);
+                }
+            }
+            for (const key of Object.values(VISUAL_BINDING_DEFAULT_ASSET_KEYS)) {
+                validateVisualBindingAssetId(defaults[key], `visualBindings.defaults.${key}`, errors);
+            }
+        }
+    }
+    return { valid: errors.length === 0, errors, warnings };
+}
+
+function getVisualBindingConfig(manifest, arcId = '') {
+    const arc = findArcBinding(manifest, arcId);
+    const arcBindings = arc?.visualBindings;
+    const manifestBindings = manifest?.visualBindings;
+    return {
+        ...(manifestBindings && typeof manifestBindings === 'object' ? manifestBindings : {}),
+        ...(arcBindings && typeof arcBindings === 'object' ? arcBindings : {}),
+    };
+}
+
+export function getVisualCharacterBindings(manifest, arcId = '') {
+    const raw = getVisualBindingConfig(manifest, arcId);
+    const characters = Array.isArray(raw?.characters) ? raw.characters : [];
+    return characters.filter((binding) => binding && typeof binding === 'object' && !Array.isArray(binding));
+}
+
+export function getVisualCharacterPool(manifest, arcId = '') {
+    const raw = getVisualBindingConfig(manifest, arcId);
+    const pool = Array.isArray(raw?.characterPool) ? raw.characterPool : [];
+    return pool.filter((binding) => binding && typeof binding === 'object' && !Array.isArray(binding));
+}
+
+function normalizeVisualCharacterName(value) {
+    return String(value || '')
+        .normalize('NFKC')
+        .replace(/[\u200B-\u200D\uFEFF]/g, '')
+        .replace(/[：:，,。！？!?]+$/u, '')
+        .replace(/\s+/gu, ' ')
+        .trim()
+        // Runtime status lines may prefix a real name with a turn/action
+        // marker. Strip only these presentation suffixes before alias lookup;
+        // the original chat text remains untouched.
+        .replace(/\s*(?:的)?(?:回合|行动)\s*$/u, '')
+        .replace(/\s+(?:turn|action)\s*$/iu, '')
+        .trim()
+        .toLocaleLowerCase();
+}
+
+function hashVisualCharacterName(value) {
+    let hash = 2166136261;
+    for (const character of String(value || '')) {
+        hash ^= character.codePointAt(0);
+        hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+}
+
+function formatVisualCharacterBinding(binding, fallbackKey = '') {
+    if (!binding) return null;
+    return {
+        characterKey: String(binding.characterKey || fallbackKey).trim(),
+        assetId: String(binding.assetId || '').trim(),
+        assetVersion: Number.isSafeInteger(binding.assetVersion) && binding.assetVersion > 0 ? binding.assetVersion : 1,
+        channel: binding.channel || 'character',
+    };
+}
+
+const visualCharacterPoolAssignments = new Map();
+
+function resolvePooledVisualCharacterBinding(manifest, pool, { normalizedName, arcId }) {
+    if (!normalizedName || !pool.length) return null;
+    const exactPoolMatch = pool.find((binding) => {
+        const channel = binding.channel || 'any';
+        if (channel !== 'any' && channel !== 'character') return false;
+        const names = [binding.characterKey, ...(Array.isArray(binding.aliases) ? binding.aliases : [])];
+        return names.some((candidate) => normalizeVisualCharacterName(candidate) === normalizedName);
+    });
+    if (exactPoolMatch) return formatVisualCharacterBinding(exactPoolMatch);
+    const manifestKey = String(manifest?.id || manifest?.manifestId || 'manifest');
+    const scopeKey = `${manifestKey}|${arcId || ''}`;
+    const assignmentKey = `${scopeKey}|${normalizedName}`;
+    const assignments = visualCharacterPoolAssignments.get(scopeKey) || new Map();
+    if (assignments.has(assignmentKey)) {
+        const assignedAssetId = assignments.get(assignmentKey);
+        const assigned = pool.find((binding) => String(binding.assetId || '').trim() === assignedAssetId);
+        if (assigned) return formatVisualCharacterBinding(assigned);
+    }
+    const usedAssetIds = new Set(assignments.values());
+    const startIndex = hashVisualCharacterName(normalizedName) % pool.length;
+    let selected = null;
+    for (let offset = 0; offset < pool.length; offset += 1) {
+        const candidate = pool[(startIndex + offset) % pool.length];
+        if (String(candidate.assetId || '').trim() && !usedAssetIds.has(String(candidate.assetId).trim())) {
+            selected = candidate;
+            break;
+        }
+    }
+    selected ||= pool[startIndex];
+    if (!selected) return null;
+    assignments.set(assignmentKey, String(selected.assetId || '').trim());
+    visualCharacterPoolAssignments.set(scopeKey, assignments);
+    return formatVisualCharacterBinding(selected, normalizedName);
+}
+
+export function resolveVisualCharacterBinding(manifest, {
+    name = '',
+    role = 'character',
+    arcId = '',
+    // Legacy callers can keep deterministic pool assignment. Player visual
+    // requests pass false so an unknown NPC receives the unknown placeholder
+    // rather than borrowing an arbitrary character asset.
+    allowCharacterPoolFallback = true,
+    allowPooledCharacterFallback,
+} = {}) {
+    const normalizedName = normalizeVisualCharacterName(name);
+    const normalizedRole = VISUAL_BINDING_CHANNELS.includes(role) ? role : 'character';
+    const poolFallbackAllowed = allowPooledCharacterFallback === undefined
+        ? allowCharacterPoolFallback
+        : allowPooledCharacterFallback;
+    const bindings = getVisualCharacterBindings(manifest, arcId);
+    const exact = normalizedName
+        ? bindings.find((binding) => {
+            const channel = binding.channel || 'any';
+            if (channel !== 'any' && channel !== normalizedRole) return false;
+            const names = [binding.characterKey, ...(Array.isArray(binding.aliases) ? binding.aliases : [])];
+            return names.some((candidate) => normalizeVisualCharacterName(candidate) === normalizedName);
+        })
+        : null;
+    if (exact) return formatVisualCharacterBinding(exact);
+    if (normalizedRole === 'character' && poolFallbackAllowed) {
+        const pooled = resolvePooledVisualCharacterBinding(manifest, getVisualCharacterPool(manifest, arcId), {
+            normalizedName,
+            arcId,
+        });
+        if (pooled) return pooled;
+    }
+    // A character without an exact alias is unknown when pool fallback is
+    // disabled. Do not use the manifest's generic character default either:
+    // that would silently lock an unrelated NPC to an existing portrait.
+    if (normalizedRole === 'character' && !poolFallbackAllowed) {
+        return null;
+    }
+    const defaults = getVisualBindingConfig(manifest, arcId).defaults || {};
+    const defaultKey = VISUAL_BINDING_DEFAULT_ASSET_KEYS[normalizedRole] || VISUAL_BINDING_DEFAULT_ASSET_KEYS.character;
+    const defaultAssetId = defaults[defaultKey] || (normalizedRole !== 'character' ? defaults.characterAssetId : '');
+    if (!defaultAssetId) return null;
+    return {
+        characterKey: `__default_${normalizedRole}`,
+        assetId: String(defaultAssetId),
+        assetVersion: 1,
+        channel: normalizedRole,
+    };
 }
 
 export function validateAdaptivePresentationProfiles(manifest) {

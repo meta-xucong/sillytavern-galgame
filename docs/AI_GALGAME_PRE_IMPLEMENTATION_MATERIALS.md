@@ -4,7 +4,29 @@
 > 生效日期：2026-07-25  
 > 目的：在继续修改 `frontend/**`、`public/game/**`、`public/game-admin/**`、`external-modules/**` 前，确保协议、状态机、部署、安全和测试材料已明确、版本化并通过审查。
 
+> 当前口径覆盖（2026-09-06）：本文件保留历史 CORE/FINAL/VS 准备材料；`VISUAL-RUNTIME-2M` FileVisualAssetStore 五类迁移子阶段已 reviewer-passed/done，RUNTIME-2 仍 partial/blocked；`VISUAL-RUNTIME-3` player natural-dialogue visual wiring 已 reviewer-passed/done（仅窄 player 展示范围）；`RUNTIME-4` Anthropic runtime adapter 已 reviewer-passed/done（仅 adapter/local contract），当前仅验证受控启动入口把同一独立 Anthropic Messages token 安全注入上传期 vision 与运行时 text。生产 analyzer、真实 ST story/Generate 与 manifest/profile context 仍为外部 blocker；不解除 ST 后端冻结，也不恢复 Projection/proof/binding/old-save/rollback、玩家剧情 LLM 或其它后置链路。细则见 `AI_GALGAME_VISUAL_RUNTIME_4_LIVE_ACCEPTANCE.md`。
+
+## 当前视觉增强核心覆盖
+
+### 当前新增阶段：VISUAL-RUNTIME-4 Anthropic runtime adapter reviewer-passed/done（仅 adapter/local contract）
+
+用户已明确把当前目标从“上传期识图 + 显式标签 deterministic matching”升级为“自然对白运行时智能匹配”。本阶段按 `docs/AI_GALGAME_VISUAL_RUNTIME_INTELLIGENCE_DEVELOPMENT_SPEC.md` 单独准入：服务端 LLM 理解已经展示给玩家的可见对白，结合上传期图片分析标签计算 0-100 分，`score >= 60` 展示图片，低于 60 展示通用占位图。服务端 token 独立于 ST，浏览器不直连 provider，视觉请求不得阻塞原版 ST 运行。
+
+RUNTIME-3 已 reviewer-passed/done，仅代表 player 自然对白异步接线、已渲染 recent 限制、中性槽位和统一 placeholder 通过独立复核。RUNTIME-4 已独立复核 PASS，仅完成 visual-asset-service 服务端 Anthropic Messages 文本适配器与 local contract；真实 provider、ST story/Generate 和 manifest/profile context 仍需独立运行条件与后续验收，不代表完整 Galgame、ST runtime LLM、剧情生成、Projection、binding、old-save 或历史视觉链完成。
+
+历史视觉资产增强核心已按 `docs/AI_GALGAME_VISUAL_ASSET_CORE_DEVELOPMENT_SPEC.md` 完成：本地、展示层、deterministic-only、无 ST/provider 密钥。SIMPLE-DOCS/SIMPLE-1/2/3/4 的傻瓜式自定义后台闭环、VISUAL-AI-TAGS 和 FINAL-1/2/3 均只保留各自历史 gate 记录。Production analyzer 仍未配置。Projection proof、玩家 session gateway、asset ticket、old-save/rollback、服务间授权、真实 ST full E2E 和旧 VS-LLM 作为后置材料，不属于当前 VISUAL-RUNTIME-2 窄路线，也不得自动恢复或继续开发。
+
+历史状态记录：CORE-5 core visual final acceptance reviewer-passed/done；player core path 由 visual service global active visual context/profile 驱动，不以 manifest/Arc `visualPresentation` 作为请求前置。SIMPLE-DOCS、SIMPLE-1 Chapter 1/2/3、SIMPLE-2、SIMPLE-3、SIMPLE-4、VISUAL-AI-TAGS 和 FINAL-1/2/3 的结果均是各自历史 gate 的 reviewer-passed/done 记录；生产 analyzer 未配置时只能记录 `analysisStatus=unavailable`，不代表真实生产 AI。SIMPLE publish 不自动写 manifest/profile 的自动绑定、coarse matcher 等限制按历史 gate 保留。
+历史最终收口方案：`docs/AI_GALGAME_VISUAL_ASSET_FINAL_COMPLETION_PLAN.md` v1.2 记录视觉资产模块 FINAL-1/2/3 与真实 ST 协作 FINAL-4 两层语义；FINAL-3 的 8000 loopback allowlist 记录是历史快照，不是当前执行阶段。真实 provider 调用尚未执行，FINAL-4 未实现，不代表生产 AI、完整 Galgame 或 SillyTavern 完成。
+历史 FINAL-1/2/3 实现材料保留原有服务、player、纯 helper、generated public 和 docs allowlist 证据；当前不继续推进该历史阶段，且不改 ST/backend、admin、manifest/profile writer 或历史重链路。
+
+2026-08-30 当前复核：VISUAL-AI-TAGS 当前验证 admin facade architecture allowlist root-fix。仅四条精确管理员视觉上传/发布路径在生产源码/构建面分类 `allowed-adapter`，其它管理员 endpoint 和测试夹具不因此泛化放行；此前 player 视觉可用性生命周期根修已通过本地回归。生产 analyzer 未配置，真实 ST 故事/Generate 链路不可由本地 smoke 推断；不进入 player 功能、manifest/profile 自动绑定、VS/Projection/visual-match/binding/old-save/LLM。
+
+2026-09-05 历史 FINAL-3 记录：`VISUAL-FINAL-3 local 8000 core origin allowlist connection fix` / `verifying`；该条只描述旧 FINAL-3 白名单与 PNG 提示收束，不再是当前任务入口。当前任务以 `VISUAL-RUNTIME-2 partial/blocked` 和 `AI_GALGAME_VISUAL_RUNTIME_INTELLIGENCE_DEVELOPMENT_SPEC.md` v1.1 为唯一执行口径；FINAL-3/FINAL-4 的其它限制仍保持冻结。必须禁止 ST key/config/chat/resource/prompt/context；真实 provider activation 尚未执行。
+
 ## 1. 准入原则
+
+2026-08-30 架构审计收口：`static-architecture-audit` 对管理员视觉 facade 只允许四条精确路径，且仅限 `frontend/admin/**` 与 `public/game-admin/**` 生产面：`/v1/admin/visual/upload`、`/v1/admin/visual/publish`、`/v1/local-admin/visual/upload`、`/v1/local-admin/visual/publish`。测试夹具仍为 `deprecated-test-fixture`，其它管理员 endpoint 不得泛化放行；该收口不改变产品接口或任何冻结边界。
 
 正式落代码前必须满足：
 
@@ -29,7 +51,13 @@
 | UI 实施规格 | `galgame.frontend-ui-implementation.v1` | 已定义，待复审 | `AI_GALGAME_FRONTEND_UI_IMPLEMENTATION_SPEC.md` | 视觉 token、组件 DOM/状态/交互、响应式、微交互、玩家文案、可访问性、素材和截图验收，不新增剧情权威 |
 | 管理端小白化规格 | `galgame.beginner-admin-redesign.v1` | 已定义，待复审 | `AI_GALGAME_BEGINNER_ADMIN_REDESIGN_SPEC.md` | 默认工作台、上架向导、作品库、演出增强、高级检查；原版能力只套壳不复刻；隐藏入口不是认证 |
 | AI 剧本导入助手规格 | `galgame.script-import-assistant.v1` / `galgame.script-import-draft.v1` | 已定义，待复审 | `AI_GALGAME_SCRIPT_IMPORT_ASSISTANT_SPEC.md` | 管理员上传 -> AI/导入期确定性整理 -> 确认上架；fail-closed 管理员认证；密钥只在服务端；导入期 deterministic summarizer 不得成为玩家剧情 fallback |
-| 视觉资产增强模块（当前唯一目标） | `galgame.visual-system.v1` / `galgame.visual-visible-projection.v1` / `galgame.visual-binding.v1` | VS-DOCS-1..5 已完成；当前进入 VS-CODE-1 准入准备；历史 VS1-SG/PI/AS/M 不计入功能完成 | `AI_GALGAME_VISUAL_ASSET_ENHANCEMENT_MODULE_PLAN.md`; `AI_GALGAME_VISUAL_SYSTEM_DEVELOPMENT_SPEC.md`; VS1-* 文件为历史/未来附录 | 只做外置五类素材库、可见 ST 文本匹配、deterministic score<20 unknown、`/game` 背景/立绘/图标展示、异步降级、旧存档兼容和验收；AA/UAP/WE/Arc/完整游戏系统不属于当前目标；VS-CODE-P 只实现视觉匹配所需的最小投影授权边界，不扩展为通用剧情基础设施；VS-LLM 继续后置 |
+| 视觉资产增强核心模块 | `galgame.visual-core.v1` | CORE-0..5 reviewer-passed/done；旧 VS-CODE/VS1/UAP 等材料为历史/后置附录 | `AI_GALGAME_VISUAL_ASSET_CORE_DEVELOPMENT_SPEC.md` | 五类本地 published catalog、可见 ST 文本 coarse deterministic matching、score<20/type-specific unknown、visual service global active context/profile 驱动的 `/game` 背景/立绘/装备/道具/技能图标展示、异步降级与核心验收；manifest/profile 自动绑定为后置兼容限制；不声明语义智能选图 |
+| 傻瓜式自定义视觉后台 | `galgame.visual-simple-backend.v1` | SIMPLE-DOCS reviewer-passed；SIMPLE-1 后端章节批次 completed；SIMPLE-2/SIMPLE-3/SIMPLE-4 reviewer-passed/done；简化闭环 completed with limitations recorded | `AI_GALGAME_VISUAL_ASSET_SIMPLE_BACKEND_DEVELOPMENT_SPEC.md` | 管理员不接触技术字段即可检查服务、上传 PNG、发布并启用、关闭视觉增强；后端自动维护内部编号/目录；无 ST key/provider/LLM；publish 不自动写 scenario manifest/profile，该自动绑定是后置兼容限制，完成不包含历史 VS 重型链路、VS-LLM 或完整系统路线 |
+| ADMIN-MIN-UI 后台极简化 | `galgame.admin-minimal-entry.v1` | historical/verifying evidence retained | `AI_GALGAME_VISUAL_ASSET_ENHANCEMENT_MODULE_PLAN.md`、`AI_GALGAME_IMPLEMENTATION_BACKLOG.md` | 后台只保留 1 个剧本上传入口和 5 个视觉素材上传入口；前端隐藏整理/确认/参数/provider/model/prompt/context、视觉高级配置、连接测试、开关、恢复默认、技术字段；不改服务能力或玩家端 |
+| ADMIN-LOCAL 本地受控视觉后台入口 | `galgame.visual-local-admin-entry.v1` | historical/verifying evidence retained | `AI_GALGAME_VISUAL_ASSET_SIMPLE_BACKEND_DEVELOPMENT_SPEC.md`、`AI_GALGAME_VISUAL_ASSET_ENHANCEMENT_MODULE_PLAN.md` | visual-asset-service 自带 loopback `/game-admin/`；浏览器只用 HttpOnly session + CSRF；服务端 Bearer token 不进前端；仍只显示 1+5 上传入口 |
+| VISUAL-AI-TAGS 图像分析与标签匹配 | `galgame.visual-asset-analysis.v1` | reviewer-passed / stage-only | `AI_GALGAME_VISUAL_ASSET_AI_TAGGING_DEVELOPMENT_SPEC.md` | 五入口不变；独立 analyzer 服务端配置；失败可保存并标 unavailable/failed；closed schema、有限字典、metadata/catalog hash、持久化分析缓存幂等、exact overlap、unknown/default；同 content hash/类型/scope 跨重启复用，scope 变化重算，坏 cache fail-closed；不解决 manifest/profile auto-binding；不改 player、ST/backend 或历史重链路；生产 analyzer 未配置，等待部署决定 |
+| SIMPLE-1 第 1 章后端实现 | `galgame.visual-control.v1` | reviewer-passed/done | `AI_GALGAME_VISUAL_ASSET_SIMPLE_BACKEND_IMPLEMENTATION_GATE.md` | visual-control 持久化、默认关闭、status/enable/disable、重启恢复和坏控制文件/activeCatalog 篡改 fail-closed 已通过 |
+| SIMPLE-1 第 2 章后端实现 | `galgame.visual-simple-upload-request.v1` | reviewer-passed/done | `AI_GALGAME_VISUAL_ASSET_SIMPLE_BACKEND_IMPLEMENTATION_GATE.md` | `POST /v1/admin/visual/upload`、服务端自动编号/版本/role/PNG 元数据、draft 持久化已通过；Chapter 3 publish+activate 也已 reviewer-passed/done |
 | 验收矩阵 | `galgame.acceptance-matrix.v1` | 已定义，待复审 | UI 规范第 7.9 节与本文第 10 节 | 每项有命令、证据和通过标准 |
 
 ## 3. 存档与显示状态
@@ -500,7 +528,7 @@ URL、缓存和安全：
 | 媒体协议与缓存 | `node frontend/shared/tests/media-job-contract.test.mjs --fixture fixtures/media/media-job-v1.json` | media request/status/cache fixtures | `.codex-longrun/evidence/media-job-contract.json` | 幂等、取消、过期、URL 安全、缓存键通过 |
 | 桌面/移动端 | `node frontend/tools/browser-layout-smoke.mjs --viewports desktop,mobile --evidence .codex-longrun/evidence/layout.json` | 已发布 test release | `.codex-longrun/evidence/layout.json` | 无遮挡、无横滚、按钮可点 |
 | 管理员发布/回滚 | `node frontend/tools/admin-release-rollback-smoke.mjs --fixture fixtures/admin/arc-release-v1.json --evidence .codex-longrun/evidence/admin-release-rollback.json` | 完整/缺失 Arc fixture | `.codex-longrun/evidence/admin-release-rollback.json` | 完整引用可发布；缺失引用阻止；回滚不改原版聊天 |
-| 管理端小白默认路径 | `node frontend/tools/admin-beginner-smoke.mjs --base-url http://127.0.0.1:8001 --evidence .codex-longrun/evidence/admin-beginner-smoke.json` | 当前 active release 与管理端默认页 | `.codex-longrun/evidence/admin-beginner-smoke.json` | 默认工作台无 raw JSON、无禁止工程词、主流程按钮可见；高级检查仍可进入诊断 |
+| 管理端小白默认路径 | `node frontend/tools/admin-beginner-smoke.mjs --evidence .codex-longrun/evidence/visual-ai-tags-admin-simple-smoke-v2.json` | 当前生成的管理端页面 | `.codex-longrun/evidence/visual-ai-tags-admin-simple-smoke-v2.json` | 当前 2-tab 入口包含 1 个上传剧本和 5 个 PNG 上传入口；视觉卡片不显示技术字段；玩家无后台入口；旧五 tab/多步助手仅作为历史资料，不是 active 契约 |
 
 代码静态架构审计要求：
 

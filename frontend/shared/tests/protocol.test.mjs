@@ -14,8 +14,10 @@ import {
     listPlayableStoryEntries,
     listStoredStorySummaries,
     materializeManifestForArc,
+    resolveVisualCharacterBinding,
     summarizeSillyTavernBindings,
     validateAdaptivePresentationProfiles,
+    validateVisualCharacterBindings,
     validateArcBindings,
     validateReleaseArcSelection,
     validateScenarioManifest,
@@ -24,6 +26,109 @@ import {
 
 const validation = validateScenarioManifest(DEMO_SCENARIO);
 assert.equal(validation.valid, true, validation.errors.join('\n'));
+
+const visualBindingManifest = {
+    ...DEMO_SCENARIO,
+    visualBindings: {
+        schemaVersion: 'galgame.visual-character-bindings.v1',
+        characters: [
+            {
+                characterKey: 'Pippa',
+                aliases: ['pippa', '皮帕'],
+                assetId: 'asset_character_1b4268f70a37',
+                assetVersion: 1,
+                channel: 'any',
+            },
+            {
+                characterKey: '旁白',
+                aliases: ['narrator', '旁边'],
+                assetId: 'asset_character_3946efea1eb5',
+                assetVersion: 1,
+                channel: 'narrator',
+            },
+        ],
+        defaults: {
+            characterAssetId: 'asset_character_8e5132df0905',
+            narratorAssetId: 'asset_character_3946efea1eb5',
+            playerAssetId: 'asset_character_8e5132df0905',
+            systemAssetId: 'asset_character_3946efea1eb5',
+        },
+    },
+};
+const visualBindingStatus = validateVisualCharacterBindings(visualBindingManifest);
+assert.equal(visualBindingStatus.valid, true, visualBindingStatus.errors.join('\\n'));
+assert.equal(
+    resolveVisualCharacterBinding(visualBindingManifest, { name: '皮帕', role: 'character' }).assetId,
+    'asset_character_1b4268f70a37',
+);
+assert.equal(
+    resolveVisualCharacterBinding(visualBindingManifest, { name: '皮帕的回合', role: 'character' }).assetId,
+    'asset_character_1b4268f70a37',
+);
+assert.equal(
+    resolveVisualCharacterBinding(visualBindingManifest, { name: '旁边', role: 'narrator' }).assetId,
+    'asset_character_3946efea1eb5',
+);
+assert.equal(
+    resolveVisualCharacterBinding(visualBindingManifest, { name: '未登记角色', role: 'narrator' }).assetId,
+    'asset_character_3946efea1eb5',
+);
+assert.equal(
+    resolveVisualCharacterBinding(visualBindingManifest, { name: '未登记角色', role: 'character' }).assetId,
+    'asset_character_8e5132df0905',
+);
+const pooledVisualBindingManifest = {
+    ...visualBindingManifest,
+    id: 'visual-binding-pool-test',
+    visualBindings: {
+        ...visualBindingManifest.visualBindings,
+        characterPool: [
+            {
+                characterKey: 'Pippa',
+                aliases: ['mage'],
+                assetId: 'asset_character_1b4268f70a37',
+                assetVersion: 1,
+                channel: 'character',
+            },
+            {
+                characterKey: 'Dwarf Warrior',
+                aliases: ['dwarf', '矮人'],
+                assetId: 'asset_character_ef87a34e79ed',
+                assetVersion: 1,
+                channel: 'character',
+            },
+        ],
+    },
+};
+const pooledVisualBindingStatus = validateVisualCharacterBindings(pooledVisualBindingManifest);
+assert.equal(pooledVisualBindingStatus.valid, true, pooledVisualBindingStatus.errors.join('\\n'));
+assert.equal(
+    resolveVisualCharacterBinding(pooledVisualBindingManifest, { name: '矮人', role: 'character' }).assetId,
+    'asset_character_ef87a34e79ed',
+);
+const pooledUnknownOne = resolveVisualCharacterBinding(pooledVisualBindingManifest, { name: '陌生角色甲', role: 'character' });
+const pooledUnknownTwo = resolveVisualCharacterBinding(pooledVisualBindingManifest, { name: '陌生角色乙', role: 'character' });
+assert.notEqual(pooledUnknownOne.assetId, pooledUnknownTwo.assetId);
+assert.equal(
+    resolveVisualCharacterBinding(pooledVisualBindingManifest, {
+        name: '陌生角色甲',
+        role: 'character',
+        allowCharacterPoolFallback: false,
+    }),
+    null,
+);
+assert.equal(
+    resolveVisualCharacterBinding(pooledVisualBindingManifest, {
+        name: '旁白',
+        role: 'narrator',
+        allowCharacterPoolFallback: false,
+    }).assetId,
+    'asset_character_3946efea1eb5',
+);
+assert.equal(
+    resolveVisualCharacterBinding(pooledVisualBindingManifest, { name: '陌生角色甲', role: 'character' }).assetId,
+    pooledUnknownOne.assetId,
+);
 assert.equal(DEMO_SCENARIO.story.mode, 'sillytavern-live');
 assert.equal(Object.values(DEMO_SCENARIO.story.nodes).every((node) => (node.lines || []).length === 0), true);
 assert.equal(Object.values(DEMO_SCENARIO.story.nodes).every((node) => (node.choices || []).length === 0), true);

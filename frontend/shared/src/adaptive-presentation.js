@@ -9,6 +9,7 @@ import {
 } from './adaptive-presentation-schema.js';
 
 export const ADAPTIVE_PRESENTATION_AGGREGATE_VERSION = 'galgame.adaptive-presentation-result-set.v1';
+const MAX_ADAPTIVE_VISIBLE_TEXT_LENGTH = 16000;
 
 const BUILTIN_CONFIGURATION_SOURCE = Object.freeze({ kind: 'builtin-pattern' });
 
@@ -124,7 +125,7 @@ export function extractAdaptivePresentation(input, {
     const candidates = [];
 
     for (const message of messages) {
-        const text = sanitizeVisibleText(message.text);
+        const text = sanitizeVisibleText(message.text, MAX_ADAPTIVE_VISIBLE_TEXT_LENGTH);
         if (!text) {
             continue;
         }
@@ -244,6 +245,10 @@ function extractRpgStatus(text, message) {
         assignNumber(fields, 'gold', line, /^(?:💰\s*)?(?:Gold|金币|金钱)\s*[:：]\s*([\d,]+)/i);
         assignText(fields, 'status', line, /^(?:📃\s*)?(?:Status|状态)\s*[:：]\s*(.+)$/i);
     }
+    const turnOrder = extractTurnOrder(lines);
+    if (turnOrder) {
+        fields.turnOrder = turnOrder;
+    }
     if (!fields.status) {
         const statusEntries = collectModuleEntries(text, ['Status', '状态']);
         if (statusEntries.length) {
@@ -261,6 +266,46 @@ function extractRpgStatus(text, message) {
         fields,
         groups: createStatusGroups(fields),
     });
+}
+
+function extractTurnOrder(lines) {
+    let order = null;
+    let current = null;
+    for (const line of lines) {
+        const orderMatch = line.match(/(?:行动顺序|先攻顺序|回合顺序|initiative(?:\s+order)?|turn\s+order)\s*[:：]\s*([^。；;]+?)(?=(?:\s+(?:当前)?轮到)|[。；;]|$)/iu);
+        if (orderMatch) {
+            const names = orderMatch[1]
+                .split(/\s*(?:>|→|＞|、|,|，|->)\s*/u)
+                .map((value) => sanitizeVisibleText(value).replace(/^[\s*_`~]+|[\s*_`~]+$/gu, '').trim())
+                .filter(Boolean);
+            if (names.length >= 2) {
+                order = {
+                    label: names.join(' → '),
+                    value: names.join(' → '),
+                    names,
+                    raw: line,
+                };
+            }
+            continue;
+        }
+        const currentMatch = line.match(/(?:当前)?\s*(?:轮到|行动者|current\s+turn)\s*[:：]?\s*(.+?)(?:的)?(?:行动|回合|turn)(?=\s*(?:[。；;]|$))/iu);
+        if (currentMatch) {
+            const value = sanitizeVisibleText(currentMatch[1]).trim();
+            if (value) {
+                current = value;
+            }
+        }
+    }
+    if (!order && !current) {
+        return null;
+    }
+    return {
+        label: order?.label || current,
+        value: order?.value || current,
+        names: order?.names || (current ? [current] : []),
+        current,
+        raw: order?.raw || `当前轮到${current}行动`,
+    };
 }
 
 function extractInventory(text, message) {
@@ -550,6 +595,10 @@ function createStatusGroups(fields) {
         fields.gold ? { label: `金币 ${fields.gold.value}`, raw: fields.gold.raw } : null,
         fields.xp ? { label: `经验 ${fields.xp.current}${fields.xp.max ? `/${fields.xp.max}` : ''}`, raw: fields.xp.raw } : null,
     ].filter(Boolean));
+    push('turn-order', '行动顺序', 'initiative', [
+        fields.turnOrder ? { label: fields.turnOrder.label, raw: fields.turnOrder.raw, emphasis: true } : null,
+        fields.turnOrder?.current ? { label: `当前：${fields.turnOrder.current}`, raw: fields.turnOrder.raw } : null,
+    ].filter(Boolean));
 
     const classified = new Set(groups.flatMap((group) => group.items.map((item) => item.raw || item.label)));
     push('other', '其他记录', 'neutral', entries.filter((entry) => !classified.has(entry)));
@@ -757,7 +806,7 @@ function normalizeVisibleMessages(input, maxRecentMessages, fallback) {
     return array
         .slice(Math.max(0, array.length - maxRecentMessages))
         .map((item, index) => ({
-            text: sanitizeVisibleText(item?.displayText || item?.text || item?.mes || item || ''),
+            text: sanitizeVisibleText(item?.displayText || item?.text || item?.mes || item || '', MAX_ADAPTIVE_VISIBLE_TEXT_LENGTH),
             chatId: sanitizeVisibleText(item?.chatId || fallback.chatId || '', 160),
             messageIndex: Number.isFinite(Number(item?.messageIndex)) ? Number(item.messageIndex) : fallback.messageIndex + index,
         }));
@@ -888,13 +937,36 @@ function splitLines(text) {
 }
 
 function splitList(value) {
-    return sanitizeVisibleText(value)
-        .split(/[，,、;；|]/u)
-        .map((item) => item.trim())
-        .filter(Boolean);
+    const source = sanitizeVisibleText(value);
+    const items = [];
+    let start = 0;
+    let depth = 0;
+    for (let index = 0; index < source.length; index += 1) {
+        const character = source[index];
+        if (character === '(' || character === '（' || character === '[' || character === '【') {
+            depth += 1;
+            continue;
+        }
+        if (character === ')' || character === '）' || character === ']' || character === '】') {
+            depth = Math.max(0, depth - 1);
+            continue;
+        }
+        if (depth === 0 && /[，,、;；|]/u.test(character)) {
+            const item = source.slice(start, index).trim();
+            if (item) {
+                items.push(item);
+            }
+            start = index + 1;
+        }
+    }
+    const tail = source.slice(start).trim();
+    if (tail) {
+        items.push(tail);
+    }
+    return items;
 }
 
-function sanitizeVisibleText(value, maxLength = 4000) {
+function sanitizeVisibleText(value, maxLength = MAX_ADAPTIVE_VISIBLE_TEXT_LENGTH) {
     const text = String(value ?? '')
         .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
         .trim();

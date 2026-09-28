@@ -2,7 +2,7 @@ import {
     getActiveSillyTavernBindings,
     sanitizeText,
     summarizeSillyTavernBindings,
-} from './protocol.js';
+} from './protocol.js?v=auto-dbada1e83e91';
 
 export const SILLYTAVERN_ENDPOINTS = Object.freeze({
     csrf: '/csrf-token',
@@ -672,7 +672,7 @@ export class OriginalRuntimeBridgeClient {
             isSeed: false,
             rawChat,
             messages: normalizeOriginalChatMessages(rawChat),
-            generatedText: sanitizeText(data.generatedText || '', 4000),
+            generatedText: sanitizeText(data.generatedText || '', MAX_VISIBLE_CHAT_TEXT_LENGTH),
             diagnostics: {
                 unchanged: Boolean(data.unchanged),
                 elapsedMs: Number(data.elapsedMs || 0),
@@ -922,10 +922,81 @@ function normalizeRawChat(chat) {
 }
 
 export const ORIGINAL_VISIBLE_CHAT_EXTRACTOR_VERSION = 'galgame.original-visible-chat-extractor.v1';
-export const VISUAL_PROJECTION_ENTITY_HINT_EXTRACTOR_VERSION = 'galgame.visual-projection-entity-hints.v1';
-export const VISUAL_PROJECTION_SHARED_EXTRACTOR_VERSION = 'galgame.visual-projection-shared.v1';
+export const VISUAL_PROJECTION_ENTITY_HINT_EXTRACTOR_VERSION = 'galgame.visual-projection-entity-hints.v2';
+export const VISUAL_PROJECTION_SHARED_EXTRACTOR_VERSION = 'galgame.visual-projection-shared.v2';
+export const CORE_VISUAL_DISPLAY_ENTITY_HINT_EXTRACTOR_VERSION = 'galgame.core-visual-display-entity-hints.v2';
 
-export function normalizeOriginalVisibleChatMessages(chat, { maxTextLength = 4000 } = {}) {
+// Preserve long original messages so hidden planning, status blocks, and
+// trailing choice lists are all available to the display and action parsers.
+export const MAX_VISIBLE_CHAT_TEXT_LENGTH = 16000;
+
+const VISUAL_PROJECTION_LABEL_TYPES = new Map([
+    ['场景', 'scene'],
+    ['背景', 'scene'],
+    ['背景设定', 'scene'],
+    ['地点', 'scene'],
+    ['当前地点', 'scene'],
+    ['环境', 'scene'],
+    ['战场', 'scene'],
+    ['场景描述', 'scene'],
+    ['scene', 'scene'],
+    ['background', 'scene'],
+    ['setting', 'scene'],
+    ['location', 'scene'],
+    ['current location', 'scene'],
+    ['environment', 'scene'],
+    ['battlefield', 'scene'],
+    ['scene description', 'scene'],
+    ['装备', 'equipment'],
+    ['武器', 'equipment'],
+    ['防具', 'equipment'],
+    ['equipment', 'equipment'],
+    ['weapon', 'equipment'],
+    ['weapons/shield', 'equipment'],
+    ['armor', 'equipment'],
+    ['装备栏', 'equipment'],
+    ['道具', 'item'],
+    ['inventory', 'item'],
+    ['inventory/items', 'item'],
+    ['物品栏', 'item'],
+    ['技能', 'skill'],
+    ['abilities', 'skill'],
+    ['ability', 'skill'],
+    ['spells', 'skill'],
+    ['物品', 'item'],
+    ['材料', 'item'],
+    ['线索', 'item'],
+    ['item', 'item'],
+    ['material', 'item'],
+    ['clue', 'item'],
+    ['技能', 'skill'],
+    ['法术', 'skill'],
+    ['skill', 'skill'],
+    ['spell', 'skill'],
+]);
+
+const VISUAL_PROJECTION_LABEL_ATTRIBUTE_CODES = Object.freeze({
+    scene: 'scene-location-kind',
+    equipment: 'equipment-visible-label',
+    item: 'item-visible-label',
+    skill: 'skill-visible-label',
+});
+
+const CORE_VISUAL_DISPLAY_LABEL_TYPES = new Map([
+    ...VISUAL_PROJECTION_LABEL_TYPES,
+    ['角色', 'character'],
+    ['人物', 'character'],
+    ['立绘', 'character'],
+    ['character', 'character'],
+    ['sprite', 'character'],
+]);
+
+const CORE_VISUAL_DISPLAY_LABEL_ATTRIBUTE_CODES = Object.freeze({
+    ...VISUAL_PROJECTION_LABEL_ATTRIBUTE_CODES,
+    character: 'character-explicit-appearance',
+});
+
+export function normalizeOriginalVisibleChatMessages(chat, { maxTextLength = MAX_VISIBLE_CHAT_TEXT_LENGTH } = {}) {
     const messages = [];
     for (const [rawOffset, message] of normalizeRawChat(chat).slice(1).entries()) {
         if (!message || typeof message !== 'object' || message.is_system) {
@@ -952,11 +1023,58 @@ export function normalizeOriginalVisibleChatMessages(chat, { maxTextLength = 400
 }
 
 export function createVisualProjectionEntityHints(message) {
+    return createVisibleMessageEntityHints(message, {
+        labelTypes: VISUAL_PROJECTION_LABEL_TYPES,
+        labelAttributeCodes: VISUAL_PROJECTION_LABEL_ATTRIBUTE_CODES,
+    });
+}
+
+export function createCoreVisualDisplayEntityHints(message) {
+    return createVisibleMessageEntityHints(message, {
+        labelTypes: CORE_VISUAL_DISPLAY_LABEL_TYPES,
+        labelAttributeCodes: CORE_VISUAL_DISPLAY_LABEL_ATTRIBUTE_CODES,
+        mergeCurrentSpeakerCharacterAppearance: true,
+    });
+}
+
+export async function createCoreVisualDisplayEntityKey(type, value) {
+    const digest = await sha256Hex(String(value || type));
+    return `entity_${type}_${digest.slice(0, 24)}`;
+}
+
+async function sha256Hex(value) {
+    const bytes = new TextEncoder().encode(value);
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest))
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
+}
+
+function createVisibleMessageEntityHints(message, {
+    labelTypes,
+    labelAttributeCodes,
+    mergeCurrentSpeakerCharacterAppearance = false,
+}) {
     const entities = [];
-    const text = sanitizeText(message?.text || '', 4000);
+    // Entity extraction must use the same visible projection as the player
+    // renderer. Hidden reasoning/status scaffolding is not story evidence and
+    // must never create a scene or character hint.
+    const text = formatVisualNovelDisplayText(message?.text || '').slice(0, MAX_VISIBLE_CHAT_TEXT_LENGTH);
     const speaker = sanitizeText(message?.speaker || '', 160);
-    if (message?.role === 'character' && speaker) {
-        entities.push({
+    const seenSeeds = new Set();
+    const pushEntity = (entity) => {
+        const dedupeKey = `${entity.entityType}:${entity.entityKeySeed}`;
+        if (seenSeeds.has(dedupeKey)) {
+            return;
+        }
+        seenSeeds.add(dedupeKey);
+        entities.push(entity);
+    };
+    const speakerCharacterEntity = message?.role === 'character'
+        && speaker
+        && !isNonCharacterVisualLabel(speaker)
+        && !(mergeCurrentSpeakerCharacterAppearance && isNarratorSpeaker(speaker))
+        ? {
             entityKeySeed: speaker,
             entityType: 'character',
             displayLabel: speaker.slice(0, 80),
@@ -966,10 +1084,41 @@ export function createVisualProjectionEntityHints(message) {
                 confidenceBand: 'explicit',
             }],
             confidenceBand: 'explicit',
-        });
+        }
+        : null;
+    const labelEntities = extractExplicitVisualProjectionLabelEntities(text, message?.index, { labelTypes, labelAttributeCodes });
+    if (mergeCurrentSpeakerCharacterAppearance) {
+        const characterLabels = uniqueEntitiesBySeed(labelEntities.filter((entity) => entity.entityType === 'character'));
+        if (speakerCharacterEntity && characterLabels.length === 1) {
+            pushEntity({
+                ...speakerCharacterEntity,
+                visibleAttributes: mergeVisibleAttributes([
+                    ...speakerCharacterEntity.visibleAttributes,
+                    ...characterLabels[0].visibleAttributes,
+                ]),
+            });
+        } else if (speakerCharacterEntity) {
+            pushEntity(speakerCharacterEntity);
+        }
+        for (const entity of labelEntities) {
+            if (entity.entityType === 'character') {
+                if (!speakerCharacterEntity) {
+                    pushEntity(entity);
+                }
+                continue;
+            }
+            pushEntity(entity);
+        }
+    } else {
+        if (speakerCharacterEntity) {
+            pushEntity(speakerCharacterEntity);
+        }
+        for (const entity of labelEntities) {
+            pushEntity(entity);
+        }
     }
     if (text) {
-        entities.push({
+        pushEntity({
             entityKeySeed: `${message?.index ?? ''}:${text}`,
             entityType: 'unknown',
             displayLabel: 'visible-message',
@@ -983,6 +1132,79 @@ export function createVisualProjectionEntityHints(message) {
     }
     return entities.slice(0, 32);
 }
+
+function uniqueEntitiesBySeed(entities) {
+    const seen = new Set();
+    const unique = [];
+    for (const entity of entities) {
+        const key = `${entity.entityType}:${entity.entityKeySeed}`;
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        unique.push(entity);
+    }
+    return unique;
+}
+
+function mergeVisibleAttributes(attributes) {
+    const merged = [];
+    const seen = new Set();
+    for (const attribute of attributes) {
+        if (seen.has(attribute.code)) {
+            continue;
+        }
+        seen.add(attribute.code);
+        merged.push(attribute);
+    }
+    return merged;
+}
+
+function extractExplicitVisualProjectionLabelEntities(text, messageIndex, { labelTypes, labelAttributeCodes }) {
+    const entities = [];
+    for (const line of text.split(/\n+/)) {
+        const trimmed = sanitizeText(line, 400).trim().replace(/^[-*•]\s*/, '');
+        const normalizedLine = trimmed.replace(/^[^A-Za-z\u4e00-\u9fff]+/u, '');
+        const match = normalizedLine.match(/^(.{1,80}?)\s*[:：]\s*(.{1,400})$/u);
+        if (!match) {
+            continue;
+        }
+        const rawLabel = normalizeVisualProjectionLabel(match[1]);
+        const type = labelTypes.get(rawLabel);
+        if (!type) {
+            continue;
+        }
+        const value = sanitizeText(match[2], 160).trim();
+        if (!value) {
+            continue;
+        }
+        entities.push({
+            entityKeySeed: `${messageIndex ?? ''}:${type}:${rawLabel}:${value}`,
+            entityType: type,
+            displayLabel: value.slice(0, 80),
+            visibleAttributes: [{
+                code: labelAttributeCodes[type],
+                value: value.slice(0, 120),
+                confidenceBand: 'explicit',
+            }],
+            confidenceBand: 'explicit',
+        });
+    }
+    return entities;
+}
+
+function normalizeVisualProjectionLabel(value) {
+    return String(value || '')
+        .normalize('NFKC')
+        .replace(/[\u200B-\u200D\uFEFF]/g, '')
+        .replace(/^[\s>*#`*_~\[\]()（）【】「」『』]+|[\s>*#`*_~\[\]()（）【】「」『』]+$/gu, '')
+        .replace(/[：:]+$/u, '')
+        .replace(/[\\/_-]+/gu, ' ')
+        .replace(/\s+/gu, ' ')
+        .trim()
+        .toLocaleLowerCase();
+}
+
 
 function normalizeOriginalChatMessages(chat) {
     return normalizeOriginalVisibleChatMessages(chat)
@@ -1003,7 +1225,7 @@ function normalizeOriginalChatMessages(chat) {
 }
 
 export function formatVisualNovelDisplayText(value) {
-    const source = sanitizeText(value, 4000)
+    const source = sanitizeText(value, MAX_VISIBLE_CHAT_TEXT_LENGTH)
         .replace(/\r\n?/g, '\n')
         .replace(/<br\s*\/?>/gi, '\n');
     if (!source) {
@@ -1055,7 +1277,7 @@ export function createVisualNovelDisplaySegments(value, {
     return displayText
         .split(/\n{2,}/)
         .map((paragraph) => paragraph.trim())
-        .filter(Boolean)
+        .filter((paragraph) => paragraph && !isPunctuationOnlyVisualNovelSegment(paragraph))
         .map((paragraph, index) => {
             const segment = classifyVisualNovelSegment(paragraph, {
                 fallbackSpeaker: fallbackName,
@@ -1090,8 +1312,8 @@ function classifyVisualNovelSegment(text, { fallbackSpeaker, lastSpeaker, role }
         };
     }
 
-    const namedDialogue = text.match(/^([A-Za-z][\w-]{0,39}|[\p{Script=Han}ぁ-んァ-ヶー]{1,12})[：:]\s*(.+)$/u);
-    if (namedDialogue && namedDialogue[2]?.trim()) {
+    const namedDialogue = text.match(/^([A-Za-z][\w-]{0,39}(?:[ \t]+[A-Za-z][\w-]{0,39}){0,3}|[\p{Script=Han}ぁ-んァ-ヶー]{1,12})[：:]\s*(.+)$/u);
+    if (namedDialogue && namedDialogue[2]?.trim() && !isNonDialogueLabel(namedDialogue[1])) {
         return {
             type: 'dialogue',
             speaker: sanitizeText(namedDialogue[1], 80),
@@ -1100,9 +1322,17 @@ function classifyVisualNovelSegment(text, { fallbackSpeaker, lastSpeaker, role }
     }
 
     if (/^[“"「『].+[”"」』]$/su.test(text) || /^[“"「『]/u.test(text)) {
+        const quoteSpeaker = sanitizeText(lastSpeaker || fallbackSpeaker || '', 80);
+        if (isNarratorSpeaker(quoteSpeaker)) {
+            return {
+                type: 'narration',
+                speaker: '旁白',
+                text,
+            };
+        }
         return {
             type: 'dialogue',
-            speaker: sanitizeText(lastSpeaker || fallbackSpeaker || '角色', 80),
+            speaker: quoteSpeaker || '角色',
             text,
         };
     }
@@ -1114,11 +1344,45 @@ function classifyVisualNovelSegment(text, { fallbackSpeaker, lastSpeaker, role }
     };
 }
 
+function isNonDialogueLabel(value) {
+    return isNonCharacterVisualLabel(value)
+        || /(?:检定|判定|豁免|豁免记录|行动顺序|顺序|状态|属性|装备|背包|物品|道具|技能|能力|法术|经验|金币|生命|魔力|目标|地点|位置|事件|线索|证据)$/u
+            .test(String(value || '').trim());
+}
+
+function isNarratorSpeaker(value) {
+    const speaker = String(value || '')
+        .normalize('NFKC')
+        .replace(/\s+/gu, ' ')
+        .trim()
+        .toLocaleLowerCase();
+    return /^(?:旁白|解说|系统|主持人|地下城主|dungeon master|dm|gm|game master|narrator|storyteller)$/iu.test(speaker);
+}
+
+/**
+ * Labels that describe the visible status/action stream are not speakers.
+ * Keep this list presentation-only: it must not infer or mutate story state.
+ */
+function isNonCharacterVisualLabel(value) {
+    const label = String(value || '')
+        .normalize('NFKC')
+        .replace(/^[\s>*#`*_~\[\]()（）【】「」『』]+|[\s>*#`*_~\[\]()（）【】「」『』]+$/gu, '')
+        .replace(/\s+/gu, ' ')
+        .trim()
+        .toLocaleLowerCase();
+    return /^(?:旁白|解说|系统|主持人|地下城主|场景|背景|背景设定|地点|当前地点|环境|战场|场景描述|角色|人物|立绘|character|person|sprite|伤害|伤害记录|死亡豁免|死亡豁免记录|豁免|豁免记录|你的回合|玩家回合|行动顺序|先攻顺序|顺序|状态|属性|战斗状态|回合|行动|(?:.+?)(?:的)?回合|(?:.+?)(?:的)?行动|background|setting|scene|location|current location|environment|battlefield|scene description|damage|damage record|death save|death saves|saving throw|save record|your turn|player turn|initiative order|turn order|action order|status|state)$/iu.test(label);
+}
+
+function isPunctuationOnlyVisualNovelSegment(value) {
+    return !String(value || '').replace(/[\s\p{P}\p{S}`*_~]/gu, '');
+}
+
 function stripHiddenVisualNovelDisplayBlocks(text) {
     return text
         .replace(/<!--[\s\S]*?-->/g, '')
         .replace(/<\s*(?:think|thinking|thought|reasoning)\b[^>]*>[\s\S]*?<\s*\/\s*(?:think|thinking|thought|reasoning)\s*>/gi, '')
         .replace(/\[(?:think|thinking|thought|reasoning)\][\s\S]*?\[\/(?:think|thinking|thought|reasoning)\]/gi, '')
+        .replace(/```[ \t]*\r?\n[ \t]*\[(?:think|thinking|thought|reasoning|analysis)\][ \t]*\r?\n[\s\S]*?\r?\n[ \t]*```/gi, '')
         .replace(/```\s*\[?\s*(?:think|thinking|thought|reasoning|analysis)\s*\]?\s*[\r\n]+[\s\S]*?```/gi, '')
         .replace(/```(?:think|thinking|thought|reasoning|analysis)[\s\S]*?```/gi, '')
         .replace(/^\s*(?:thinking|reasoning)\s*:\s*[\s\S]*?(?=\n{2,}|$)/gim, '');
@@ -1135,15 +1399,19 @@ function stripVisualNovelMarkdownEmphasis(text) {
             .replace(/(^|[\s([{（「『“])_{1,3}([^_\n]+?)_{1,3}(?=$|[\s.,!?;:，。！？；：)\]}）」』”])/gu, '$1$2');
     }
 
-    return next;
+    return next
+        .replace(/\*{1,3}([^*\n]+?)\*{1,3}/gu, '$1')
+        .replace(/_{1,3}([^_\n]+?)_{1,3}/gu, '$1');
 }
 
 function addVisualNovelParagraphBreaks(text) {
     return text
         .replace(/[ \t]+/g, ' ')
-        .replace(/([。！？!?])\s+(?=[“"「『])/g, '$1\n\n')
+        .replace(/([。！？!?])\s*(?=[“"「『])/g, '$1\n\n')
         .replace(/([。！？!?])\s+(?=—)/g, '$1\n\n')
-        .replace(/([”"」』])\s+(?=[^\n])/g, '$1\n\n')
+        // ASCII double quotes are symmetric; treating `"` as a closing quote
+        // splits normal dialogue into punctuation-only paragraphs.
+        .replace(/([”」』])\s*(?=[\p{Script=Han}A-Za-z])/gu, '$1\n\n')
         .replace(/([。！？!?])\s+(?=[A-Z][a-z]+ 的|[A-Z][a-z]+ [a-z])/g, '$1\n\n');
 }
 
@@ -1185,13 +1453,44 @@ function splitLongVisualNovelParagraph(paragraph) {
 }
 
 export function extractSuggestedActionsFromOriginalText(text, { maxActions = 4 } = {}) {
-    const safeText = sanitizeText(text, 4000).replace(/\r\n?/g, '\n');
+    const safeText = sanitizeText(text, MAX_VISIBLE_CHAT_TEXT_LENGTH).replace(/\r\n?/g, '\n');
     const lines = safeText.split('\n');
     const headed = extractHeadedActions(lines, maxActions);
     if (headed.suggestedActions.length) {
         return headed;
     }
     return extractTrailingNumberedActions(lines, maxActions);
+}
+
+/**
+ * Detect a likely truncated RPG response without treating every continuation
+ * or short narration as an error. This is presentation/recovery metadata only;
+ * it never changes the canonical SillyTavern chat.
+ */
+export function detectIncompleteRpgResponse(text, { minVisibleLength = 450 } = {}) {
+    const visibleText = formatVisualNovelDisplayText(text);
+    const narrativeText = stripTrailingRpgMetadata(visibleText);
+    if (narrativeText.length < minVisibleLength) {
+        return false;
+    }
+    if (extractSuggestedActionsFromOriginalText(text).suggestedActions.length >= 2) {
+        return false;
+    }
+    if (/(?:GAME\s*OVER|游戏结束|可选行动|行动选项|剧情选项|请选择|下一步)\s*[：:]?/iu.test(narrativeText)) {
+        return false;
+    }
+    const lastVisibleCharacter = narrativeText.trim().slice(-1);
+    return Boolean(lastVisibleCharacter) && !/[。！？!?\.．…」』”）)\]}*>*`~]$/u.test(lastVisibleCharacter);
+}
+
+function stripTrailingRpgMetadata(value) {
+    const lines = String(value || '').split('\n');
+    const metadataLine = /^(?:❤|⛨|🏅|📈|🎚|⚔|🛡|💼|🤸|🔥|💰|📃)\s|^(?:HP|MP|AC|Level|XP|Gold|Status|Weapons\/shield|Armor|Inventory|Abilities|Spells|状态|装备|防具|道具|技能|能力|法术|金币|经验|等级|生命|魔力)\s*[:：]/iu;
+    const firstMetadataIndex = lines.findIndex((line) => metadataLine.test(line.trim()));
+    if (firstMetadataIndex < 0) {
+        return String(value || '').trim();
+    }
+    return lines.slice(0, firstMetadataIndex).join('\n').trim();
 }
 
 function extractHeadedActions(lines, maxActions) {

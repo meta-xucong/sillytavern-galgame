@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -12,6 +12,27 @@ const repoRoot = path.resolve(moduleRoot, '..', '..');
 const DEFAULT_PORT = 8795;
 const DEFAULT_TIMEOUT_MS = 180000;
 const DEFAULT_PROVIDER_RETRY_DELAYS_MS = [2000, 6000];
+const MAX_BRIDGE_VISIBLE_TEXT_LENGTH = 16000;
+const DEFAULT_CLAUDE_SETTINGS_PATH = path.join(repoRoot, 'data', 'default-user', 'OpenAI Settings', 'Default.json');
+
+function readRuntimeProviderSettings() {
+    try {
+        const settings = JSON.parse(readFileSync(DEFAULT_CLAUDE_SETTINGS_PATH, 'utf8'));
+        const provider = String(settings.chat_completion_source || '').trim().toLowerCase();
+        if (provider !== 'claude') {
+            return {};
+        }
+        return {
+            provider,
+            model: String(settings.claude_model || 'claude-sonnet-4-6').trim(),
+            reverseProxy: String(settings.reverse_proxy || '').trim(),
+            proxyPassword: String(settings.proxy_password || ''),
+            maxTokens: Number(settings.openai_max_tokens) || 4096,
+        };
+    } catch {
+        return {};
+    }
+}
 
 export function createOriginalRuntimeBridgeServer({
     runtime = null,
@@ -250,6 +271,7 @@ export class BrowserOriginalRuntimeBridge {
             avatar,
             chatId: normalizeChatId(chatId),
             runtimeWorldBookRefs: normalizeWorldBookRefs(runtimeWorldBookRefs),
+            providerSettings: readRuntimeProviderSettings(),
             timeoutMs: clampTimeout(timeoutMs),
         };
         const result = await this.evaluate(generateInOriginalRuntimeExpression(payload), payload.timeoutMs + 90000);
@@ -418,6 +440,7 @@ function generateInOriginalRuntimeExpression(payload) {
             : [];
         const expectedChatWorldInfo = expectedWorldBookRefs[0] || '';
         let stModule = null;
+        let openaiSettingsModule = null;
         let eventsModule = null;
         let worldInfoModule = null;
         let targetLockTimer = null;
@@ -518,9 +541,19 @@ function generateInOriginalRuntimeExpression(payload) {
         };
         const runtimeState = () => {
             const ctx = globalThis.SillyTavern?.getContext?.();
+            const settings = stModule?.oai_settings || ctx?.oai_settings || {};
+            const provider = sanitizeText(document.querySelector('#chat_completion_source')?.value || settings.chat_completion_source || ctx?.mainApi || '', 80).toLowerCase();
+            const modelSelector = provider === 'claude' ? '#model_claude_select' : '#model_openai_select';
+            const model = document.querySelector(modelSelector)?.value || (provider === 'claude'
+                ? settings.claude_model
+                : provider === 'openai'
+                    ? settings.openai_model
+                    : settings[provider + '_model']);
             return {
                 onlineStatus: sanitizeText(ctx?.onlineStatus || '', 120),
                 mainApi: sanitizeText(ctx?.mainApi || '', 80),
+                provider,
+                model: sanitizeText(model || '', 120),
                 chatId: sanitizeText(ctx?.getCurrentChatId?.() || '', 240),
                 targetChatId,
                 chatLength: Array.isArray(ctx?.chat) ? ctx.chat.length : 0,
@@ -611,7 +644,7 @@ function generateInOriginalRuntimeExpression(payload) {
                         id: 'original-runtime-message-' + index,
                         speaker: sanitizeText(message.name || (message.is_user ? 'Player' : 'Character'), 160),
                         role: message.is_user ? 'player' : 'character',
-                        text: sanitizeText(message.extra?.display_text || message.mes, 4000),
+                        text: sanitizeText(message.extra?.display_text || message.mes, MAX_BRIDGE_VISIBLE_TEXT_LENGTH),
                         sentAt: sanitizeText(message.send_date || '', 120),
                     })),
             };
@@ -633,6 +666,7 @@ function generateInOriginalRuntimeExpression(payload) {
         try {
             await waitFor(() => globalThis.SillyTavern?.getContext, 60000, 'ORIGINAL_CONTEXT_UNAVAILABLE');
             stModule = await import('/script.js');
+            openaiSettingsModule = await import('/scripts/openai.js');
             eventsModule = await import('/scripts/events.js');
             if (eventsModule?.eventSource && eventsModule?.event_types?.WORLD_INFO_ACTIVATED) {
                 eventsModule.eventSource.on(eventsModule.event_types.WORLD_INFO_ACTIVATED, captureWorldInfoActivation);
@@ -659,9 +693,9 @@ function generateInOriginalRuntimeExpression(payload) {
             }
 
             const openedFromChatId = normalizeChatId(ctx.getCurrentChatId?.() || '');
-            const targetBeforeRawChat = await readTargetRawChat();
-            const targetBeforeMessages = stripHeader(targetBeforeRawChat);
-            const targetBeforeLast = latestMessage(targetBeforeRawChat);
+            let targetBeforeRawChat = await readTargetRawChat();
+            let targetBeforeMessages = stripHeader(targetBeforeRawChat);
+            let targetBeforeLast = latestMessage(targetBeforeRawChat);
             const targetBeforeWorldInfo = sanitizeText(targetBeforeRawChat[0]?.chat_metadata?.world_info || '', 240);
             if (expectedChatWorldInfo && targetBeforeWorldInfo !== expectedChatWorldInfo) {
                 throw Object.assign(new Error('ORIGINAL_RUNTIME_WORLD_INFO_MISMATCH'), {
@@ -778,15 +812,35 @@ function generateInOriginalRuntimeExpression(payload) {
                 }
             };
             const trimTrailingEmptyOriginalReply = async (rawChat) => {
-                const messages = stripHeader(rawChat);
-                const last = messages.at(-1);
-                if (!(last && !last.is_user && !last.is_system && !sanitizeText(last.mes || '', 4000))) {
+                let trimmedRawChat = rawChat;
+                while (true) {
+                    const messages = stripHeader(trimmedRawChat);
+                    const last = messages.at(-1);
+                    if (!(last && !last.is_user && !last.is_system && !sanitizeText(last.mes || '', 4000))) {
+                        break;
+                    }
+                    trimmedRawChat = trimmedRawChat.slice(0, -1);
+                }
+                if (trimmedRawChat === rawChat) {
                     return rawChat;
                 }
-                const trimmedRawChat = rawChat.slice(0, -1);
                 await saveTargetRawChat(trimmedRawChat);
                 return trimmedRawChat;
             };
+            // A failed generation can leave an empty assistant placeholder at
+            // the end of an otherwise valid chat. The player adapter filters
+            // that placeholder and correctly sees the preceding user message
+            // as awaiting a reply, but the original runtime would otherwise
+            // treat the empty assistant record as the final message and return
+            // unchanged. Remove only that known empty failure artifact before
+            // binding the runtime target, then continue with the real user
+            // message. This preserves all non-empty conversation data.
+            const trimmedTargetBeforeRawChat = await trimTrailingEmptyOriginalReply(targetBeforeRawChat);
+            if (trimmedTargetBeforeRawChat !== targetBeforeRawChat) {
+                targetBeforeRawChat = trimmedTargetBeforeRawChat;
+                targetBeforeMessages = stripHeader(targetBeforeRawChat);
+                targetBeforeLast = latestMessage(targetBeforeRawChat);
+            }
             if (!targetBeforeMessages.length) {
                 throw Object.assign(new Error('ORIGINAL_TARGET_CHAT_EMPTY'), {
                     code: 'ORIGINAL_TARGET_CHAT_EMPTY',
@@ -873,7 +927,7 @@ function generateInOriginalRuntimeExpression(payload) {
                     unchanged: true,
                     elapsedMs: Date.now() - startedAt,
                     ...snapshot(targetBeforeRawChat, targetChatId),
-                    generatedText: sanitizeText(targetBeforeLast?.mes || ''),
+                    generatedText: sanitizeText(targetBeforeLast?.mes || '', MAX_BRIDGE_VISIBLE_TEXT_LENGTH),
                     diagnostics: {
                         openedFromChatId,
                         currentChatIdAfterOpen: normalizeChatId(ctx.getCurrentChatId?.() || ''),
@@ -893,6 +947,65 @@ function generateInOriginalRuntimeExpression(payload) {
                 };
             }
 
+            const applyProviderRuntimeSettings = () => {
+                const dispatchChange = (element) => element?.dispatchEvent(new Event('change', { bubbles: true }));
+                const ctx = globalThis.SillyTavern?.getContext?.();
+                const settings = openaiSettingsModule?.oai_settings
+                    || ctx?.chatCompletionSettings
+                    || stModule?.oai_settings
+                    || ctx?.oai_settings
+                    || {};
+                const forcedProviderSettings = payload.providerSettings || {};
+                if (forcedProviderSettings.provider === 'claude') {
+                    settings.chat_completion_source = 'claude';
+                    settings.claude_model = forcedProviderSettings.model || settings.claude_model || 'claude-sonnet-4-6';
+                    if (forcedProviderSettings.reverseProxy) {
+                        settings.reverse_proxy = forcedProviderSettings.reverseProxy;
+                    }
+                    if (forcedProviderSettings.proxyPassword) {
+                        settings.proxy_password = forcedProviderSettings.proxyPassword;
+                    }
+                    settings.openai_max_tokens = forcedProviderSettings.maxTokens || settings.openai_max_tokens || 4096;
+                }
+                const provider = sanitizeText(forcedProviderSettings.provider || document.querySelector('#chat_completion_source')?.value || settings.chat_completion_source || ctx?.mainApi || '', 80).toLowerCase();
+                const modelSelector = provider === 'claude' ? '#model_claude_select' : '#model_openai_select';
+                const modelKey = provider === 'claude' ? 'claude_model' : 'openai_model';
+                const modelSelect = document.querySelector(modelSelector);
+                const currentModel = sanitizeText(settings[modelKey] || modelSelect?.value || '', 120);
+                if (provider !== 'openai') {
+                    return {
+                        provider,
+                        model: currentModel,
+                        reasoningEffort: sanitizeText(settings.reasoning_effort || '', 40),
+                        verbosity: sanitizeText(settings.verbosity || '', 40),
+                        maxTokens: sanitizeText(settings.openai_max_tokens || '', 40),
+                        applied: false,
+                    };
+                }
+                const preferredModel = ['gpt-5.5', 'gpt-5.5-2026-04-23']
+                    .map((value) => [...(modelSelect?.options || [])].find((option) => option.value === value))
+                    .find(Boolean);
+                if (preferredModel && modelSelect.value !== preferredModel.value) {
+                    modelSelect.value = preferredModel.value;
+                    dispatchChange(modelSelect);
+                }
+                for (const [selector, value] of [['#openai_reasoning_effort', 'medium'], ['#openai_verbosity', 'medium']]) {
+                    const element = document.querySelector(selector);
+                    if (element && [...(element.options || [])].some((option) => option.value === value) && element.value !== value) {
+                        element.value = value;
+                        dispatchChange(element);
+                    }
+                }
+                return {
+                    provider,
+                    model: sanitizeText(modelSelect?.value || '', 120),
+                    reasoningEffort: sanitizeText(document.querySelector('#openai_reasoning_effort')?.value || '', 40),
+                    verbosity: sanitizeText(document.querySelector('#openai_verbosity')?.value || '', 40),
+                    maxTokens: sanitizeText(document.querySelector('#openai_max_tokens')?.value || '', 40),
+                    applied: true,
+                };
+            };
+            const runtimeGenerationSettings = applyProviderRuntimeSettings();
             const input = document.querySelector('#send_textarea');
             input.value = '';
             input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -994,7 +1107,7 @@ function generateInOriginalRuntimeExpression(payload) {
                 unchanged: false,
                 elapsedMs: Date.now() - startedAt,
                 ...currentSnapshot,
-                generatedText: sanitizeText(latestMessage(finalRawChat)?.mes || ''),
+                generatedText: sanitizeText(latestMessage(finalRawChat)?.mes || '', MAX_BRIDGE_VISIBLE_TEXT_LENGTH),
                 diagnostics: {
                     openedFromChatId,
                     currentChatIdAfterOpen: targetChatId,
@@ -1007,6 +1120,7 @@ function generateInOriginalRuntimeExpression(payload) {
                     characterPrimaryWorldTemporarilyDisabled,
                     characterPrimaryWorldRestored,
                     characterPrimaryWorldAfterRestore,
+                    runtimeGenerationSettings,
                     worldInfoBindingBeforeGenerate,
                     ...buildWorldInfoEventDiagnostics(),
                     targetBefore: summarizeRawChat(targetBeforeRawChat),

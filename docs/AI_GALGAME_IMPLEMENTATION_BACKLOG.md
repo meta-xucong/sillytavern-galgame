@@ -8,10 +8,17 @@
 > 管理端小白化材料：`docs/AI_GALGAME_BEGINNER_ADMIN_REDESIGN_SPEC.md`  
 > AI 剧本导入助手材料：`docs/AI_GALGAME_SCRIPT_IMPORT_ASSISTANT_SPEC.md`  
 > 终极自适应完善材料：`docs/AI_GALGAME_ULTIMATE_ADAPTIVE_COMPLETION_PLAN.md`  
-> 外置视觉系统总控：`docs/AI_GALGAME_VISUAL_ASSET_ENHANCEMENT_MODULE_PLAN.md`；详细规格：`docs/AI_GALGAME_VISUAL_SYSTEM_DEVELOPMENT_SPEC.md`；历史/未来附录：`docs/AI_GALGAME_VISUAL_SYSTEM_VS1_PI_ADMISSION_PLAN.md`、`docs/AI_GALGAME_VISUAL_SYSTEM_VS1_AS_ADMISSION_PLAN.md`、`docs/AI_GALGAME_VISUAL_SYSTEM_VS1_M_ADMISSION_PLAN.md`、`docs/AI_GALGAME_VISUAL_SYSTEM_VS1_M_CODE_ADMISSION_REQUEST.md`  
-> 当前目标：只推进独立视觉资产增强模块；AA/UAP/WE、Arc 发布和完整 Galgame 系统路线全部不属于当前目标。视觉代码必须从 VS-CODE-1 重新准入，不得恢复历史 VS1 原型。
+> 外置视觉系统当前核心完成规格：`docs/AI_GALGAME_VISUAL_ASSET_CORE_DEVELOPMENT_SPEC.md`；当前 AI 标签阶段规格：`docs/AI_GALGAME_VISUAL_ASSET_AI_TAGGING_DEVELOPMENT_SPEC.md`。
+> 2026-09-06 当前任务：`RUNTIME-4` Anthropic runtime adapter reviewer-passed/done；当前进行受控 live acceptance launcher implementation verifying（同一独立 Anthropic Messages token 仅注入 visual-asset-service child process，同时覆盖上传期 vision 与运行时 text）。仅允许现有自有启动脚本、visual-asset-service 测试/README 与 docs/.codex-longrun 证据。前置 `VISUAL-RUNTIME-3` reviewer-passed/done（仅 player 自然对白接线、异步展示、统一 placeholder 与普通无意图保留）；`VISUAL-RUNTIME-2M` reviewer-passed/done（仅迁移子阶段），RUNTIME-2 仍 partial/blocked。正式规格为 `docs/AI_GALGAME_VISUAL_RUNTIME_INTELLIGENCE_DEVELOPMENT_SPEC.md`，live acceptance 材料为 `docs/AI_GALGAME_VISUAL_RUNTIME_4_LIVE_ACCEPTANCE.md`。真实 AISelf、真实 ST story/Generate 与 manifest/profile context 仍未验证，不进入历史链路。
+> 当前状态：CORE-5 核心展示已 reviewer-passed/done，当前 player path 由 visual service global active visual context/profile 驱动，完成口径为 coarse deterministic matching + global active context 下的 `/game` 展示；manifest/profile 自动绑定降为后置兼容限制。SIMPLE-DOCS、SIMPLE-1 Chapter 1/2/3、SIMPLE-2、SIMPLE-3、SIMPLE-4 均已 reviewer-passed/done 并保留限制；ADMIN-LOCAL 上传/受控入口证据继续保留。`VISUAL-AI-TAGS` analysis root-fix 已通过独立复核，当前验证范围还包括 player 视觉可用性生命周期根修：同一服务/release/scenario/version/Arc/profile/catalog 上下文失败不重复请求，valid context 变化自动恢复。该 PASS 不代表真实生产 AI 已完成；生产 analyzer 未配置，历史 VS-CODE/VS1/2B/3C/LLM 材料不得自动触发开发，且任何阶段都不代表整个 SillyTavern 或完整 Galgame 系统完成。
+
+> 当前 active 范围：本批 `RUNTIME-4` Anthropic runtime adapter 已 reviewer-passed/done，仅限已完成的 `external-modules/visual-asset-service/server.mjs`、`test.mjs`、`README.md` 与 `docs/.codex-longrun/**`。不得继续修改 ST/backend/root deps/startup、原版 public、frontend/admin/player/shared、game-config-service、original-runtime-bridge、manifest/profile、save/binding、旧 visual-match/Projection；不得让浏览器直连 provider；不得真实调用 AISelf。
+
+> 当前窄 UX 收束：视觉服务既有 decoder 只接受 8 位、非隔行 RGB/RGBA PNG；管理员五个上传入口明确显示该要求，服务错误码 `VISUAL_ASSET_PNG_UNSUPPORTED` 只映射为转换提示。不得借此扩展 decoder、玩家、ST 或历史视觉链路。
 
 ## 1. 开发总原则
+
+2026-08-30 审计收口：宽范围 `static-architecture-audit` 仅对白名单四条管理员视觉 facade 路径在 `frontend/admin/**`/`public/game-admin/**` 生产面分类 `allowed-adapter`：`/v1/admin/visual/upload`、`/v1/admin/visual/publish`、`/v1/local-admin/visual/upload`、`/v1/local-admin/visual/publish`。其它管理员 endpoint 保持单独审计，测试夹具不改变其历史分类；当前 VISUAL-AI-TAGS 仍 stage-only/verifying，生产 analyzer 未配置。
 
 - 只开发自定义前端、管理员编排、共享适配层、独立外接模块和媒体接口。
 - 不修改 `src/**`、`server.js`、`plugins.js`、`config.yaml`、原版 `public/index.html`、`public/script.js`、`public/style.css`。
@@ -64,23 +71,57 @@ UAP1 之前必须先获得 UAP0 reviewer PASS。UAP 任何批次不得把展示�
 
 当前只维护视觉资产增强模块，不与 AA/UAP/WE、Arc 发布或原版运行桥接混合推进。模块的目标是五类素材库、可见 ST 文本匹配和 `/game/` 展示增强；原版 SillyTavern 仍是剧情、聊天、世界书、角色卡、上下文和 Generate 权威。
 
-2026-07-30 用户范围纠偏：当前产品目标只保留视觉资产增强模块的完整开发周期。已有 VS1-SG / VS1-PI / VS1-AS / VS1-M 代码和证据保留作历史追溯，但全部暂停；代码必须从 VS-CODE-1 重新准入，旧 reviewer PASS 不构成新一轮代码授权。
+2026-08-02 用户范围再次收束：当前只推进“傻瓜式自定义后台控制闭环”。核心展示代码作为基础保留；已有 VS1-SG / VS1-PI / VS1-AS / VS1-M / 2B / 3C 代码和证据只作历史追溯，全部暂停，旧 reviewer PASS 不构成新一轮代码授权。
+
+2026-08-04 VISUAL-AI-TAGS 阶段 root-fix 已 reviewer-passed（stage-only），A/B/C 本地实现验证完成：五个视觉上传入口不变；analyzer 只允许独立服务端环境变量；禁止读取 ST key/config/chat/resource/prompt/context；provider 未配置或失败时图片仍保存并标记 unavailable/failed；analysis 进入 metadata/catalog hash；持久化 analysis cache 按 content/type/scope 跨重启复用并在 scope 变化时重算；无 analyzer 的 core acceptance 返回五类 unknown 且不读具体内容，test-only analyzer fixture 才能通过 visible normalized codes 与 analysis tags 的 deterministic exact overlap 读取具体图片。生产 analyzer 未配置，等待用户/运维是否部署独立 analyzer；manifest/profile auto-binding、player 功能接线、运行时 LLM 与历史 VS 链路不在本阶段。
+
+2026-08-30 VISUAL-AI-TAGS 视觉可用性生命周期根修：player `skipRequests` 只抑制同一服务/release/scenario/version/Arc/profile/catalog 上下文内的失败；上下文变化自动清除 skip 并允许新请求。同一上下文失败不重复请求，失败与无 profile 仍回默认/unknown。该窄修已通过视觉呈现、核心验收、服务、管理员、浏览器、source/public 与架构审计，等待独立复核，不进入 player 功能或历史路线。
+
+### 当前执行路线（唯一有效）
+
+| 批次 | 状态 | 目标 | 允许范围 | 验收口径 |
+| --- | --- | --- | --- | --- |
+| SIMPLE-DOCS | done / reviewer-passed | 傻瓜式后台开发规格 | `docs/**`、`.codex-longrun/**` | 管理员不填写技术字段即可检查、上传、发布、启停；不含 ST key/provider/LLM；本轮不落代码 |
+| SIMPLE-1 Chapter 1 | reviewer-passed/done | visual-control 持久化与 status/enable/disable | `external-modules/visual-asset-service/server.mjs`、`test.mjs`、`README.md`、docs/evidence/state | `galgame.visual-control.v1`、默认关闭、无 active catalog 不制造可用目录、重启恢复与坏控制文件/activeCatalog 篡改 fail-closed 已通过 |
+| SIMPLE-1 Chapter 2 | reviewer-passed/done | 简化上传 facade 与自动素材编号/版本/文件元数据 | `external-modules/visual-asset-service/server.mjs`、`test.mjs`、`README.md`、docs/evidence/state | `POST /v1/admin/visual/upload`、自动编号/版本/role/content metadata、draft 持久化已通过 |
+| SIMPLE-1 Chapter 3 | reviewer-passed/done | 自动目录与一键 publish+activate | `external-modules/visual-asset-service/server.mjs`、`test.mjs`、`README.md`、docs/evidence/state | 首次发布、追加新素材后二次发布保留旧素材、幂等与失败回滚矩阵已通过 |
+| SIMPLE-1 后端章节批次 | reviewer-passed/completed | 后端 status/upload/publish/enable/disable 能力 | `external-modules/visual-asset-service/**`、docs/evidence/state | 仅代表后端章节完成，不代表 SIMPLE-2/SIMPLE-3 或完整视觉模块完成 |
+| SIMPLE-2 | reviewer-passed/done | 管理员一键流程 | `frontend/admin/**`、`public/game-admin/**`、docs/evidence/state | 中文页面完成检查、上传、发布并启用、开启/关闭、恢复默认提示；不展示 token/hash/catalog/profile 字段；独立复核 PASS |
+| SIMPLE-3 | reviewer-passed/done | 玩家端开关和回退 | `frontend/player/**`、必要 `frontend/shared/**`、`public/game/**` | 关闭/未发布/服务失败时不请求或降级，不影响聊天、输入、保存和读取；独立复核 PASS |
+| SIMPLE-4 | reviewer-passed/done | 最终验收 | `frontend/tools/**`、docs/evidence | 重启、失败、桌面/移动端和冻结边界验收已通过独立总审计 |
+| SIMPLE 简化视觉资产增强闭环 | completed with limitations recorded | 傻瓜式后台 + `/game/` 简化视觉展示/回退 | SIMPLE-DOCS/SIMPLE-1/2/3/4 范围 | 管理员检查/上传/发布/启停、服务重启读回、visual service global active context/profile 驱动的玩家五类展示/回退、桌面/移动和冻结边界均已收束；SIMPLE publish 不写当前 scenario manifest/profile，该自动绑定是后置兼容限制；matcher 不是语义智能选图；不包含历史 VS 重型链路、VS-LLM、旧存档/rollback 或完整系统路线 |
+| ADMIN-MIN-UI | historical/verifying evidence retained | 后台极简化 6 个入口 | `frontend/admin/**`、generated `public/game-admin/**`、admin tests、docs/evidence/state | 剧本只保留上传入口；视觉只保留场景/人物/装备/道具/技能五个图片上传入口；不显示模型/provider/prompt/context、catalog/hash/token/service URL、视觉开关/发布策略/恢复默认/连接测试；不改后端/玩家/共享/旧重型链路 |
+| ADMIN-LOCAL | historical/verifying evidence retained | 本地受控视觉后台入口 | `external-modules/visual-asset-service/**`、`frontend/admin/**`、generated `public/game-admin/**`、admin/visual-service tests、docs/evidence/state | 用户启动本地 visual-asset-service 并打开服务自带 `/game-admin/` 即可上传；浏览器只使用 HttpOnly session + CSRF，不持有 Bearer token；仍只显示六个入口，不改 ST/player/shared/LLM/历史重型链路 |
+| VISUAL-AI-TAGS | reviewer-passed / stage-only | 服务端 AI 识图、持久化 closed analysis 与 deterministic 标签匹配 | 已限制在 `external-modules/visual-asset-service/**`、必要 admin/shared helper、`docs/**`、`.codex-longrun/**`；不改 player 或冻结服务 | 五入口不变；独立 analyzer 环境变量只在服务端；未配置/失败仍保存图片并标 unavailable/failed；closed schema/有限字典、analysis hash/持久化 cache 幂等、exact overlap、unknown/default；同 content hash/类型/scope 跨重启复用，scope 变化重算，坏 cache fail-closed；manifest/profile auto-binding 为后置兼容限制，不运行时 LLM；等待独立 analyzer 部署决定 |
+| VISUAL-RUNTIME-1 | reviewer-passed/done | 服务端闭合 visible-context request v2、runtime hints、独立 analyzer adapter、失败/超时/缓存边界 | 仅代表 RUNTIME-1 adapter contract 完成；不代表分析 v2、player wiring 或真实 provider/browser 完成 | 不读 ST key/隐藏资源；浏览器不直连 provider；RUNTIME-3/4、Projection/proof/binding/old-save/VS-CODE 历史链未授权 |
+| VISUAL-RUNTIME-2 | partial/blocked | dictionary v2/analysis v2 migration plan、metadata/catalog hash 闭合、注入式可回滚语义与 runtime-only deterministic 60-point scorer；FileVisualAssetStore 生产批次激活/重启读回待独立 gate | 当前只验证 `AI_GALGAME_VISUAL_RUNTIME_INTELLIGENCE_DEVELOPMENT_SPEC.md` RUNTIME-2；不得宣称 production migration 完成 | 不读 ST key/隐藏资源；浏览器不直连 provider；RUNTIME-3/4、player wiring 与历史重链路不进入 |
+| VISUAL-RUNTIME-2M | reviewer-passed/done（仅迁移子阶段） | FileVisualAssetStore 生产迁移：临时批次、全量 v2 校验、active pointer、五类 v1→v2、失败清理、重启 recovery | 独立复核 PASS；RUNTIME-2 仍 partial/blocked | 仅 `external-modules/visual-asset-service/{server,test,README}` 与 docs/state/evidence；不代表 RUNTIME-2、生产 analyzer 或 player 完成 |
+| VISUAL-RUNTIME-3 | reviewer-passed/done | 玩家自然对白 current/recent visibleContext 接线、中性五类槽位、异步视觉请求、score>=60 具体图、统一 placeholder 与普通无意图保留 | 独立复核 PASS；仅代表 player 窄范围完成，不代表生产 AI/RUNTIME-2/完整视觉系统 | 仅 `frontend/player/**`、必要纯 shared adapter、player tests、generated `public/game/**` 与 docs/evidence/state；RUNTIME-4 另行准入 |
+| VISUAL-RUNTIME-4 | reviewer-passed/done（仅 adapter/local contract） | 服务端 `anthropic_messages_text` 适配、既有 closed hint parser/validator、3 秒超时与一次网络/超时重试、失败 placeholder | 独立复核 PASS；真实 AISelf、ST story/Generate、manifest/profile context 仍为 blocker，不代表生产 provider/真实 ST 完成 | 仅已完成的 `external-modules/visual-asset-service/server.mjs`、`test.mjs`、`README.md` 与 docs/state/evidence；不得进入历史链路 |
+
+以下旧批次表仅供追溯，不是当前执行计划，不得从中恢复任何后置接口或代码任务。
 
 | 批次 | 状态 | 目标 | 代码范围 | 验收口径 |
 | --- | --- | --- | --- | --- |
 | VS-DOCS-0..5 | done | 视觉增强模块文档闭环 | `docs/**`、`.codex-longrun/**` | 五类资产、可见证据、deterministic matcher、unknown、展示、存档兼容和验收矩阵已完成；不计入功能完成 |
 | VS1-SG/PI/AS/M | paused-historical | 历史 schema、Projection、素材服务、matcher/binding 代码及审查材料 | 既有内容保留 | 只作未来实现附录；不计入当前交付，不得依据旧 PASS 自动继续 |
-| VS-CODE-1 | planning | 外置素材库、五类 schema、unknown、上传/目录/URI 安全 | `external-modules/**`、测试、docs/evidence | 当前下一批代码准入；不接 `/game/`，不接 matcher，不恢复历史代码 |
-| VS-CODE-P | pending | 受信可见文本投影与最小授权边界 | 独立受控服务边界 | VS-CODE-2 的前置依赖；避免 matcher 依赖未落地的生产投影 |
-| VS-CODE-2 | pending | deterministic matcher 和 display-only binding | `external-modules/**`、测试 | 只消费受信投影与已发布 catalog；不写玩法状态 |
-| VS-CODE-4 | pending | 管理员素材库和发布界面 | `frontend/admin/**`、`public/game-admin/**` | 真实 admin auth；catalog/profile publish/rollback |
-| VS-CODE-3 | pending | `/game/` 背景/立绘/图标展示 | `frontend/player/**`、`public/game/**` | scene/sprite/icon only；失败 unknown；不阻塞 ST Generate/input/save |
+| VS-CODE-1 | done / reviewer-passed | 外置素材库、五类 schema、unknown、PNG-only 上传/目录/URI 安全 | `external-modules/visual-asset-service/server.mjs`、`test.mjs`、`README.md` 与 docs/evidence/state/log | 当前批次为 PNG-only MVP；WebP/JPEG 等格式后续独立准入；不接 `/game/`、projection、matcher，不恢复历史后置代码 |
+| VS-CODE-P | done / reviewer-passed | 受信可见文本投影与最小授权边界 | `external-modules/game-config-service/server.mjs`、`test.mjs`、README 与 docs/.codex-longrun | VS-CODE-2 的前置依赖；single-process memory MVP 已实现 closed issuance DTO、service-token POST、service-token stub GET、target chat readback + shared helper、old-save 拒绝与 restart invalidation；reviewer PASS 已记录 |
+| VS-CODE-2A | done / reviewer-passed | deterministic scorer / candidate decision pure service helper | `external-modules/visual-asset-service/server.mjs`、`test.mjs`、`README.md` 与 docs/evidence/state/log | completion re-review reviewer PASS；确认 compatibility-compatible 下 score<20/candidate-empty type-specific unknown、trusted input/candidate provenance、ambiguous/no-label caps、closed decision schema；无 HTTP route、无 binding write、无 persistence、无 old-save restore；PASS 只代表 internal helper complete |
+| VS-COMPAT-0 | done / docs gate reviewer PASS | unknown asset compatibility migration / gate | `docs/**`、`.codex-longrun/**` | v1.2 reviewer PASS；唯一策略：以 VS-CODE-1 canonical PNG unknown 为未来权威，通过新 schema/profile/catalog compatibility revision 更新 shared exact refs；mapping table 明确不采用；当前 `UnknownCompatibilityReportV1` exact root keys/entry keys/mismatch enum 与源码对齐，future source hash 字段和 `missing-shared-unknown` 只属于 successor；PASS 不授权落码 |
+| VS-COMPAT-1 | done / reviewer-passed | unknown compatibility implementation | `frontend/shared/src/visual-system-schema.js`、`external-modules/visual-asset-service/{server.mjs,test.mjs,README.md}`、必要 `public/*/shared/visual-system-schema.js`、`docs/**`、`.codex-longrun/**` | implementation reviewer PASS；五类 shared immutable unknown content hash 已迁移到 VS-CODE-1 canonical PNG exact hash，保持 current v1 public protocols/report schema，不创建/修改 profile，不伪造 old-save/binding 测试；default report compatible，legacy placeholders blocked，必要 public shared 输出已同步 |
+| VS-CODE-2B-R | done / reviewer-passed | trusted `/v1/visual-match` route、public match result、current-release display-only binding writer/persistence | `external-modules/visual-asset-service/server.mjs`、`test.mjs`、`README.md`、docs/.codex-longrun | independent reviewer PASS；只代表 current-release visual-match、display-only binding create/reuse、public DTO 转换、`FileVisualBindingStore`、proof/stub/replay/idempotency/path-safety 测试完成；不包含 old-save/rollback/retention/receipt |
+| VS-CODE-2B-S | done / reviewer-passed | old-save/rollback/retention/receipt admission | `docs/AI_GALGAME_VISUAL_ASSET_VS_CODE2BS_ADMISSION_PLAN.md`、docs/.codex-longrun only | v1.2 reviewer PASS；只代表准入合同闭合，禁止直接实现；bindingId/bindingIds 已对齐 shared `^vb_[a-z0-9_-]{12,80}$` |
+| VS-CODE-2B-S-A | done / reviewer-passed | authority issuer restore proof issuance | `external-modules/game-config-service/server.mjs`、`test.mjs`、`README.md`、docs/.codex-longrun | implementation reviewer PASS；仅完成 `game-config-service` 侧 old-save/rollback restore proof 签发；rollback proof 必须证明受信已提交 rollback event；bindingId 对齐 shared `^vb_[a-z0-9_-]{12,80}$`；不包含 2B-S-B restore verifier |
+| VS-CODE-2B-S-B | done / reviewer-passed | restore verifier implementation | `external-modules/visual-asset-service/server.mjs`、`test.mjs`、`README.md`、docs/.codex-longrun | implementation reviewer PASS；实现 `POST /v1/visual/restore-bindings/old-save` 与 `/rollback`，只验证 VS-CODE-2B-S-A proof、receipt、retention 并返回既有 public `VisualBindingV1`；entityKey/assetId 对齐 shared exact regex，并要求 entityKey type 段、bindingType、receipt assetType、assetId type 一致；prefixed/plain hash 转换只允许在 verifier 内部边界；FileVisualRestoreReplayStore 与 FileVisualBindingStore partial fail-closed root-fix 均已通过 |
+| VS-CODE-4 | done / reviewer-passed | 管理员素材库和发布界面 | `frontend/admin/**`、generated `public/game-admin/**`、`docs/.codex-longrun` | implementation reviewer PASS；管理员视觉素材库浏览、PNG 上传、详情 modal/预览、catalog draft/validate/publish/archive/rollback UI 已实现；CSRF、真实浏览器+mock service route-matrix、modal Esc/focus-return 和 `$null` scope 清理均通过；真实 admin auth 仍由部署边界提供 |
+| VS-CODE-3 | historical/post-core | `/game/` 背景/立绘/图标展示 | 历史 3A/3B/3C 子阶段保留为证据归档，不属于当前核心完成标准 | 当前完成口径以 CORE-5 为准：五类本地 published catalog、coarse deterministic visible-text matching、visual service global active context/profile 驱动的 `/game` 背景/立绘/图标展示和 fallback 已 reviewer-passed/done。真实 ST full E2E、manifest/profile 自动绑定（后置兼容路线）、语义智能选图、3S old-save/rollback、Projection expansion、session/proof/ticket/binding heavy chain 和 VS-LLM 均为后置，不自动授权 |
 | VS-CODE-5 | pending | 全模块回归与最终人工验收 | tools/fixtures/evidence | 桌面/移动、旧存档、服务故障、冻结路径和真实原版 Generate/readback |
-| VS-LLM | deferred | runtime visual LLM matcher strict-provider gate | future external service only after separate review | 服务端 provider-only、candidate assetId/score/reason code closed schema、no prompt/context/resource body、player no key/no provider call；当前禁止实现 |
+| VS-LLM | historical/deferred | broader runtime visual LLM matcher route | replaced for this narrow objective by the separate `VISUAL-RUNTIME-1` gate | 不恢复旧 route/projection/binding 设计；本阶段只实现可见对白理解 + 60 分展示门槛，服务端 provider-only、player no key/no provider call |
 
-当前视觉路线的完整顺序、必要项/后置项和停机规则见 `AI_GALGAME_VISUAL_ASSET_ENHANCEMENT_MODULE_PLAN.md`。VS-DOCS-0..5 已完成；当前进入 VS-CODE-1 准入准备，不得直接落码或恢复旧 VS1 原型。
+当前 SIMPLE 路线的历史执行规格是 `AI_GALGAME_VISUAL_ASSET_SIMPLE_BACKEND_DEVELOPMENT_SPEC.md`；现行运行时视觉目标唯一执行规格为 `AI_GALGAME_VISUAL_RUNTIME_INTELLIGENCE_DEVELOPMENT_SPEC.md`。CORE-5 只表示旧视觉展示基础完成，不表示本阶段运行时智能匹配完成；旧 VS-CODE-3C、real ST harness、session/proof/ticket/binding/restore、3S old-save/rollback、Projection expansion、VS-LLM 和旧 VS1 后置原型均为历史材料，不自动恢复。
 
-VS current product target is the isolated visual asset enhancement module. Previous VS1-SG / VS1-PI / VS1-AS / VS1-M implementation and evidence remain historical and paused. VS-CODE-1 must be admitted as a fresh narrow batch; VS-CODE-P is required before VS-CODE-2; VS-LLM remains deferred and requires a separate strict-provider gate. No AA/UAP/WE/Arc or full-game system work belongs in this route.
+VS current product target is the isolated, beginner-friendly visual backend and presentation flow. Previous VS1/VS-CODE/2B/3C implementation and evidence remain historical and paused. SIMPLE-1 must receive a fresh narrow implementation gate; VS-LLM, ST backend, original public, AA/UAP/WE/Arc and full-game system work do not belong in this route.
 
 ## 1.1 自适应展示追加路线
 
@@ -136,7 +177,7 @@ BA1 之前必须先运行现有 static architecture audit，并在 BA1 中新增
 
 | 项 | 文件 | 依赖 | 验收 | 风险 |
 | --- | --- | --- | --- | --- |
-| 代码静态架构审计入口 | `frontend/tools/static-architecture-audit.mjs`、审计 fixture、`.codex-longrun/evidence/code-architecture-audit.json` | `AI_GALGAME_PRE_IMPLEMENTATION_MATERIALS.md` 第 10 节审查通过 | 脚本能输出调用链、状态流转、路由隔离、构建一致性和冻结边界分类；没有 `prohibited-active` | 用简单风险词扫描冒充架构审计 |
+| 代码静态架构审计入口 | `frontend/tools/static-architecture-audit.mjs`、审计 fixture、`.codex-longrun/evidence/code-architecture-audit.json` | `AI_GALGAME_PRE_IMPLEMENTATION_MATERIALS.md` 第 10 节审查通过 | 脚本能输出调用链、状态流转、路由隔离、构建一致性和冻结边界分类；精确 `/v1/core/visual-decisions` 玩家适配调用为 `allowed-adapter`；没有 `prohibited-active` 或未解释的 `needs-review` | 用简单风险词扫描冒充架构审计 |
 | UI 实施规格准入 | `docs/AI_GALGAME_FRONTEND_UI_IMPLEMENTATION_SPEC.md`、`.codex-longrun/evidence/ui-implementation-spec-coverage.txt` | 审查员确认纳入当前准入阶段 | 视觉 token、组件 DOM/状态/交互、响应式、微交互、玩家文案、可访问性、素材与截图验收覆盖；native-first/no-button/no-claim 命中 | 边写 UI 边补规则导致视觉与边界返工 |
 | 展示提取协议 | `frontend/shared/src/presentation-extraction.js`、测试文件 | `galgame.presentation-extraction.v1` 审查通过 | 只从可见文本提取按钮/说话人；失败保留原文 | 过度解析变成故事协议 |
 | 存档协议 | `frontend/shared/src/player-save.js`、测试文件 | `galgame.player-save.v1` 审查通过 | 存档拒绝剧情变量、节点、关系、物品 | 存档字段偷偷承载剧情 |

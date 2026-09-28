@@ -59,5 +59,6 @@ yarn.lock
 *.code-workspace
 test-results/
 .codex-longrun/
+external-modules/visual-asset-service/data/
 st_server*.log
 .avatar_gen_start.txt

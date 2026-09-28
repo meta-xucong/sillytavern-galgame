@@ -647,7 +647,9 @@ function classifyEndpoint(rel, endpoint, source = '') {
         return 'allowed-adapter';
     }
     if (isAdminApp(rel) && endpoint.startsWith('/v1/')) {
-        return isAllowedAdminExternalEndpoint(endpoint) ? 'allowed-adapter' : 'needs-review';
+        return isAllowedAdminExternalEndpoint(endpoint) || isAllowedAdminVisualFacadeEndpoint(endpoint)
+            ? 'allowed-adapter'
+            : 'needs-review';
     }
     if (isExternalModule(rel) && endpoint.startsWith('/v1/')) {
         return 'allowed-adapter';
@@ -1057,8 +1059,44 @@ function normalizeBuiltJs(source) {
 }
 
 function extractQuotedStrings(source) {
-    return [...source.matchAll(/(['"`])((?:\\.|(?!\1)[\s\S])*?)\1/g)]
-        .map((match) => match[2]);
+    const values = [];
+    const template = String.fromCharCode(96);
+    for (let index = 0; index < source.length; index += 1) {
+        const quote = source[index];
+        if (quote === template) {
+            index += 1;
+            while (index < source.length) {
+                if (source[index] === '\\') {
+                    index += 2;
+                    continue;
+                }
+                if (source[index] === template) break;
+                index += 1;
+            }
+            continue;
+        }
+        if (quote !== "'" && quote !== '"') continue;
+        let value = '';
+        let valid = true;
+        index += 1;
+        while (index < source.length) {
+            const character = source[index];
+            if (character === '\\' && index + 1 < source.length) {
+                value += character + source[index + 1];
+                index += 2;
+                continue;
+            }
+            if (character === '\n' || character === '\r') {
+                valid = false;
+                break;
+            }
+            if (character === quote) break;
+            value += character;
+            index += 1;
+        }
+        if (valid) values.push(value);
+    }
+    return values;
 }
 
 function stripHtmlTags(source) {
@@ -1347,6 +1385,9 @@ function classifyCallSite(rel, line, callKind, source = '') {
         if (/\/api\/(?:backends\/[^/]*\/generate|novelai\/generate)/i.test(line)) {
             return 'prohibited-active';
         }
+        if (isCoreVisualDecisionCall(rel, line)) {
+            return 'allowed-adapter';
+        }
         if (isApprovedRuntimeBridge(rel) || isAdapter(rel) || isExternalModule(rel) || isConfigOrMediaAdapter(rel)) {
             return 'allowed-adapter';
         }
@@ -1364,6 +1405,11 @@ function classifyCallSite(rel, line, callKind, source = '') {
     return 'needs-review';
 }
 
+function isCoreVisualDecisionCall(rel, line) {
+    const isPlayerSurface = rel.startsWith('frontend/player/') || rel.startsWith('public/game/');
+    return isPlayerSurface && /\/v1\/core\/(?:visual-decisions|visual-context|catalogs)(?:[^a-z0-9_-]|$)/i.test(line);
+}
+
 function hasBridgeAuthentication(source) {
     return /authorization|bearer|api[-_]?key|mTLS|client certificate|authenticate|authRequired|GALGAME_BRIDGE_TOKEN|GALGAME_BRIDGE_AUTH/i.test(source);
 }
@@ -1379,6 +1425,13 @@ function isAllowedAdminExternalEndpoint(endpoint) {
     return endpoint === '/v1/health'
         || endpoint === '/v1/admin/script-import/drafts'
         || /^\/v1\/admin\/script-import\/drafts\/.+\/(?:redeploy|confirm)$/.test(endpoint);
+}
+
+function isAllowedAdminVisualFacadeEndpoint(endpoint) {
+    return endpoint === '/v1/admin/visual/upload'
+        || endpoint === '/v1/admin/visual/publish'
+        || endpoint === '/v1/local-admin/visual/upload'
+        || endpoint === '/v1/local-admin/visual/publish';
 }
 
 function summarize(items, key) {

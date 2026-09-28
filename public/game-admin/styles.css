@@ -16,6 +16,10 @@
     box-sizing: border-box;
 }
 
+[hidden] {
+    display: none !important;
+}
+
 body {
     margin: 0;
     min-height: 100vh;
@@ -1012,11 +1016,23 @@ button {
 }
 
 .field-row input[type="url"],
+.field-row input[type="text"],
+.field-row input[type="number"],
+.field-row input[type="file"],
+.field-row textarea,
 .field-row select {
     min-height: 40px;
     border: 1px solid var(--line);
     border-radius: 6px;
     padding: 8px 10px;
+    min-width: 0;
+    color: var(--ink);
+    background: #ffffff;
+}
+
+.field-row textarea {
+    resize: vertical;
+    line-height: 1.5;
 }
 
 .field-row select:disabled {
@@ -1049,6 +1065,142 @@ button {
 }
 
 .profile-module-item span {
+    overflow-wrap: anywhere;
+}
+
+.visual-catalog-card {
+    grid-column: 1 / -1;
+}
+
+.simple-visual-upload-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 14px;
+}
+
+.simple-visual-upload-card {
+    display: grid;
+    gap: 8px;
+    align-content: start;
+    min-width: 0;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #ffffff;
+}
+
+.simple-visual-upload-card strong {
+    color: var(--ink);
+    font-size: 1rem;
+}
+
+.simple-visual-upload-card span,
+.simple-visual-upload-status {
+    color: var(--muted);
+    font-size: 0.86rem;
+    line-height: 1.45;
+}
+
+.simple-visual-upload-status.is-ok {
+    color: var(--ok);
+}
+
+.simple-visual-upload-status.is-error {
+    color: var(--danger);
+}
+
+.visual-refs-field {
+    grid-template-columns: 1fr;
+}
+
+.visual-refs-field textarea {
+    min-height: 116px;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.visual-asset-body span {
+    color: var(--muted);
+    font-size: 0.84rem;
+    line-height: 1.4;
+}
+
+.visual-detail-button {
+    justify-self: start;
+    min-height: 36px;
+    margin-top: 4px;
+}
+
+.visual-asset-dialog {
+    width: min(680px, calc(100vw - 32px));
+    max-height: min(760px, calc(100vh - 32px));
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--ink);
+    background: var(--surface);
+    box-shadow: 0 20px 70px rgba(24, 33, 48, 0.28);
+}
+
+.visual-asset-dialog::backdrop {
+    background: rgba(16, 20, 28, 0.48);
+}
+
+.visual-asset-dialog-panel {
+    display: grid;
+    gap: 14px;
+    max-height: inherit;
+    padding: 18px;
+    overflow: auto;
+}
+
+.visual-asset-dialog-header {
+    align-items: start;
+}
+
+.visual-asset-dialog-header h3 {
+    margin: 4px 0 0;
+    overflow-wrap: anywhere;
+    font-size: 1.12rem;
+}
+
+.visual-asset-dialog-content {
+    display: grid;
+    gap: 14px;
+}
+
+.visual-asset-dialog-preview {
+    display: grid;
+    place-items: center;
+    min-height: 180px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--muted);
+    background: #f3f5f8;
+}
+
+.visual-asset-dialog-preview img {
+    display: block;
+    max-width: 100%;
+    max-height: 360px;
+    object-fit: contain;
+}
+
+.visual-asset-dialog-list {
+    display: grid;
+    grid-template-columns: minmax(94px, 0.34fr) minmax(0, 1fr);
+    gap: 8px 12px;
+    margin: 0;
+}
+
+.visual-asset-dialog-list dt {
+    color: var(--muted);
+    font-weight: 700;
+}
+
+.visual-asset-dialog-list dd {
+    min-width: 0;
+    margin: 0;
     overflow-wrap: anywhere;
 }
 
@@ -1118,6 +1270,7 @@ button {
     .hero-card,
     .wizard-grid,
     .enhancement-grid,
+    .simple-visual-upload-grid,
     .presentation-recommendation-summary,
     .one-click-flow {
         grid-template-columns: 1fr;
@@ -1136,6 +1289,11 @@ button {
     }
 
     .profile-module-list {
+        grid-template-columns: 1fr;
+    }
+
+
+    .visual-asset-dialog-list {
         grid-template-columns: 1fr;
     }
 }

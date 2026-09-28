@@ -45,10 +45,34 @@ export const VISUAL_REASON_CODES = Object.freeze([
     'dictionary-unavailable',
     'unknown-fallback',
 ]);
+
+export const VISUAL_RUNTIME_MESSAGE_ROLES = Object.freeze(['player', 'character', 'narrator', 'system']);
+
+/**
+ * Return the only message fields allowed to cross the runtime visual boundary.
+ * The service and browser use this same normalization before hashing.
+ */
+export function normalizeVisualRuntimeMessage(message, { maxTextLength = 4000 } = {}) {
+    if (!isPlainObject(message)) return null;
+    const keys = Object.keys(message).sort();
+    if (keys.join('\u0000') !== ['index', 'role', 'speaker', 'text'].sort().join('\u0000')) return null;
+    if (!Number.isSafeInteger(message.index) || message.index < 0) return null;
+    if (!VISUAL_RUNTIME_MESSAGE_ROLES.includes(message.role)) return null;
+    if (typeof message.speaker !== 'string' || Array.from(message.speaker).length > 160) return null;
+    if (typeof message.text !== 'string' || Array.from(message.text).length > maxTextLength) return null;
+    if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/u.test(message.speaker) || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/u.test(message.text)) return null;
+    return {
+        index: message.index,
+        role: message.role,
+        speaker: message.speaker,
+        text: message.text.normalize('NFC'),
+    };
+}
 export const VISUAL_ATTRIBUTE_CODES = Object.freeze([
     'scene-location-kind',
     'scene-atmosphere',
     'character-explicit-name',
+    'character-visual-binding',
     'character-explicit-appearance',
     'character-explicit-clothing',
     'character-explicit-species',
@@ -66,31 +90,31 @@ export const IMMUTABLE_UNKNOWN_VISUAL_ASSETS = Object.freeze({
     scene: Object.freeze({
         assetId: 'unknown_scene',
         assetVersion: 1,
-        assetContentSha256: '1111111111111111111111111111111111111111111111111111111111111111',
+        assetContentSha256: '43739c566e26fd7cb88f69d3864ea34740372f5ee99acac169e090beffbce5c6',
         type: 'scene',
     }),
     character: Object.freeze({
         assetId: 'unknown_character',
         assetVersion: 1,
-        assetContentSha256: '2222222222222222222222222222222222222222222222222222222222222222',
+        assetContentSha256: '43739c566e26fd7cb88f69d3864ea34740372f5ee99acac169e090beffbce5c6',
         type: 'character',
     }),
     equipment: Object.freeze({
         assetId: 'unknown_equipment',
         assetVersion: 1,
-        assetContentSha256: '3333333333333333333333333333333333333333333333333333333333333333',
+        assetContentSha256: '43739c566e26fd7cb88f69d3864ea34740372f5ee99acac169e090beffbce5c6',
         type: 'equipment',
     }),
     item: Object.freeze({
         assetId: 'unknown_item',
         assetVersion: 1,
-        assetContentSha256: '4444444444444444444444444444444444444444444444444444444444444444',
+        assetContentSha256: '43739c566e26fd7cb88f69d3864ea34740372f5ee99acac169e090beffbce5c6',
         type: 'item',
     }),
     skill: Object.freeze({
         assetId: 'unknown_skill',
         assetVersion: 1,
-        assetContentSha256: '5555555555555555555555555555555555555555555555555555555555555555',
+        assetContentSha256: '43739c566e26fd7cb88f69d3864ea34740372f5ee99acac169e090beffbce5c6',
         type: 'skill',
     }),
 });
