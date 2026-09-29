@@ -2,7 +2,7 @@ import {
     getActiveSillyTavernBindings,
     sanitizeText,
     summarizeSillyTavernBindings,
-} from './protocol.js?v=auto-36b8dda7cd6f';
+} from './protocol.js?v=auto-cc3e8e0c1603';
 
 export const SILLYTAVERN_ENDPOINTS = Object.freeze({
     csrf: '/csrf-token',
@@ -1318,6 +1318,8 @@ function stripVisualNovelMetaMarkers(value) {
 export function createVisualNovelDisplaySegments(value, {
     fallbackSpeaker = '',
     role = 'character',
+    knownSpeakers = [],
+    characterNames = [],
 } = {}) {
     const displayText = formatVisualNovelDisplayText(value);
     const fallbackName = sanitizeText(fallbackSpeaker, 160);
@@ -1330,6 +1332,10 @@ export function createVisualNovelDisplaySegments(value, {
         }];
     }
 
+    const knownSpeakerMap = createKnownSpeakerMap([
+        ...(Array.isArray(knownSpeakers) ? knownSpeakers : []),
+        ...(Array.isArray(characterNames) ? characterNames : []),
+    ]);
     let lastSpeaker = role === 'player' ? '你' : fallbackName;
     return displayText
         .split(/\n{2,}/)
@@ -1340,6 +1346,7 @@ export function createVisualNovelDisplaySegments(value, {
                 fallbackSpeaker: fallbackName,
                 lastSpeaker,
                 role,
+                knownSpeakerMap,
             });
             if (segment.speaker && segment.type !== 'narration') {
                 lastSpeaker = segment.speaker;
@@ -1351,7 +1358,7 @@ export function createVisualNovelDisplaySegments(value, {
         });
 }
 
-function classifyVisualNovelSegment(text, { fallbackSpeaker, lastSpeaker, role }) {
+function classifyVisualNovelSegment(text, { fallbackSpeaker, lastSpeaker, role, knownSpeakerMap }) {
     if (role === 'player') {
         return {
             type: 'player',
@@ -1365,6 +1372,18 @@ function classifyVisualNovelSegment(text, { fallbackSpeaker, lastSpeaker, role }
         return {
             type: 'stage',
             speaker: sanitizeText(stageCue[1], 80),
+            text,
+        };
+    }
+
+    const narrativeDialogue = matchKnownNarrativeDialogue(text, knownSpeakerMap);
+    if (narrativeDialogue) {
+        return narrativeDialogue;
+    }
+    if (isNarrativeDialogueParagraph(text)) {
+        return {
+            type: 'narration',
+            speaker: '旁白',
             text,
         };
     }
@@ -1399,6 +1418,75 @@ function classifyVisualNovelSegment(text, { fallbackSpeaker, lastSpeaker, role }
         speaker: '旁白',
         text,
     };
+}
+
+function createKnownSpeakerMap(values) {
+    const map = new Map();
+    for (const value of values) {
+        const candidates = typeof value === 'object' && value !== null
+            ? [value.characterKey, value.name, value.speaker, ...(Array.isArray(value.aliases) ? value.aliases : [])]
+            : [value];
+        const displayName = candidates.find((candidate) => {
+            const normalized = normalizeKnownSpeaker(candidate);
+            return normalized && !isNarratorSpeaker(normalized) && !/^(?:你|玩家|player|user|系统|system)$/iu.test(normalized);
+        });
+        if (!displayName) continue;
+        for (const candidate of candidates) {
+            const normalized = normalizeKnownSpeaker(candidate);
+            if (!normalized || isNarratorSpeaker(normalized) || /^(?:你|玩家|player|user|系统|system)$/iu.test(normalized)) {
+                continue;
+            }
+            map.set(normalized, sanitizeText(displayName, 80));
+        }
+    }
+    return map;
+}
+
+function normalizeKnownSpeaker(value) {
+    return String(value || '')
+        .normalize('NFKC')
+        .replace(/[：:，,。！？!?]+$/u, '')
+        .replace(/\s+/gu, ' ')
+        .trim()
+        .toLocaleLowerCase();
+}
+
+function matchKnownNarrativeDialogue(text, knownSpeakerMap) {
+    if (!(knownSpeakerMap instanceof Map) || !knownSpeakerMap.size) return null;
+    const ordered = [...knownSpeakerMap.keys()].sort((left, right) => right.length - left.length);
+    for (const normalizedName of ordered) {
+        const displayName = knownSpeakerMap.get(normalizedName);
+        const escaped = normalizedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const boundary = /^[A-Za-z0-9_-]+$/u.test(normalizedName) ? '(?![A-Za-z0-9_-])' : '';
+        const match = text.match(new RegExp(`^${escaped}${boundary}\\s*(.{1,48}?)\\s*[：:]\\s*([“"「『][\\s\\S]*[”"」』])$`, 'iu'));
+        if (!match || !hasNarrativeDialogueVerb(match[1].trim())) continue;
+        return {
+            type: 'dialogue',
+            speaker: displayName,
+            text: match[2].trim(),
+        };
+    }
+    return null;
+}
+
+function isNarrativeDialogueParagraph(text) {
+    return Boolean(parseNarrativeDialogueParagraph(text));
+}
+
+function parseNarrativeDialogueParagraph(text) {
+    const match = text.match(/^(.{2,80}?)\s*[：:]\s*([“"「『][\s\S]*[”"」』])$/u);
+    if (!match) return null;
+    const prefix = match[1].trim();
+    const actionStart = prefix.search(/(?:说|道|问|答|喊|叫|反对|同意|拒绝|摇头|点头|举手|嘶声|低声|高声|大声|小声|笑|哭|怒|冷|轻|急|颤|哆嗦|结巴|打断|回应|坚持|承认|警告|威胁|提醒|解释|嘟囔|嘀咕|喃喃|立即|立刻|马上|着|地|say|said|says|ask|asked|reply|replied|object|objected|agree|agreed|shout|shouted|yell|yelled|whisper|whispered|mutter|muttered|stammer|raise|raised|interrupt|warn|warning|insist|insisted|answer|answered|immediately|quickly|softly|loudly)/iu);
+    if (actionStart <= 0 || !hasNarrativeDialogueVerb(prefix.slice(actionStart).trim())) return null;
+    return {
+        normalizedName: normalizeKnownSpeaker(prefix.slice(0, actionStart)),
+        quote: match[2].trim(),
+    };
+}
+
+function hasNarrativeDialogueVerb(value) {
+    return /^(?:说|道|问|答|喊|叫|反对|同意|拒绝|摇头|点头|举手|嘶声|低声|高声|大声|小声|笑|哭|怒|冷|轻|急|颤|哆嗦|结巴|打断|回应|坚持|承认|警告|威胁|提醒|解释|嘟囔|嘀咕|喃喃|立即|立刻|马上|着|地|say|said|says|ask|asked|reply|replied|object|objected|agree|agreed|shout|shouted|yell|yelled|whisper|whispered|mutter|muttered|stammer|raise|raised|interrupt|warn|warning|insist|insisted|answer|answered|immediately|quickly|softly|loudly)/iu.test(String(value || ''));
 }
 
 function isNonDialogueLabel(value) {

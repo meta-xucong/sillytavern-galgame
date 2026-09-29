@@ -2,6 +2,7 @@ import { createReleaseStore } from '../../shared/src/config-service.js';
 import {
     getAssetUrl,
     getVisualCharacterBindings,
+    getVisualCharacterPool,
     resolveVisualCharacterBinding,
     getActiveSillyTavernBindings,
     materializeManifestForArc,
@@ -1245,6 +1246,7 @@ function renderChatSnapshot(snapshot, options = {}) {
         const segments = createVisualNovelDisplaySegments(message.displayText || message.text, {
             fallbackSpeaker: message.role === 'player' ? '你' : message.speaker || getMainCharacterName(),
             role: message.role,
+            knownSpeakers: getManifestKnownVisualSpeakers(),
         });
         activeMessageSegments = segments.length ? segments : [{
             index: 0,
@@ -1272,6 +1274,15 @@ function renderChatSnapshot(snapshot, options = {}) {
         renderBridgeUnavailable();
         return;
     }
+}
+
+function getManifestKnownVisualSpeakers() {
+    if (!manifest) return [];
+    const arcId = release?.activeArcId || release?.arcId || manifest.defaultArcId || manifest.arcId || '';
+    return [
+        ...getVisualCharacterBindings(manifest, arcId),
+        ...getVisualCharacterPool(manifest, arcId),
+    ];
 }
 
 function scheduleVisualBundleRefresh(snapshot, messageIndex) {

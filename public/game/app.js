@@ -1,18 +1,19 @@
-import { createReleaseStore } from './shared/config-service.js?v=auto-36b8dda7cd6f';
+import { createReleaseStore } from './shared/config-service.js?v=auto-cc3e8e0c1603';
 import {
     getAssetUrl,
     getVisualCharacterBindings,
+    getVisualCharacterPool,
     resolveVisualCharacterBinding,
     getActiveSillyTavernBindings,
     materializeManifestForArc,
     resolveAdaptivePresentationProfileBinding,
-} from './shared/protocol.js?v=auto-36b8dda7cd6f';
+} from './shared/protocol.js?v=auto-cc3e8e0c1603';
 import {
     AUTO_SAVE_ID,
     createCanonicalPlayerSaveRelease,
     createPlayerSaveStore,
     manualSaveIds,
-} from './shared/player-save.js?v=auto-36b8dda7cd6f';
+} from './shared/player-save.js?v=auto-cc3e8e0c1603';
 import {
     createCoreVisualDisplayEntityHints,
     createCoreVisualDisplayEntityKey,
@@ -20,11 +21,11 @@ import {
     createVisualNovelDisplaySegments,
     OriginalRuntimeBridgeClient,
     SillyTavernOriginalChatBridge,
-} from './shared/sillytavern-adapter.js?v=auto-36b8dda7cd6f';
-import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-36b8dda7cd6f';
-import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-36b8dda7cd6f';
-import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-36b8dda7cd6f';
-import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-36b8dda7cd6f';
+} from './shared/sillytavern-adapter.js?v=auto-cc3e8e0c1603';
+import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-cc3e8e0c1603';
+import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-cc3e8e0c1603';
+import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-cc3e8e0c1603';
+import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-cc3e8e0c1603';
 
 const releaseStore = createReleaseStore(null, { fallbackToLocal: false });
 const playerSaveStore = createPlayerSaveStore();
@@ -1245,6 +1246,7 @@ function renderChatSnapshot(snapshot, options = {}) {
         const segments = createVisualNovelDisplaySegments(message.displayText || message.text, {
             fallbackSpeaker: message.role === 'player' ? '你' : message.speaker || getMainCharacterName(),
             role: message.role,
+            knownSpeakers: getManifestKnownVisualSpeakers(),
         });
         activeMessageSegments = segments.length ? segments : [{
             index: 0,
@@ -1272,6 +1274,15 @@ function renderChatSnapshot(snapshot, options = {}) {
         renderBridgeUnavailable();
         return;
     }
+}
+
+function getManifestKnownVisualSpeakers() {
+    if (!manifest) return [];
+    const arcId = release?.activeArcId || release?.arcId || manifest.defaultArcId || manifest.arcId || '';
+    return [
+        ...getVisualCharacterBindings(manifest, arcId),
+        ...getVisualCharacterPool(manifest, arcId),
+    ];
 }
 
 function scheduleVisualBundleRefresh(snapshot, messageIndex) {

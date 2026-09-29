@@ -245,6 +245,25 @@ assert.equal(segmented[1].text, '“喂，你这蠢货！”');
 assert.equal(segmented[3].type, 'dialogue');
 assert.equal(segmented[3].text, '准备受死吧！');
 
+const knownSpeakerSegment = createVisualNovelDisplaySegments('Pippa立刻反对：“不要打开那扇门。”', {
+    fallbackSpeaker: 'Dungeon Master',
+    role: 'character',
+    characterNames: ['Pippa'],
+});
+assert.deepEqual(knownSpeakerSegment[0], {
+    index: 0,
+    type: 'dialogue',
+    speaker: 'Pippa',
+    text: '“不要打开那扇门。”',
+});
+
+const unknownSpeakerSegment = createVisualNovelDisplaySegments('守卫立刻反对：“不要打开那扇门。”', {
+    fallbackSpeaker: 'Dungeon Master',
+    role: 'character',
+    characterNames: ['Pippa'],
+});
+assert.equal(unknownSpeakerSegment[0].type, 'narration');
+
 const nonDialogueVisualRows = createVisualNovelDisplaySegments([
     '场景: 庭院',
     '背景: 雨夜',

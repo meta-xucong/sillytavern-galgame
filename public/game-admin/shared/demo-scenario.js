@@ -2,8 +2,8 @@ import {
     ARC_BINDING_PROTOCOL_VERSION,
     createActiveRelease,
     PROTOCOL_VERSION,
-} from './protocol.js?v=auto-36b8dda7cd6f';
-import { createDefaultAdaptivePresentationProfile } from './adaptive-presentation-schema.js?v=auto-36b8dda7cd6f';
+} from './protocol.js?v=auto-cc3e8e0c1603';
+import { createDefaultAdaptivePresentationProfile } from './adaptive-presentation-schema.js?v=auto-cc3e8e0c1603';
 
 const DUNGEON_MASTER_SCENARIO_ID = 'galgame-imported-dungeon-master-entry';
 const DUNGEON_MASTER_SCENARIO_VERSION = '0.1.0';

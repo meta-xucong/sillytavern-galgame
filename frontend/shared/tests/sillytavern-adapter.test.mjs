@@ -429,6 +429,61 @@ assert.equal(namedDialogueSegments[0].type, 'dialogue');
 assert.equal(namedDialogueSegments[0].speaker, 'Anna');
 assert.equal(namedDialogueSegments[0].text, '我会留下。');
 
+const knownNarrativeDialogueSegments = createVisualNovelDisplaySegments([
+    'Pippa立刻反对：“我们不能现在进去。”',
+    '尼布哆嗦着举手：“我有一个办法。”',
+    '行动顺序：Pippa > 你 > 尼布。',
+].join('\n\n'), {
+    fallbackSpeaker: 'Dungeon Master',
+    knownSpeakers: [
+        { characterKey: 'Pippa', aliases: ['皮帕'] },
+        { characterKey: '尼布', aliases: ['Nibu'] },
+    ],
+});
+assert.deepEqual(knownNarrativeDialogueSegments.slice(0, 2).map((segment) => ({
+    type: segment.type,
+    speaker: segment.speaker,
+    text: segment.text,
+})), [
+    { type: 'dialogue', speaker: 'Pippa', text: '“我们不能现在进去。”' },
+    { type: 'dialogue', speaker: '尼布', text: '“我有一个办法。”' },
+]);
+assert.equal(knownNarrativeDialogueSegments[2].type, 'narration');
+
+const knownEnglishNarrativeDialogue = createVisualNovelDisplaySegments('Pippa immediately objected: "We cannot enter yet."', {
+    knownSpeakers: ['Pippa'],
+});
+assert.equal(knownEnglishNarrativeDialogue[0].type, 'dialogue');
+assert.equal(knownEnglishNarrativeDialogue[0].speaker, 'Pippa');
+assert.equal(knownEnglishNarrativeDialogue[0].text, '"We cannot enter yet."');
+
+const asciiSpeakerBoundary = createVisualNovelDisplaySegments('Anna immediately objected: "Use the north gate."', {
+    knownSpeakers: ['Ann'],
+});
+assert.equal(asciiSpeakerBoundary[0].type, 'narration');
+const asciiSpeakerExact = createVisualNovelDisplaySegments('Ann immediately objected: "Use the north gate."', {
+    knownSpeakers: ['Ann'],
+});
+assert.equal(asciiSpeakerExact[0].speaker, 'Ann');
+
+const unknownNarrativeDialogueSegments = createVisualNovelDisplaySegments('守卫立刻反对：“这里禁止通行。”', {
+    fallbackSpeaker: 'Dungeon Master',
+    knownSpeakers: ['Pippa'],
+});
+assert.equal(unknownNarrativeDialogueSegments[0].type, 'narration');
+assert.equal(unknownNarrativeDialogueSegments[0].speaker, '旁白');
+
+const chineseSpeakerBoundary = createVisualNovelDisplaySegments('尼布尔哆嗦着举手：“我有一个办法。”', {
+    knownSpeakers: ['尼布'],
+});
+assert.equal(chineseSpeakerBoundary[0].type, 'narration');
+
+const excludedNarrativeSpeakers = createVisualNovelDisplaySegments('旁白低声说道：“雾气正在散去。”', {
+    fallbackSpeaker: 'Dungeon Master',
+    knownSpeakers: ['旁白', '你', '系统', 'Pippa'],
+});
+assert.equal(excludedNarrativeSpeakers[0].type, 'narration');
+
 const forbiddenCalls = calls.filter((call) => (
     call.url.includes('/api/backends/')
     || call.url.endsWith('/api/characters/get')
