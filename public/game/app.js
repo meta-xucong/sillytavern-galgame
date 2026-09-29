@@ -1,4 +1,4 @@
-import { createReleaseStore } from './shared/config-service.js?v=auto-f23fd7fbd246';
+import { createReleaseStore } from './shared/config-service.js?v=auto-9fe34c1c7550';
 import {
     getAssetUrl,
     getVisualCharacterBindings,
@@ -6,13 +6,13 @@ import {
     getActiveSillyTavernBindings,
     materializeManifestForArc,
     resolveAdaptivePresentationProfileBinding,
-} from './shared/protocol.js?v=auto-f23fd7fbd246';
+} from './shared/protocol.js?v=auto-9fe34c1c7550';
 import {
     AUTO_SAVE_ID,
     createCanonicalPlayerSaveRelease,
     createPlayerSaveStore,
     manualSaveIds,
-} from './shared/player-save.js?v=auto-f23fd7fbd246';
+} from './shared/player-save.js?v=auto-9fe34c1c7550';
 import {
     createCoreVisualDisplayEntityHints,
     createCoreVisualDisplayEntityKey,
@@ -20,11 +20,11 @@ import {
     createVisualNovelDisplaySegments,
     OriginalRuntimeBridgeClient,
     SillyTavernOriginalChatBridge,
-} from './shared/sillytavern-adapter.js?v=auto-f23fd7fbd246';
-import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-f23fd7fbd246';
-import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-f23fd7fbd246';
-import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-f23fd7fbd246';
-import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-f23fd7fbd246';
+} from './shared/sillytavern-adapter.js?v=auto-9fe34c1c7550';
+import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-9fe34c1c7550';
+import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-9fe34c1c7550';
+import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-9fe34c1c7550';
+import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-9fe34c1c7550';
 
 const releaseStore = createReleaseStore(null, { fallbackToLocal: false });
 const playerSaveStore = createPlayerSaveStore();
@@ -297,6 +297,7 @@ function renderConnectionHealth(snapshot) {
     }
     const labels = {
         up: '已连接',
+        idle: '待命',
         down: '断开',
         pending: '生成中',
         degraded: '部分异常',

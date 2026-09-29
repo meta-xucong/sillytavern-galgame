@@ -189,6 +189,8 @@ export class ConnectionHealthMonitor {
             const ok = result?.ok === true;
             const status = result?.connectionState === 'generating' || result?.pending
                 ? 'pending'
+                : result?.connectionState === 'idle'
+                    ? 'idle'
                 : ok ? 'up' : 'down';
             const checkedAt = this.now();
             return {
@@ -270,7 +272,7 @@ function createServiceState() {
 
 function summarizeOverall(services, { generationPending = false } = {}) {
     if (generationPending) return 'degraded';
-    const states = Object.values(services).map((service) => service.status);
+    const states = Object.values(services).map((service) => service.status === 'idle' ? 'up' : service.status);
     if (states.every((status) => status === 'up')) return 'up';
     if (states.some((status) => status === 'down')) return states.some((status) => status === 'up') ? 'degraded' : 'down';
     if (states.some((status) => status === 'up')) return 'degraded';

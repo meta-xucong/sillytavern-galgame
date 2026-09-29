@@ -297,6 +297,7 @@ function renderConnectionHealth(snapshot) {
     }
     const labels = {
         up: '已连接',
+        idle: '待命',
         down: '断开',
         pending: '生成中',
         degraded: '部分异常',
