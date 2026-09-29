@@ -18,3 +18,32 @@
 2. 每个资产的分析回执包含一致的 `dictionaryVersion`、`dictionaryHash`、状态和闭集标签；诊断/探针资产被拒绝。
 3. `draft → validate → publish → activate` 返回的 `catalogId`、revision、catalog hash 和 asset refs 可复核。
 4. 激活前后保留旧 catalog 的 revision/hash，并验证一次回滚；现有存档继续指向原发布版本。
+
+## 可复现本地批处理器
+
+`frontend/tools/curated-asset-batch.mjs` 提供一个不依赖具体供应商的验收批处理器。它使用固定
+`seed` 生成可替换的程序化 PNG，然后调用视觉服务的真实 sanitizer、内容哈希、分析、目录草稿、
+校验和发布代码。默认使用临时目录，运行完成后清理，因此不会修改仓库的 `data/**` 或聊天记录：
+
+```powershell
+node frontend/tools/curated-asset-batch.mjs `
+  --output-dir "$env:TEMP\galgame-curated-preview"
+```
+
+如果管理员已经从实际图像供应商生成了同名 PNG，可通过 `--input-dir` 导入这些文件；缺失条目
+才会回退到确定性程序化图，用于发现尺寸、透明度、压缩率或标签错误：
+
+```powershell
+node frontend/tools/curated-asset-batch.mjs `
+  --input-dir "D:\\generated\\galgame-curated" `
+  --output-dir "$env:TEMP\galgame-curated-sanitized"
+```
+
+成功结果应报告 `assetCount: 80`、三阶段状态分别为 `draft`、`validated`、`published`，且
+`contentHashes` 数量为 80 并全部唯一。程序化图仅用于验证导入和激活链路，不冒充外部图像供应商
+的最终美术；管理员可把 `renderAsset` 替换为实际生成器，保持清单中的 `assetKey`、`seed`、
+PNG 尺寸、透明度和上传合同不变。
+
+向真实运行时目录写入必须显式同时提供 `--data-dir`、`--activate` 和
+`--allow-runtime-data`；这会创建新的 catalog 并把它设为 active，旧 catalog 文件保持不动，
+之后可通过原有 rollback API 恢复。没有这三个参数时批处理器不会触碰运行时目录。
