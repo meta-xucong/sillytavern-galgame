@@ -323,6 +323,7 @@ const UNKNOWN_COMPATIBILITY_REPORT_ID_PATTERN = /^vuc_[a-z0-9_-]{12,80}$/;
 const SHA256_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 const SHARED_ASSET_ID_PATTERN = /^(unknown_(scene|character|equipment|item|skill)|asset_[a-z0-9_-]{8,80})$/;
+const CHARACTER_CATALOG_ASSET_ID_PATTERN = /^(?:asset_character_[a-z0-9_-]{6,80}|asset_curated_character-[a-z0-9_-]{2,80})$/;
 const ZERO_SHA256_HEX = '0'.repeat(64);
 const ZERO_SHA256_DIGEST = `sha256:${ZERO_SHA256_HEX}`;
 const ISO_TIMESTAMP_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z$/;
@@ -1907,10 +1908,14 @@ function createCoreVisualCandidateDecisionPlan(request, { runtimeHint = null, ru
       const boundAssetId = entity.entityType === 'character'
         ? entity.visibleAttributes.find((attribute) => attribute.code === 'character-visual-binding')?.value || ''
         : '';
-      const hasValidBoundAssetId = /^asset_character_[a-z0-9_-]{6,80}$/.test(String(boundAssetId));
+      const hasValidBoundAssetId = CHARACTER_CATALOG_ASSET_ID_PATTERN.test(String(boundAssetId));
       const entityAssetRefs = catalog.assetRefs.filter((ref) => ref.assetType === entity.entityType
         && (!hasValidBoundAssetId || ref.assetId === boundAssetId));
       const runtimeHintReady = !runtimeMode || runtimeHint?.status === 'ready';
+      // A published explicit character binding is already a trusted identity
+      // decision. It must remain usable when the optional runtime analyzer is
+      // unavailable; scene and unbound character matching still fail closed.
+      const allowBoundCharacterWithoutRuntime = entity.entityType === 'character' && hasValidBoundAssetId;
       const runtimeEntity = runtimeMode
         ? runtimeHint?.entities?.find((item) => item.entityType === entity.entityType) || {
           entityType: entity.entityType,
@@ -1920,7 +1925,7 @@ function createCoreVisualCandidateDecisionPlan(request, { runtimeHint = null, ru
           status: 'unavailable',
         }
         : null;
-      const candidates = (runtimeMode && !runtimeHintReady)
+      const candidates = (runtimeMode && !runtimeHintReady && !allowBoundCharacterWithoutRuntime)
         ? []
         : ((runtimeMode || coreEntityAllowsConcreteCandidate(entity))
         ? entityAssetRefs.map((ref) => createCoreVisualCandidateAssetInputFromAsset(assets.get(`${ref.assetId}:${ref.assetVersion}`)))
@@ -1962,7 +1967,7 @@ function createCoreVisualCandidateDecisionPlan(request, { runtimeHint = null, ru
         unknownCompatibilityReport,
         runtimeEntity,
         visibleContext: hasValidBoundAssetId ? { ...visibleContext, boundAssetId } : visibleContext,
-        runtimeUnavailable: runtimeMode && !runtimeHintReady,
+        runtimeUnavailable: runtimeMode && !runtimeHintReady && !allowBoundCharacterWithoutRuntime,
       });
       if (!decisionResult.ok) {
         return {
@@ -2238,7 +2243,7 @@ const RUNTIME_CHARACTER_APPEARANCE_CODES = new Set([
 ]);
 
 function scoreRuntimeCandidate(input, candidate, runtimeEntity, visibleContext = null) {
-  const boundAssetId = input.entityType === 'character' && /^asset_character_[a-z0-9_-]{6,80}$/.test(String(visibleContext?.boundAssetId || ''))
+  const boundAssetId = input.entityType === 'character' && CHARACTER_CATALOG_ASSET_ID_PATTERN.test(String(visibleContext?.boundAssetId || ''))
     ? String(visibleContext.boundAssetId)
     : '';
   if (boundAssetId) {

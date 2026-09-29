@@ -4198,6 +4198,54 @@ async function testCoreDeterministicMatcherHelpers() {
   assert.ok(plan.decisions.every((decision) => decision.score >= 20));
   assert.ok(plan.decisions.every((decision) => decision.usesLlm === false));
 
+  const curatedCharacter = makeValidatedAssetRecord({
+    assetId: 'asset_curated_character-woman-mage',
+    assetType: 'character',
+    role: 'transparent-sprite',
+    tagCodes: ['character.feminine', 'character.mage'],
+    featureCodes: ['feature.transparent', 'feature.full-body'],
+  });
+  const curatedCharacterCatalog = createCorePublishedCatalog([curatedCharacter]);
+  const curatedCharacterProjection = coreProjection({
+    entities: [coreEntity('character', {
+      visibleAttributes: [
+        { code: 'character-explicit-name', value: 'Pippa', confidenceBand: 'explicit' },
+        { code: 'character-explicit-appearance', value: 'mage', confidenceBand: 'explicit' },
+        { code: 'character-visual-binding', value: 'asset_curated_character-woman-mage', confidenceBand: 'explicit' },
+      ],
+    })],
+  });
+  const curatedCharacterPlan = createCoreVisualCandidateDecisionPlan(coreDecisionPlanRequest({
+    assets: [curatedCharacter],
+    catalog: curatedCharacterCatalog,
+    projection: curatedCharacterProjection,
+  }), {
+    runtimeMode: true,
+    runtimeHint: {
+      status: 'ready',
+      entities: [{ entityType: 'character', codes: ['character.feminine', 'character.mage'], confidence: 1, confidenceBand: 'explicit' }],
+    },
+    visibleContext: { boundAssetId: 'asset_curated_character-woman-mage', recent: [] },
+  });
+  assert.equal(curatedCharacterPlan.ok, true, JSON.stringify(curatedCharacterPlan));
+  assert.equal(curatedCharacterPlan.decisions[0].assetId, 'asset_curated_character-woman-mage');
+  assert.equal(curatedCharacterPlan.decisions[0].score, 100);
+  const curatedCharacterWithoutRuntimePlan = createCoreVisualCandidateDecisionPlan(coreDecisionPlanRequest({
+    assets: [curatedCharacter],
+    catalog: curatedCharacterCatalog,
+    projection: curatedCharacterProjection,
+  }), {
+    runtimeMode: true,
+    runtimeHint: {
+      status: 'unavailable',
+      entities: [],
+    },
+    visibleContext: { boundAssetId: 'asset_curated_character-woman-mage', recent: [] },
+  });
+  assert.equal(curatedCharacterWithoutRuntimePlan.ok, true, JSON.stringify(curatedCharacterWithoutRuntimePlan));
+  assert.equal(curatedCharacterWithoutRuntimePlan.decisions[0].assetId, 'asset_curated_character-woman-mage');
+  assert.equal(curatedCharacterWithoutRuntimePlan.decisions[0].score, 100);
+
   const overlapAssets = [
     makeValidatedAssetRecord({
       assetId: 'asset_scene_overlap_forest',

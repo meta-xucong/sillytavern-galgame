@@ -1,6 +1,16 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+if defined GALGAME_VISUAL_PROVIDER_ENV_FILE if exist "%GALGAME_VISUAL_PROVIDER_ENV_FILE%" goto start_controlled_visual_service
+if exist "D:\AI\alchemy_video_OS\.env.local" goto start_controlled_visual_service
+goto start_legacy_visual_service
+
+:start_controlled_visual_service
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0StartGalgameVisualAnalyzerTest.ps1"
+set "EXIT_CODE=%ERRORLEVEL%"
+endlocal & exit /b %EXIT_CODE%
+
+:start_legacy_visual_service
 set "GALGAME_VISUAL_ASSET_HOST=127.0.0.1"
 set "GALGAME_VISUAL_ASSET_PORT=8798"
 set "GALGAME_VISUAL_ASSET_ADMIN_TOKEN="

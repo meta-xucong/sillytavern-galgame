@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$OpenAdmin
+)
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -217,10 +219,12 @@ try {
     $leaveChildRunning = $true
     Write-ControlledLauncherLog -Message ('health_ok pid={0} url={1}' -f $process.Id, $healthUrl)
     Write-Host "visual analyzer test service is ready at $adminUrl"
-    try {
-        Start-Process $adminUrl | Out-Null
-    } catch {
-        Write-Warning 'The service is healthy, but the browser could not be opened automatically.'
+    if ($OpenAdmin) {
+        try {
+            Start-Process $adminUrl | Out-Null
+        } catch {
+            Write-Warning 'The service is healthy, but the browser could not be opened automatically.'
+        }
     }
 } catch {
     Write-ControlledLauncherLog -Message 'launcher_failed diagnostics=non-sensitive-launcher-status-only'
