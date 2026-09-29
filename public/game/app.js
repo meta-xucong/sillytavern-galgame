@@ -1,4 +1,4 @@
-import { createReleaseStore } from './shared/config-service.js?v=auto-9fe34c1c7550';
+import { createReleaseStore } from './shared/config-service.js?v=auto-3188a61fc79d';
 import {
     getAssetUrl,
     getVisualCharacterBindings,
@@ -6,13 +6,13 @@ import {
     getActiveSillyTavernBindings,
     materializeManifestForArc,
     resolveAdaptivePresentationProfileBinding,
-} from './shared/protocol.js?v=auto-9fe34c1c7550';
+} from './shared/protocol.js?v=auto-3188a61fc79d';
 import {
     AUTO_SAVE_ID,
     createCanonicalPlayerSaveRelease,
     createPlayerSaveStore,
     manualSaveIds,
-} from './shared/player-save.js?v=auto-9fe34c1c7550';
+} from './shared/player-save.js?v=auto-3188a61fc79d';
 import {
     createCoreVisualDisplayEntityHints,
     createCoreVisualDisplayEntityKey,
@@ -20,11 +20,11 @@ import {
     createVisualNovelDisplaySegments,
     OriginalRuntimeBridgeClient,
     SillyTavernOriginalChatBridge,
-} from './shared/sillytavern-adapter.js?v=auto-9fe34c1c7550';
-import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-9fe34c1c7550';
-import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-9fe34c1c7550';
-import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-9fe34c1c7550';
-import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-9fe34c1c7550';
+} from './shared/sillytavern-adapter.js?v=auto-3188a61fc79d';
+import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-3188a61fc79d';
+import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-3188a61fc79d';
+import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-3188a61fc79d';
+import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-3188a61fc79d';
 
 const releaseStore = createReleaseStore(null, { fallbackToLocal: false });
 const playerSaveStore = createPlayerSaveStore();
@@ -270,7 +270,10 @@ async function probeVisualService(signal) {
     if (!baseUrl) {
         return { ok: false, errorCode: 'VISUAL_SERVICE_UNCONFIGURED' };
     }
-    const response = await fetch(`${baseUrl}/v1/health`, {
+    // `/v1/health` is intentionally a local diagnostics endpoint without
+    // player CORS headers. The core context route is the browser-safe visual
+    // service probe and also confirms that the active catalog is readable.
+    const response = await fetch(`${baseUrl}/v1/core/visual-context`, {
         method: 'GET',
         cache: 'no-cache',
         signal,
@@ -280,7 +283,9 @@ async function probeVisualService(signal) {
         ok: response.ok && body?.ok === true,
         errorCode: response.ok ? '' : `VISUAL_SERVICE_HTTP_${response.status}`,
         service: body?.service || '',
-        schema: body?.schema || '',
+        schema: body?.schemaVersion || '',
+        enabled: body?.enabled === true,
+        catalogId: body?.visualProfile?.catalogId || '',
     };
 }
 
