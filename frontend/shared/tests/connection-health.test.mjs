@@ -66,6 +66,22 @@ test('unstarted generation does not mark healthy transport as degraded', async (
     assert.equal(snapshot.overall, 'up');
 });
 
+test('an active generation keeps healthy transport status up', async () => {
+    const monitor = createConnectionHealthMonitor({
+        probes: {
+            sillyTavern: async () => ({ ok: true }),
+            configService: async () => ({ ok: true }),
+            runtimeBridge: async () => ({ ok: true, pending: true, connectionState: 'generating' }),
+            visualService: async () => ({ ok: true }),
+        },
+    });
+    monitor.recordGenerationStart({ requestId: 'req-active' });
+    const snapshot = await monitor.probeNow({ reason: 'heartbeat' });
+    assert.equal(snapshot.services.runtimeBridge.status, 'pending');
+    assert.equal(snapshot.services.generation.status, 'pending');
+    assert.equal(snapshot.overall, 'up');
+});
+
 test('transport probes preserve generation state across heartbeat cycles', async () => {
     const monitor = createConnectionHealthMonitor({
         probes: {

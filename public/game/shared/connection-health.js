@@ -271,10 +271,13 @@ function createServiceState() {
 }
 
 function summarizeOverall(services, { generationPending = false } = {}) {
-    if (generationPending) return 'degraded';
+    // A live generation occupies the runtime bridge but does not mean that
+    // the transport is disconnected. Keep connection reachability separate
+    // from request readiness; the UI already exposes `pending` as "生成中".
+    // A stale bridge or a recorded generation failure still degrades normally.
     const states = Object.entries(services)
         .filter(([name, service]) => name !== 'generation' || service.status !== 'unknown')
-        .map(([, service]) => service.status === 'idle' ? 'up' : service.status);
+        .map(([, service]) => ['idle', 'pending'].includes(service.status) ? 'up' : service.status);
     if (states.every((status) => status === 'up')) return 'up';
     if (states.some((status) => status === 'down')) return states.some((status) => status === 'up') ? 'degraded' : 'down';
     if (states.some((status) => status === 'up')) return 'degraded';
