@@ -251,7 +251,7 @@ function setupConnectionHealthMonitor() {
         probes: {
             sillyTavern: (signal) => chatBridge.healthCheck(signal),
             configService: (signal) => releaseStore.publicHealthCheck(signal),
-            runtimeBridge: (signal) => runtimeBridge.healthCheck(signal),
+            runtimeBridge: (signal) => probeRuntimeBridge(signal),
             visualService: (signal) => probeVisualService(signal),
         },
     });
@@ -263,6 +263,19 @@ function setupConnectionHealthMonitor() {
     window.addEventListener('online', updateAfterBrowserNetworkChange);
     window.addEventListener('offline', updateAfterBrowserNetworkChange);
     return connectionHealthMonitor;
+}
+
+async function probeRuntimeBridge(signal) {
+    if (!runtimeBridge.isConfigured()) {
+        if (!runtimeBridgeDiscoveryPromise) {
+            runtimeBridgeDiscoveryPromise = discoverOriginalRuntimeBridge({ signal })
+                .finally(() => {
+                    runtimeBridgeDiscoveryPromise = null;
+                });
+        }
+        await runtimeBridgeDiscoveryPromise;
+    }
+    return runtimeBridge.healthCheck(signal);
 }
 
 async function probeVisualService(signal) {
@@ -1189,8 +1202,8 @@ async function ensureRuntimeBridgeReady() {
     return Boolean(await runtimeBridgeDiscoveryPromise);
 }
 
-async function discoverOriginalRuntimeBridge() {
-    return runtimeBridge.discoverBaseUrl(getOriginalRuntimeBridgeCandidateUrls());
+async function discoverOriginalRuntimeBridge({ signal = null } = {}) {
+    return runtimeBridge.discoverBaseUrl(getOriginalRuntimeBridgeCandidateUrls(), { signal });
 }
 
 function getOriginalRuntimeBridgeCandidateUrls() {

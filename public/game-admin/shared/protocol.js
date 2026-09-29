@@ -1,7 +1,7 @@
 import {
     createDefaultAdaptivePresentationProfile,
     validateAdaptivePresentationProfile,
-} from './adaptive-presentation-schema.js?v=auto-3188a61fc79d';
+} from './adaptive-presentation-schema.js?v=auto-6923a6936f85';
 
 export const PROTOCOL_VERSION = '1.0';
 export const ARC_BINDING_PROTOCOL_VERSION = 'galgame.arc-release.v1';

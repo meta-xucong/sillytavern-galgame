@@ -1,4 +1,4 @@
-import { createReleaseStore } from './shared/config-service.js?v=auto-3188a61fc79d';
+import { createReleaseStore } from './shared/config-service.js?v=auto-6923a6936f85';
 import {
     getAssetUrl,
     getVisualCharacterBindings,
@@ -6,13 +6,13 @@ import {
     getActiveSillyTavernBindings,
     materializeManifestForArc,
     resolveAdaptivePresentationProfileBinding,
-} from './shared/protocol.js?v=auto-3188a61fc79d';
+} from './shared/protocol.js?v=auto-6923a6936f85';
 import {
     AUTO_SAVE_ID,
     createCanonicalPlayerSaveRelease,
     createPlayerSaveStore,
     manualSaveIds,
-} from './shared/player-save.js?v=auto-3188a61fc79d';
+} from './shared/player-save.js?v=auto-6923a6936f85';
 import {
     createCoreVisualDisplayEntityHints,
     createCoreVisualDisplayEntityKey,
@@ -20,11 +20,11 @@ import {
     createVisualNovelDisplaySegments,
     OriginalRuntimeBridgeClient,
     SillyTavernOriginalChatBridge,
-} from './shared/sillytavern-adapter.js?v=auto-3188a61fc79d';
-import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-3188a61fc79d';
-import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-3188a61fc79d';
-import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-3188a61fc79d';
-import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-3188a61fc79d';
+} from './shared/sillytavern-adapter.js?v=auto-6923a6936f85';
+import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-6923a6936f85';
+import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-6923a6936f85';
+import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-6923a6936f85';
+import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-6923a6936f85';
 
 const releaseStore = createReleaseStore(null, { fallbackToLocal: false });
 const playerSaveStore = createPlayerSaveStore();
@@ -251,7 +251,7 @@ function setupConnectionHealthMonitor() {
         probes: {
             sillyTavern: (signal) => chatBridge.healthCheck(signal),
             configService: (signal) => releaseStore.publicHealthCheck(signal),
-            runtimeBridge: (signal) => runtimeBridge.healthCheck(signal),
+            runtimeBridge: (signal) => probeRuntimeBridge(signal),
             visualService: (signal) => probeVisualService(signal),
         },
     });
@@ -263,6 +263,19 @@ function setupConnectionHealthMonitor() {
     window.addEventListener('online', updateAfterBrowserNetworkChange);
     window.addEventListener('offline', updateAfterBrowserNetworkChange);
     return connectionHealthMonitor;
+}
+
+async function probeRuntimeBridge(signal) {
+    if (!runtimeBridge.isConfigured()) {
+        if (!runtimeBridgeDiscoveryPromise) {
+            runtimeBridgeDiscoveryPromise = discoverOriginalRuntimeBridge({ signal })
+                .finally(() => {
+                    runtimeBridgeDiscoveryPromise = null;
+                });
+        }
+        await runtimeBridgeDiscoveryPromise;
+    }
+    return runtimeBridge.healthCheck(signal);
 }
 
 async function probeVisualService(signal) {
@@ -1189,8 +1202,8 @@ async function ensureRuntimeBridgeReady() {
     return Boolean(await runtimeBridgeDiscoveryPromise);
 }
 
-async function discoverOriginalRuntimeBridge() {
-    return runtimeBridge.discoverBaseUrl(getOriginalRuntimeBridgeCandidateUrls());
+async function discoverOriginalRuntimeBridge({ signal = null } = {}) {
+    return runtimeBridge.discoverBaseUrl(getOriginalRuntimeBridgeCandidateUrls(), { signal });
 }
 
 function getOriginalRuntimeBridgeCandidateUrls() {

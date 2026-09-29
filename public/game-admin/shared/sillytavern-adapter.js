@@ -2,7 +2,7 @@ import {
     getActiveSillyTavernBindings,
     sanitizeText,
     summarizeSillyTavernBindings,
-} from './protocol.js?v=auto-3188a61fc79d';
+} from './protocol.js?v=auto-6923a6936f85';
 
 export const SILLYTAVERN_ENDPOINTS = Object.freeze({
     csrf: '/csrf-token',
