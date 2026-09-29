@@ -95,7 +95,10 @@ export class ConnectionHealthMonitor {
             .filter((name) => name !== 'generation')
             .map((name) => this.#probeService(name, signal)))
             .then((results) => {
-                const services = Object.fromEntries(results.map(({ name, value }) => [name, value]));
+                const services = {
+                    ...this.state.services,
+                    ...Object.fromEntries(results.map(({ name, value }) => [name, value])),
+                };
                 this.state = {
                     ...this.state,
                     protocolVersion: CONNECTION_HEALTH_PROTOCOL_VERSION,

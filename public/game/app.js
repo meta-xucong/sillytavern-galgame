@@ -1,4 +1,4 @@
-import { createReleaseStore } from './shared/config-service.js?v=auto-aad3711e0118';
+import { createReleaseStore } from './shared/config-service.js?v=auto-f23fd7fbd246';
 import {
     getAssetUrl,
     getVisualCharacterBindings,
@@ -6,13 +6,13 @@ import {
     getActiveSillyTavernBindings,
     materializeManifestForArc,
     resolveAdaptivePresentationProfileBinding,
-} from './shared/protocol.js?v=auto-aad3711e0118';
+} from './shared/protocol.js?v=auto-f23fd7fbd246';
 import {
     AUTO_SAVE_ID,
     createCanonicalPlayerSaveRelease,
     createPlayerSaveStore,
     manualSaveIds,
-} from './shared/player-save.js?v=auto-aad3711e0118';
+} from './shared/player-save.js?v=auto-f23fd7fbd246';
 import {
     createCoreVisualDisplayEntityHints,
     createCoreVisualDisplayEntityKey,
@@ -20,11 +20,11 @@ import {
     createVisualNovelDisplaySegments,
     OriginalRuntimeBridgeClient,
     SillyTavernOriginalChatBridge,
-} from './shared/sillytavern-adapter.js?v=auto-aad3711e0118';
-import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-aad3711e0118';
-import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-aad3711e0118';
-import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-aad3711e0118';
-import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-aad3711e0118';
+} from './shared/sillytavern-adapter.js?v=auto-f23fd7fbd246';
+import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-f23fd7fbd246';
+import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-f23fd7fbd246';
+import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-f23fd7fbd246';
+import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-f23fd7fbd246';
 
 const releaseStore = createReleaseStore(null, { fallbackToLocal: false });
 const playerSaveStore = createPlayerSaveStore();

@@ -52,6 +52,22 @@ test('generation status is visible independently of transport probes', async () 
     assert.equal(recovered.services.generation.consecutiveFailures, 0);
 });
 
+test('transport probes preserve generation state across heartbeat cycles', async () => {
+    const monitor = createConnectionHealthMonitor({
+        probes: {
+            sillyTavern: async () => ({ ok: true }),
+            configService: async () => ({ ok: true }),
+            runtimeBridge: async () => ({ ok: true }),
+            visualService: async () => ({ ok: true }),
+        },
+    });
+    monitor.recordGenerationStart({ requestId: 'req-preserved' });
+    await monitor.probeNow({ reason: 'heartbeat' });
+    const snapshot = monitor.recordGeneration({ ok: true, requestId: 'req-preserved' });
+    assert.equal(snapshot.services.generation.status, 'up');
+    assert.equal(snapshot.services.generation.requestId, 'req-preserved');
+});
+
 test('listeners receive immediate and changed snapshots; stop cancels polling', async () => {
     const events = [];
     const monitor = createConnectionHealthMonitor({
