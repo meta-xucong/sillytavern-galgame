@@ -1,4 +1,4 @@
-import { createReleaseStore } from './shared/config-service.js?v=auto-98042d7b8e67';
+import { createReleaseStore } from './shared/config-service.js?v=auto-59b8ad4612a9';
 import {
     getAssetUrl,
     getVisualCharacterBindings,
@@ -6,13 +6,13 @@ import {
     getActiveSillyTavernBindings,
     materializeManifestForArc,
     resolveAdaptivePresentationProfileBinding,
-} from './shared/protocol.js?v=auto-98042d7b8e67';
+} from './shared/protocol.js?v=auto-59b8ad4612a9';
 import {
     AUTO_SAVE_ID,
     createCanonicalPlayerSaveRelease,
     createPlayerSaveStore,
     manualSaveIds,
-} from './shared/player-save.js?v=auto-98042d7b8e67';
+} from './shared/player-save.js?v=auto-59b8ad4612a9';
 import {
     createCoreVisualDisplayEntityHints,
     createCoreVisualDisplayEntityKey,
@@ -20,10 +20,10 @@ import {
     createVisualNovelDisplaySegments,
     OriginalRuntimeBridgeClient,
     SillyTavernOriginalChatBridge,
-} from './shared/sillytavern-adapter.js?v=auto-98042d7b8e67';
-import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-98042d7b8e67';
-import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-98042d7b8e67';
-import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-98042d7b8e67';
+} from './shared/sillytavern-adapter.js?v=auto-59b8ad4612a9';
+import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-59b8ad4612a9';
+import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-59b8ad4612a9';
+import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-59b8ad4612a9';
 
 const releaseStore = createReleaseStore(null, { fallbackToLocal: false });
 const playerSaveStore = createPlayerSaveStore();

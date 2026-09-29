@@ -161,7 +161,24 @@ const pooledConflictManifest = {
     },
 };
 assert.equal(resolveVisualCharacterBinding(pooledConflictManifest, { name: '陌生角色', role: 'character' }).assetId, 'asset_character_ef87a34e79ed');
-assert.equal(resolveVisualCharacterBinding(pooledConflictManifest, { name: '矮人', role: 'character' }), null);
+assert.equal(resolveVisualCharacterBinding(pooledConflictManifest, { name: '矮人', role: 'character' }).assetId, 'asset_character_ef87a34e79ed');
+const poolAliasManifest = {
+    ...pooledVisualBindingManifest,
+    id: 'visual-binding-pool-alias-test',
+    visualBindings: {
+        ...pooledVisualBindingManifest.visualBindings,
+        characters: [],
+        characterPool: [{
+            characterKey: 'Archivist',
+            aliases: ['卷宗官', 'archive keeper'],
+            assetId: 'asset_character_ef87a34e79ed',
+            assetVersion: 1,
+            channel: 'character',
+        }],
+    },
+};
+assert.equal(resolveVisualCharacterBinding(poolAliasManifest, { name: '卷宗官', role: 'character' }).assetId, 'asset_character_ef87a34e79ed');
+assert.equal(resolveVisualCharacterBinding(poolAliasManifest, { name: 'archive keeper', role: 'character' }).assetId, 'asset_character_ef87a34e79ed');
 const sessionScopedA = resolveVisualCharacterBinding(pooledConflictManifest, {
     name: '另一场游戏角色',
     role: 'character',

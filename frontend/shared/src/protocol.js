@@ -334,7 +334,12 @@ function resolvePooledVisualCharacterBinding(manifest, pool, { normalizedName, a
     });
     if (exactPoolMatch) {
         const exactAssetId = String(exactPoolMatch.assetId || '').trim();
-        const assignedToAnother = [...assignments.entries()].some(([key, assetId]) => key !== assignmentKey && assetId === exactAssetId);
+        const canonicalPoolKey = normalizeVisualCharacterName(exactPoolMatch.characterKey);
+        const assignedToAnother = [...assignments.entries()].some(([key, assetId]) => {
+            if (key === assignmentKey || assetId !== exactAssetId) return false;
+            const assignedBinding = pool.find((binding) => String(binding.assetId || '').trim() === assetId);
+            return normalizeVisualCharacterName(assignedBinding?.characterKey) !== canonicalPoolKey;
+        });
         if (!assignedToAnother) {
             assignments.set(assignmentKey, exactAssetId);
             visualCharacterPoolAssignments.set(scopeKey, assignments);
