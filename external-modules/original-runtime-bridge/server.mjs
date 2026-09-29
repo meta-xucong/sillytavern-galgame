@@ -12,6 +12,7 @@ const repoRoot = path.resolve(moduleRoot, '..', '..');
 const DEFAULT_PORT = 8795;
 const DEFAULT_TIMEOUT_MS = 180000;
 const DEFAULT_PROVIDER_RETRY_DELAYS_MS = [2000, 6000];
+const DEFAULT_PENDING_STALE_AFTER_MS = 240000;
 const MAX_BRIDGE_VISIBLE_TEXT_LENGTH = 16000;
 const DEFAULT_CLAUDE_SETTINGS_PATH = path.join(repoRoot, 'data', 'default-user', 'OpenAI Settings', 'Default.json');
 
@@ -71,7 +72,10 @@ export function createOriginalRuntimeBridgeServer({
                     errorCode: sanitizeErrorCode(error),
                 }));
                 sendJson(response, 200, {
-                    ok: Boolean(health?.ok ?? true),
+                    // `ok` means the bridge can accept a new generation.  Keep
+                    // transport reachability separate so a stale/pending or
+                    // stopped browser session is never reported as healthy.
+                    ok: resolveBridgeReady(health, runtimeBridge.getStatus?.()),
                     mode: 'sillytavern-original-runtime-bridge',
                     originalRuntime: 'browser-generate',
                     authRequired: auth.required,
@@ -102,6 +106,18 @@ export function createOriginalRuntimeBridgeServer({
                     sendJson(response, 503, {
                         ok: false,
                         errorCode: 'BRIDGE_STOPPING',
+                    });
+                    return;
+                }
+                const runtimeStatus = runtimeBridge.getStatus?.() || {};
+                if (runtimeStatus.pending) {
+                    sendJson(response, runtimeStatus.stale ? 504 : 409, {
+                        ok: false,
+                        errorCode: runtimeStatus.stale ? 'BRIDGE_PENDING_STALE' : 'BRIDGE_GENERATION_IN_PROGRESS',
+                        diagnostics: {
+                            connectionState: runtimeStatus.connectionState,
+                            pendingSinceMs: runtimeStatus.pendingSinceMs,
+                        },
                     });
                     return;
                 }
@@ -180,21 +196,49 @@ export class BrowserOriginalRuntimeBridge {
         this.queue = Promise.resolve();
         this.pendingTask = null;
         this.stopping = false;
+        this.lastGeneration = {
+            state: 'never',
+            at: 0,
+            elapsedMs: 0,
+            errorCode: '',
+        };
+        this.pendingStaleAfterMs = Number(process.env.GALGAME_BRIDGE_PENDING_STALE_AFTER_MS)
+            || DEFAULT_PENDING_STALE_AFTER_MS;
     }
 
     async healthCheck() {
+        const status = this.getStatus();
         return {
-            ok: true,
+            ok: status.ready,
+            ready: status.ready,
+            transportOk: true,
             browser: Boolean(this.browser),
             headless: this.headless,
+            ...status,
         };
     }
 
     getStatus() {
+        const pendingSinceMs = this.pendingTask ? Date.now() - this.pendingTask.startedAt : 0;
+        const stale = Boolean(this.pendingTask) && pendingSinceMs >= this.pendingStaleAfterMs;
+        const connectionState = this.stopping
+            ? 'stopping'
+            : stale
+                ? 'stale'
+                : this.pendingTask
+                    ? 'generating'
+                    : this.browser
+                        ? 'ready'
+                        : 'idle';
         return {
             stopping: this.stopping,
             pending: Boolean(this.pendingTask),
-            pendingSinceMs: this.pendingTask ? Date.now() - this.pendingTask.startedAt : 0,
+            pendingSinceMs,
+            pendingStaleAfterMs: this.pendingStaleAfterMs,
+            stale,
+            ready: !this.stopping && !stale && !this.pendingTask,
+            connectionState,
+            lastGeneration: { ...this.lastGeneration },
         };
     }
 
@@ -225,7 +269,21 @@ export class BrowserOriginalRuntimeBridge {
                         chatIdHash: this.pendingTask?.chatIdHash,
                     });
                 }
+                this.lastGeneration = {
+                    state: 'succeeded',
+                    at: Date.now(),
+                    elapsedMs: Date.now() - this.pendingTask.startedAt,
+                    errorCode: '',
+                };
                 return result;
+            } catch (error) {
+                this.lastGeneration = {
+                    state: this.stopping || error?.code === 'BRIDGE_STOP_TIMEOUT' ? 'stopped' : 'failed',
+                    at: Date.now(),
+                    elapsedMs: Date.now() - this.pendingTask.startedAt,
+                    errorCode: sanitizeErrorCode(error),
+                };
+                throw error;
             } finally {
                 this.pendingTask = null;
             }
@@ -644,7 +702,7 @@ function generateInOriginalRuntimeExpression(payload) {
                         id: 'original-runtime-message-' + index,
                         speaker: sanitizeText(message.name || (message.is_user ? 'Player' : 'Character'), 160),
                         role: message.is_user ? 'player' : 'character',
-                        text: sanitizeText(message.extra?.display_text || message.mes, MAX_BRIDGE_VISIBLE_TEXT_LENGTH),
+                        text: sanitizeText(message.extra?.display_text || message.mes, 16000),
                         sentAt: sanitizeText(message.send_date || '', 120),
                     })),
             };
@@ -711,6 +769,17 @@ function generateInOriginalRuntimeExpression(payload) {
                 const current = globalThis.SillyTavern.getContext();
                 if (current.characters?.[characterIndex]) {
                     current.characters[characterIndex].chat = targetChatId;
+                }
+                // SillyTavern exposes character state through both the
+                // context object and the original script module. In some
+                // builds these arrays are not the same object; updating only
+                // the context leaves getCurrentChatId() reading the old chat
+                // and makes the binding look unstable.
+                if (stModule?.characters?.[characterIndex]) {
+                    stModule.characters[characterIndex].chat = targetChatId;
+                }
+                if (stModule?.this_chid !== undefined && stModule?.characters?.[stModule.this_chid]) {
+                    stModule.characters[stModule.this_chid].chat = targetChatId;
                 }
                 const selectedChat = document.querySelector('#selected_chat_pole');
                 if (selectedChat) {
@@ -927,7 +996,7 @@ function generateInOriginalRuntimeExpression(payload) {
                     unchanged: true,
                     elapsedMs: Date.now() - startedAt,
                     ...snapshot(targetBeforeRawChat, targetChatId),
-                    generatedText: sanitizeText(targetBeforeLast?.mes || '', MAX_BRIDGE_VISIBLE_TEXT_LENGTH),
+                    generatedText: sanitizeText(targetBeforeLast?.mes || '', 16000),
                     diagnostics: {
                         openedFromChatId,
                         currentChatIdAfterOpen: normalizeChatId(ctx.getCurrentChatId?.() || ''),
@@ -1107,7 +1176,7 @@ function generateInOriginalRuntimeExpression(payload) {
                 unchanged: false,
                 elapsedMs: Date.now() - startedAt,
                 ...currentSnapshot,
-                generatedText: sanitizeText(latestMessage(finalRawChat)?.mes || '', MAX_BRIDGE_VISIBLE_TEXT_LENGTH),
+                generatedText: sanitizeText(latestMessage(finalRawChat)?.mes || '', 16000),
                 diagnostics: {
                     openedFromChatId,
                     currentChatIdAfterOpen: targetChatId,
@@ -1150,6 +1219,14 @@ function generateInOriginalRuntimeExpression(payload) {
             cleanupRuntimeBinding();
         }
     })()`;
+}
+
+function resolveBridgeReady(health, status = {}) {
+    if (typeof health?.ready === 'boolean') return health.ready;
+    if (typeof status?.ready === 'boolean') return status.ready;
+    // Compatibility for test doubles and older bridge runtimes that only
+    // expose `{ ok: true }`; the real browser bridge always supplies ready.
+    return Boolean(health?.ok ?? true);
 }
 
 function validateGenerateRequest(body, proofVerifier) {

@@ -2,7 +2,7 @@ import {
     getActiveSillyTavernBindings,
     sanitizeText,
     summarizeSillyTavernBindings,
-} from './protocol.js?v=auto-59b8ad4612a9';
+} from './protocol.js?v=auto-aad3711e0118';
 
 export const SILLYTAVERN_ENDPOINTS = Object.freeze({
     csrf: '/csrf-token',
@@ -580,7 +580,7 @@ export class OriginalRuntimeBridgeClient {
                 return null;
             }
             const health = await response.json().catch(() => null);
-            if (!health?.ok || health.stopping || health.authRequired) {
+            if (!health?.ok || health.ready === false || health.stopping || health.pending || health.stale || health.authRequired) {
                 return null;
             }
             return {

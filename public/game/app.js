@@ -1,4 +1,4 @@
-import { createReleaseStore } from './shared/config-service.js?v=auto-59b8ad4612a9';
+import { createReleaseStore } from './shared/config-service.js?v=auto-aad3711e0118';
 import {
     getAssetUrl,
     getVisualCharacterBindings,
@@ -6,13 +6,13 @@ import {
     getActiveSillyTavernBindings,
     materializeManifestForArc,
     resolveAdaptivePresentationProfileBinding,
-} from './shared/protocol.js?v=auto-59b8ad4612a9';
+} from './shared/protocol.js?v=auto-aad3711e0118';
 import {
     AUTO_SAVE_ID,
     createCanonicalPlayerSaveRelease,
     createPlayerSaveStore,
     manualSaveIds,
-} from './shared/player-save.js?v=auto-59b8ad4612a9';
+} from './shared/player-save.js?v=auto-aad3711e0118';
 import {
     createCoreVisualDisplayEntityHints,
     createCoreVisualDisplayEntityKey,
@@ -20,10 +20,11 @@ import {
     createVisualNovelDisplaySegments,
     OriginalRuntimeBridgeClient,
     SillyTavernOriginalChatBridge,
-} from './shared/sillytavern-adapter.js?v=auto-59b8ad4612a9';
-import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-59b8ad4612a9';
-import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-59b8ad4612a9';
-import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-59b8ad4612a9';
+} from './shared/sillytavern-adapter.js?v=auto-aad3711e0118';
+import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-aad3711e0118';
+import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-aad3711e0118';
+import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-aad3711e0118';
+import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-aad3711e0118';
 
 const releaseStore = createReleaseStore(null, { fallbackToLocal: false });
 const playerSaveStore = createPlayerSaveStore();
@@ -76,6 +77,7 @@ const coreVisualAvailability = {
     nextProbeAt: 0,
 };
 let runtimeBridgeDiscoveryPromise = null;
+let connectionHealthMonitor = null;
 let visualBundleRequestToken = 0;
 let coreVisualHasVerifiedPresentation = false;
 // Keep the last verified decision per visual layer. A new dialogue may update
@@ -88,6 +90,7 @@ const activeVisualDetailHints = new Map();
 let immediateVisualCharacterIdentity = '';
 
 const ui = {
+    connectionStatus: document.querySelector('#connectionStatus'),
     titleBackdrop: document.querySelector('#titleBackdrop'),
     titleHeroine: document.querySelector('.title-heroine'),
     gameScreen: document.querySelector('#gameScreen'),
@@ -226,6 +229,7 @@ if (globalThis.__GALGAME_PLAYER_TEMPLATE_MATRIX_SMOKE__) {
 
 async function bootstrap() {
     bindEvents();
+    setupConnectionHealthMonitor();
     renderTitle();
     await refreshTitleSaveState();
     releaseReadyPromise = refreshRelease()
@@ -237,6 +241,83 @@ async function bootstrap() {
         .catch((error) => {
             console.warn('Galgame release refresh failed.', error);
         });
+}
+
+function setupConnectionHealthMonitor() {
+    if (connectionHealthMonitor) return connectionHealthMonitor;
+    connectionHealthMonitor = createConnectionHealthMonitor({
+        intervalMs: 10_000,
+        timeoutMs: 5_000,
+        probes: {
+            sillyTavern: (signal) => chatBridge.healthCheck(signal),
+            configService: (signal) => releaseStore.publicHealthCheck(signal),
+            runtimeBridge: (signal) => runtimeBridge.healthCheck(signal),
+            visualService: (signal) => probeVisualService(signal),
+        },
+    });
+    connectionHealthMonitor.subscribe(renderConnectionHealth);
+    connectionHealthMonitor.start();
+    const updateAfterBrowserNetworkChange = () => {
+        void connectionHealthMonitor?.probeNow({ reason: navigator.onLine === false ? 'browser-offline' : 'browser-online' });
+    };
+    window.addEventListener('online', updateAfterBrowserNetworkChange);
+    window.addEventListener('offline', updateAfterBrowserNetworkChange);
+    return connectionHealthMonitor;
+}
+
+async function probeVisualService(signal) {
+    const baseUrl = getCoreVisualServiceUrl();
+    if (!baseUrl) {
+        return { ok: false, errorCode: 'VISUAL_SERVICE_UNCONFIGURED' };
+    }
+    const response = await fetch(`${baseUrl}/v1/health`, {
+        method: 'GET',
+        cache: 'no-cache',
+        signal,
+    });
+    const body = await response.json().catch(() => ({}));
+    return {
+        ok: response.ok && body?.ok === true,
+        errorCode: response.ok ? '' : `VISUAL_SERVICE_HTTP_${response.status}`,
+        service: body?.service || '',
+        schema: body?.schema || '',
+    };
+}
+
+function renderConnectionHealth(snapshot) {
+    if (!ui.connectionStatus || !snapshot) return;
+    const generation = snapshot.services?.generation;
+    const runtime = snapshot.services?.runtimeBridge;
+    const runtimeDetails = runtime?.details || {};
+    if (generationPending && (runtimeDetails.stale || runtimeDetails.stopping || runtimeDetails.connectionState === 'stale')) {
+        setStageStatus(runtimeDetails.stopping
+            ? '运行桥正在停止，请重启桥接服务后再试。'
+            : '运行桥响应超时，请重启桥接服务后再试。');
+        setRecoveryVisible(true);
+    }
+    const labels = {
+        up: '已连接',
+        down: '断开',
+        pending: '生成中',
+        degraded: '部分异常',
+        unknown: '检查中',
+    };
+    const display = (service) => service?.stale && service?.checkedAt ? '数据过期' : (labels[service?.status] || '检查中');
+    const parts = [
+        `酒馆 ${display(snapshot.services?.sillyTavern)}`,
+        `配置 ${display(snapshot.services?.configService)}`,
+        `运行桥 ${display(snapshot.services?.runtimeBridge)}`,
+        `视觉 ${display(snapshot.services?.visualService)}`,
+    ];
+    if (generation?.status && generation.status !== 'unknown') {
+        parts.push(`生成 ${labels[generation.status] || generation.status}`);
+    }
+    const overallLabel = snapshot.overall === 'up' ? '连接正常'
+        : snapshot.overall === 'degraded' ? '部分连接异常'
+            : snapshot.overall === 'down' ? '连接中断' : '连接检查中';
+    ui.connectionStatus.textContent = `${overallLabel} · ${parts.join(' · ')}`;
+    ui.connectionStatus.dataset.connectionState = snapshot.overall;
+    ui.connectionStatus.title = parts.join('\n');
 }
 
 async function refreshRelease() {
@@ -966,6 +1047,8 @@ async function requestOriginalReply(snapshot = activeChatSnapshot) {
         return;
     }
     let currentGenerationSnapshot = snapshot;
+    const generationRequestId = `generation-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const generationStartedAt = Date.now();
 
     generationPending = true;
     try {
@@ -980,8 +1063,15 @@ async function requestOriginalReply(snapshot = activeChatSnapshot) {
                 return;
             }
         }
+        connectionHealthMonitor?.recordGenerationStart({ requestId: generationRequestId });
         const bridgeReady = await ensureRuntimeBridgeReady();
         if (!bridgeReady) {
+            connectionHealthMonitor?.recordGeneration({
+                ok: false,
+                requestId: generationRequestId,
+                errorCode: 'ORIGINAL_RUNTIME_BRIDGE_UNAVAILABLE',
+                latencyMs: Date.now() - generationStartedAt,
+            });
             renderWaitingForReply();
             return;
         }
@@ -997,12 +1087,23 @@ async function requestOriginalReply(snapshot = activeChatSnapshot) {
             bridgeProof,
         });
         activeChatSnapshot = generatedSnapshot;
+        connectionHealthMonitor?.recordGeneration({
+            ok: true,
+            requestId: generationRequestId,
+            latencyMs: Date.now() - generationStartedAt,
+        });
         renderChatSnapshot(generatedSnapshot);
         void persistAutoSave(generatedSnapshot);
         if (!snapshotAwaitsReply(generatedSnapshot)) {
             showToast('回应已到');
         }
     } catch (error) {
+        connectionHealthMonitor?.recordGeneration({
+            ok: false,
+            requestId: generationRequestId,
+            errorCode: error?.code || error?.message || 'GENERATION_FAILED',
+            latencyMs: Date.now() - generationStartedAt,
+        });
         console.warn('Galgame original runtime bridge failed.', error);
         const reloaded = await chatBridge.loadSpecificBoundChat(manifest, currentGenerationSnapshot.fileName).catch(() => null);
         activeChatSnapshot = reloaded?.ok ? reloaded : currentGenerationSnapshot;
@@ -1011,6 +1112,7 @@ async function requestOriginalReply(snapshot = activeChatSnapshot) {
             renderWaitingForReply();
         }
     } finally {
+        void connectionHealthMonitor?.probeNow({ reason: 'generation-finished' });
         generationPending = false;
         setInputEnabled(canAcceptPlayerInput());
     }
@@ -1063,8 +1165,13 @@ function getLatestSnapshotRenderOptions(snapshot) {
 async function ensureRuntimeBridgeReady() {
     if (runtimeBridge.isConfigured()) {
         const health = await runtimeBridge.healthCheck().catch(() => null);
-        if (health?.ok && !health.stopping && !health.authRequired) {
+        if (health?.ok && health?.ready !== false && !health.stopping && !health.pending && !health.stale && !health.authRequired) {
             return true;
+        }
+        if (health?.pending || health?.stale) {
+            setStageStatus(health.stale ? '运行桥响应超时，请重启桥接服务后再试。' : '上一段仍在生成中，请稍后再试。');
+        } else if (health?.stopping) {
+            setStageStatus('运行桥正在停止，请重启桥接服务后再试。');
         }
     }
     if (!runtimeBridgeDiscoveryPromise) {

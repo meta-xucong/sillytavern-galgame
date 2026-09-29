@@ -34,6 +34,19 @@ const binding = {
     },
 };
 
+// Health must distinguish an idle bridge that can lazily start its browser
+// from a stuck generation and a bridge that was stopped.
+const healthProbe = new BrowserOriginalRuntimeBridge({ logger: { warn() {} } });
+assert.equal((await healthProbe.healthCheck()).ready, true);
+healthProbe.pendingTask = { startedAt: Date.now() - 300000 };
+const staleHealth = await healthProbe.healthCheck();
+assert.equal(staleHealth.ready, false);
+assert.equal(staleHealth.stale, true);
+assert.equal(staleHealth.connectionState, 'stale');
+healthProbe.pendingTask = null;
+healthProbe.stopping = true;
+assert.equal((await healthProbe.healthCheck()).connectionState, 'stopping');
+
 class PendingRuntime extends BrowserOriginalRuntimeBridge {
     constructor() {
         super({

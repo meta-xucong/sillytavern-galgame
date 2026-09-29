@@ -20,6 +20,39 @@ body {
     height: 100%;
 }
 
+.connection-status {
+    position: fixed;
+    z-index: 30;
+    top: 10px;
+    right: 14px;
+    max-width: min(90vw, 720px);
+    margin: 0;
+    padding: 5px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 999px;
+    background: rgba(20, 24, 34, 0.72);
+    color: rgba(245, 248, 255, 0.78);
+    font-size: 11px;
+    letter-spacing: .02em;
+    pointer-events: none;
+    backdrop-filter: blur(8px);
+}
+
+.connection-status[data-connection-state="up"] {
+    border-color: rgba(100, 220, 157, .45);
+    color: #baf4d0;
+}
+
+.connection-status[data-connection-state="degraded"] {
+    border-color: rgba(255, 201, 103, .5);
+    color: #ffe1a6;
+}
+
+.connection-status[data-connection-state="down"] {
+    border-color: rgba(255, 119, 119, .55);
+    color: #ffc1c1;
+}
+
 body {
     margin: 0;
     overflow: hidden;

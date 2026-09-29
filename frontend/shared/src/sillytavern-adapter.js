@@ -580,7 +580,7 @@ export class OriginalRuntimeBridgeClient {
                 return null;
             }
             const health = await response.json().catch(() => null);
-            if (!health?.ok || health.stopping || health.authRequired) {
+            if (!health?.ok || health.ready === false || health.stopping || health.pending || health.stale || health.authRequired) {
                 return null;
             }
             return {

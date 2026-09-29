@@ -13,6 +13,7 @@ export const CONFIG_SERVICE_PROTOCOL_VERSION = '1.0';
 
 export const CONFIG_SERVICE_ENDPOINTS = Object.freeze({
     activeRelease: '/v1/releases/active',
+    health: '/v1/health',
     runtimeBridgeProofs: '/v1/runtime-bridge/proofs',
     adminHealth: '/v1/admin/health',
     playableScenarios: '/v1/scenarios',
@@ -75,6 +76,20 @@ export class ConfigReleaseStore {
             };
         }
         return this.client.healthCheck(signal);
+    }
+
+    // Player-safe connectivity probe. The admin health endpoint may require
+    // credentials, while the public health endpoint reports transport and
+    // service availability without exposing administrative state.
+    async publicHealthCheck(signal) {
+        if (!this.client.isReady()) {
+            return {
+                ok: false,
+                mode: 'external-config-service',
+                errorCode: 'CONFIG_SERVICE_DISABLED',
+            };
+        }
+        return this.client.publicHealthCheck(signal);
     }
 
     async getActiveBundle(signal) {
@@ -402,13 +417,50 @@ export class GameConfigServiceClient {
         }
 
         try {
-            await this.fetchJson(CONFIG_SERVICE_ENDPOINTS.adminHealth, {
+            // Player health must use the public endpoint. Keep the admin probe
+            // as a compatibility fallback for older config-service builds.
+            let body;
+            try {
+                body = await this.fetchJson(CONFIG_SERVICE_ENDPOINTS.health, { method: 'GET', signal });
+            } catch {
+                body = await this.fetchJson(CONFIG_SERVICE_ENDPOINTS.adminHealth, { method: 'GET', signal });
+            }
+            const proofConfigured = body?.runtimeProof?.configured !== false;
+            return {
+                ok: body?.ok !== false && proofConfigured,
+                mode: 'external-config-service',
+                active: Boolean(body?.active),
+                runtimeProof: { configured: proofConfigured },
+                errorCode: proofConfigured ? '' : 'RUNTIME_BRIDGE_PROOF_UNCONFIGURED',
+            };
+        } catch {
+            return {
+                ok: false,
+                mode: 'external-config-service',
+                errorCode: 'CONFIG_SERVICE_UNAVAILABLE',
+            };
+        }
+    }
+
+    async publicHealthCheck(signal) {
+        if (!this.isReady()) {
+            return {
+                ok: false,
+                mode: 'external-config-service',
+                errorCode: 'CONFIG_SERVICE_DISABLED',
+            };
+        }
+        try {
+            const data = await this.fetchJson(CONFIG_SERVICE_ENDPOINTS.health, {
                 method: 'GET',
                 signal,
             });
+            const proofConfigured = data?.runtimeProof?.configured !== false;
             return {
-                ok: true,
+                ...data,
+                ok: data?.ok === true && proofConfigured,
                 mode: 'external-config-service',
+                errorCode: proofConfigured ? '' : 'RUNTIME_BRIDGE_PROOF_UNCONFIGURED',
             };
         } catch {
             return {
