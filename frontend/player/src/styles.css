@@ -159,6 +159,8 @@ button:disabled {
 }
 
 .game-screen {
+    position: relative;
+    isolation: isolate;
     display: flex;
     flex-direction: column;
     align-items: stretch;
@@ -189,6 +191,7 @@ button:disabled {
 }
 
 .stage-backdrop {
+    z-index: 0;
     background: #2f4e61 center / cover no-repeat;
 }
 

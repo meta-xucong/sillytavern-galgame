@@ -270,7 +270,7 @@ await withServer(analyzerService, async (baseUrl) => {
         speaker: '银发骑士',
         text: '她望向雨幕，台词没有任何视觉素材标签。',
     }, { expectedDecisionReads: 1, expectedContentReads: 0 });
-    assert.equal(stageBackdropElement.style.backgroundImage, 'url("/assets/default-background.png")');
+    assert.equal(stageBackdropElement.style.backgroundImage.includes(catalogContentPath('scene')), true);
     assert.equal(stageHeroineElement.style.backgroundImage, `url("${NARRATOR_PLACEHOLDER_URL}")`);
     assert.deepEqual(visualIconStripElement.children.map((item) => item.className), [
         'visual-icon visual-icon-equipment is-visual-active',

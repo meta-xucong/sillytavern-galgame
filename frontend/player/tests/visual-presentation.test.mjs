@@ -494,7 +494,7 @@ globalThis.__GALGAME_TEST_RENDER_CHAT__({
         text: '角色: 银发骑士\n场景: 庭院\n装备: 银盾\n道具: 钥匙\n技能: 守护',
     }],
 }, { messageIndex: 0 });
-await new Promise((resolve) => setTimeout(resolve, 60));
+await waitForCoreDecision();
 assert.equal(stageBackdropElement.style.backgroundImage, 'url("/assets/default-background.png")');
 assert.equal(stageHeroineElement.style.backgroundImage, 'url(\"http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_character_1b4268f70a37/1/content\")');
 assert.deepEqual(visualIconStripElement.children.map((item) => item.className), [

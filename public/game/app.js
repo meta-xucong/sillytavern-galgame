@@ -1,4 +1,4 @@
-import { createReleaseStore } from './shared/config-service.js?v=auto-2a72e2a79a23';
+import { createReleaseStore } from './shared/config-service.js?v=auto-36b8dda7cd6f';
 import {
     getAssetUrl,
     getVisualCharacterBindings,
@@ -6,13 +6,13 @@ import {
     getActiveSillyTavernBindings,
     materializeManifestForArc,
     resolveAdaptivePresentationProfileBinding,
-} from './shared/protocol.js?v=auto-2a72e2a79a23';
+} from './shared/protocol.js?v=auto-36b8dda7cd6f';
 import {
     AUTO_SAVE_ID,
     createCanonicalPlayerSaveRelease,
     createPlayerSaveStore,
     manualSaveIds,
-} from './shared/player-save.js?v=auto-2a72e2a79a23';
+} from './shared/player-save.js?v=auto-36b8dda7cd6f';
 import {
     createCoreVisualDisplayEntityHints,
     createCoreVisualDisplayEntityKey,
@@ -20,11 +20,11 @@ import {
     createVisualNovelDisplaySegments,
     OriginalRuntimeBridgeClient,
     SillyTavernOriginalChatBridge,
-} from './shared/sillytavern-adapter.js?v=auto-2a72e2a79a23';
-import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-2a72e2a79a23';
-import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-2a72e2a79a23';
-import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-2a72e2a79a23';
-import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-2a72e2a79a23';
+} from './shared/sillytavern-adapter.js?v=auto-36b8dda7cd6f';
+import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-36b8dda7cd6f';
+import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-36b8dda7cd6f';
+import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-36b8dda7cd6f';
+import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-36b8dda7cd6f';
 
 const releaseStore = createReleaseStore(null, { fallbackToLocal: false });
 const playerSaveStore = createPlayerSaveStore();
@@ -80,6 +80,7 @@ let runtimeBridgeDiscoveryPromise = null;
 let connectionHealthMonitor = null;
 let visualBundleRequestToken = 0;
 let coreVisualHasVerifiedPresentation = false;
+let coreVisualHasVerifiedBackground = false;
 // Keep the last verified decision per visual layer. A new dialogue may update
 // one layer while the established scene, character or icon remains valid.
 const coreVisualPresentationState = new Map();
@@ -1283,7 +1284,7 @@ function scheduleVisualBundleRefresh(snapshot, messageIndex) {
     // Clear the portrait before each visible message. Keeping the previous
     // character during a narrator/player turn makes the avatar appear to
     // speak for the wrong entity while the validated decision is pending.
-    renderCoreVisualFallback({ preserveVerified: false, role: visualRole });
+    renderCoreVisualFallback({ preserveVerified: false, preserveVerifiedBackground: true, role: visualRole });
     // Bind the active speaker locally as soon as the segment is shown. The
     // remote visual decision still validates and corrects the result later.
     void renderCoreVisualImmediateCharacter(snapshot, messageIndex, token);
@@ -1403,6 +1404,7 @@ async function renderCoreVisualImmediateCharacter(snapshot, messageIndex, token)
 function resetVisualPresentation() {
     visualBundleRequestToken += 1;
     coreVisualHasVerifiedPresentation = false;
+    coreVisualHasVerifiedBackground = false;
     immediateVisualCharacterIdentity = '';
     coreVisualPresentationState.clear();
     coreVisualPresentationDetails.clear();
@@ -1411,7 +1413,7 @@ function resetVisualPresentation() {
     setVisualStatus('');
 }
 
-function renderCoreVisualFallback({ preserveVerified = false, role = 'character' } = {}) {
+function renderCoreVisualFallback({ preserveVerified = false, preserveVerifiedBackground = false, role = 'character' } = {}) {
     if (preserveVerified && coreVisualHasVerifiedPresentation) {
         return;
     }
@@ -1419,7 +1421,13 @@ function renderCoreVisualFallback({ preserveVerified = false, role = 'character'
     // unavailable. It is a scenario-owned default, so it cannot be confused
     // with a stale remote match. Character roles still use role-specific
     // neutral placeholders until a validated bound portrait is available.
-    restoreDefaultBackgroundLayer();
+    // A scene usually persists across several dialogue messages. Keep the
+    // last verified scene while the next asynchronous decision is unknown or
+    // temporarily unavailable; only use the authored default before the
+    // first scene has loaded or after a full stage reset.
+    if (!preserveVerifiedBackground || !coreVisualHasVerifiedBackground || !ui.stageBackdrop?.dataset.visualAssetIdentity) {
+        restoreDefaultBackgroundLayer();
+    }
     applyCoreVisualPlaceholderCharacter(role);
     renderCoreVisualIconStrip();
     coreVisualHasVerifiedPresentation = false;
@@ -1669,6 +1677,7 @@ function decorateCoreVisualDecision(decision, request) {
 
 async function renderCoreVisualDecisions(decisions, baseUrl, token, request, response) {
     const byType = new Map();
+    const invalidTypes = new Set();
     const currentRole = request?.visibleContext?.current?.role || 'character';
     for (const type of CORE_VISUAL_TYPES) {
         // Character assets belong only to character turns. A remote or
@@ -1679,7 +1688,8 @@ async function renderCoreVisualDecisions(decisions, baseUrl, token, request, res
             && (type !== 'character' || currentRole === 'character')
         ));
         const renderable = typeDecisions
-            .filter((decision) => isRenderableCoreVisualDecision(decision, type, request, response))
+            .filter((decision) => isRenderableCoreVisualDecision(decision, type, request, response)
+                && Boolean(createCoreVisualContentUrl(decision, baseUrl)))
             .map((decision) => decorateCoreVisualDecision(decision, request));
         const selected = renderable[0] || null;
         if (selected) {
@@ -1688,16 +1698,24 @@ async function renderCoreVisualDecisions(decisions, baseUrl, token, request, res
             byType.set(type, selected);
             continue;
         }
+        if (typeDecisions.some((decision) => !String(decision?.assetId || '').startsWith('unknown_'))) {
+            invalidTypes.add(type);
+        }
         // A locally bound avatar is already correct for the active segment.
         // Do not let an incomplete remote response put the previous speaker
         // back while the current request is still in flight.
         if (type === 'character' && immediateVisualCharacterIdentity) {
             continue;
         }
-        // A valid response with no current portrait/scene match must not leave
-        // a previous turn's entity on screen. Small status icons are cumulative
-        // presentation details, so they may remain until a newer explicit
-        // status replaces them.
+        if (invalidTypes.has(type)) {
+            coreVisualPresentationState.delete(type);
+            coreVisualPresentationDetails.delete(type);
+            continue;
+        }
+        // A valid response with no current portrait match must not leave a
+        // previous turn's character on screen. Scene backgrounds are different:
+        // an unknown scene result means the location was not reclassified, so
+        // the last verified scene can continue through the next line of dialogue.
         if (['equipment', 'item', 'skill'].includes(type)) {
             const preserved = coreVisualPresentationState.get(type);
             if (preserved && isRenderablePreservedCoreVisualDecision(preserved, request)) {
@@ -1722,7 +1740,12 @@ async function renderCoreVisualDecisions(decisions, baseUrl, token, request, res
     await Promise.all([
         byType.has('scene')
             ? applyCoreVisualBackground(byType.get('scene'), baseUrl, token)
-            : Promise.resolve().then(() => restoreDefaultBackgroundLayer()),
+            : (decisions.some((decision) => decision?.entityType === 'scene'
+                && String(decision.assetId || '').startsWith('unknown_')
+                && coreVisualHasVerifiedBackground
+                && ui.stageBackdrop?.dataset.visualAssetIdentity)
+                ? Promise.resolve()
+                : Promise.resolve().then(() => restoreDefaultBackgroundLayer())),
         byType.has('character')
             ? (immediateCharacterStillValid
                 ? Promise.resolve()
@@ -1730,7 +1753,7 @@ async function renderCoreVisualDecisions(decisions, baseUrl, token, request, res
             : (currentRole === 'character' && immediateVisualCharacterIdentity
                 ? Promise.resolve()
                 : Promise.resolve().then(() => applyCoreVisualPlaceholderCharacter(currentRole))),
-        applyCoreVisualIcons(byType, baseUrl, token),
+        applyCoreVisualIcons(byType, baseUrl, token, invalidTypes),
     ]);
     if (token === visualBundleRequestToken) {
         setVisualStatus('');
@@ -1891,6 +1914,7 @@ async function applyCoreVisualBackground(decision, baseUrl, token) {
     if (!sourceUrl || token !== visualBundleRequestToken) return;
     const previousImage = ui.stageBackdrop.style.backgroundImage;
     const previousIdentity = ui.stageBackdrop.dataset.visualAssetIdentity || '';
+    const hadPreviousVerifiedBackground = coreVisualHasVerifiedBackground && Boolean(previousIdentity);
     // Show the validated catalog URL immediately; replace it with a same-origin
     // blob after the bytes arrive so large scenes never leave an empty stage.
     applyVisualLayerImage(ui.stageBackdrop, sourceUrl, identity, token, 'background');
@@ -1900,9 +1924,11 @@ async function applyCoreVisualBackground(decision, baseUrl, token) {
     if (token !== visualBundleRequestToken) return;
     if (!renderUrl) {
         restoreVisualLayerAfterLoadFailure(ui.stageBackdrop, previousImage, previousIdentity);
+        coreVisualHasVerifiedBackground = hadPreviousVerifiedBackground;
         return;
     }
     applyVisualLayerImage(ui.stageBackdrop, renderUrl, identity, token, 'background');
+    coreVisualHasVerifiedBackground = true;
 }
 
 async function applyCoreVisualCharacter(decision, baseUrl, token) {
@@ -2030,7 +2056,7 @@ function createCoreVisualIconFigure(type, decision, imageUrl, { placeholder = fa
     return icon;
 }
 
-async function applyCoreVisualIcons(byType, baseUrl, token) {
+async function applyCoreVisualIcons(byType, baseUrl, token, invalidTypes = new Set()) {
     if (!ui.visualIconStrip) {
         return;
     }
@@ -2044,7 +2070,7 @@ async function applyCoreVisualIcons(byType, baseUrl, token) {
         const selector = `.visual-icon-${type}`;
         const existing = findCoreVisualIcon(type);
         if (!candidateUrl) {
-            if (existing?.classList?.contains?.('is-visual-active')) {
+            if (existing?.classList?.contains?.('is-visual-active') && !invalidTypes.has(type)) {
                 continue;
             }
             if (!existing || !existing.classList?.contains?.('is-placeholder')) {
@@ -2134,6 +2160,7 @@ function restoreDefaultBackgroundLayer() {
         delete ui.stageBackdrop.dataset.visualAssetIdentity;
         ui.stageBackdrop.classList.remove('is-visual-active', 'is-visual-transitioning');
     }
+    coreVisualHasVerifiedBackground = false;
 }
 
 function restoreDefaultCharacterLayer() {
