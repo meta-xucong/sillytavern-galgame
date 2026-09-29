@@ -1,4 +1,4 @@
-import { createReleaseStore } from './shared/config-service.js?v=auto-9a4399a4b40e';
+import { createReleaseStore } from './shared/config-service.js?v=auto-44b4a4a5beb5';
 import {
     getAssetUrl,
     getVisualCharacterBindings,
@@ -6,13 +6,13 @@ import {
     getActiveSillyTavernBindings,
     materializeManifestForArc,
     resolveAdaptivePresentationProfileBinding,
-} from './shared/protocol.js?v=auto-9a4399a4b40e';
+} from './shared/protocol.js?v=auto-44b4a4a5beb5';
 import {
     AUTO_SAVE_ID,
     createCanonicalPlayerSaveRelease,
     createPlayerSaveStore,
     manualSaveIds,
-} from './shared/player-save.js?v=auto-9a4399a4b40e';
+} from './shared/player-save.js?v=auto-44b4a4a5beb5';
 import {
     createCoreVisualDisplayEntityHints,
     createCoreVisualDisplayEntityKey,
@@ -20,11 +20,11 @@ import {
     createVisualNovelDisplaySegments,
     OriginalRuntimeBridgeClient,
     SillyTavernOriginalChatBridge,
-} from './shared/sillytavern-adapter.js?v=auto-9a4399a4b40e';
-import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-9a4399a4b40e';
-import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-9a4399a4b40e';
-import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-9a4399a4b40e';
-import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-9a4399a4b40e';
+} from './shared/sillytavern-adapter.js?v=auto-44b4a4a5beb5';
+import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-44b4a4a5beb5';
+import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-44b4a4a5beb5';
+import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-44b4a4a5beb5';
+import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-44b4a4a5beb5';
 
 const releaseStore = createReleaseStore(null, { fallbackToLocal: false });
 const playerSaveStore = createPlayerSaveStore();
@@ -33,7 +33,7 @@ const runtimeBridge = new OriginalRuntimeBridgeClient({
     baseUrl: getOriginalRuntimeBridgeUrl(),
     sillyTavernBaseUrl: getSillyTavernRuntimeBaseUrl(),
 });
-const ORIGINAL_RUNTIME_BRIDGE_PORTS = [8795, 8798, 8799, 8800, 8796, 8797];
+const ORIGINAL_RUNTIME_BRIDGE_PORTS = [8795, 8799, 8800, 8796, 8797];
 const VISUAL_ICON_TYPES = Object.freeze(['equipment', 'item', 'skill']);
 function getVisualCardModule(type) {
     if (type === 'item') return 'inventory';
@@ -1235,9 +1235,12 @@ function renderChatSnapshot(snapshot, options = {}) {
     if (message) {
         const waitingForReply = snapshotAwaitsReply(snapshot);
         const displayingLatest = messageIndex === snapshot.messages.length - 1;
+        // Use the original visible message for truncation detection. The
+        // display projection removes a valid trailing action block first;
+        // checking that shortened text can hide complete RPG choices.
         const incompleteReply = message.role === 'character'
             && displayingLatest
-            && detectIncompleteRpgResponse(message.displayText || message.text || '');
+            && detectIncompleteRpgResponse(message.text || message.displayText || '');
         const segments = createVisualNovelDisplaySegments(message.displayText || message.text, {
             fallbackSpeaker: message.role === 'player' ? '你' : message.speaker || getMainCharacterName(),
             role: message.role,

@@ -33,7 +33,7 @@ const runtimeBridge = new OriginalRuntimeBridgeClient({
     baseUrl: getOriginalRuntimeBridgeUrl(),
     sillyTavernBaseUrl: getSillyTavernRuntimeBaseUrl(),
 });
-const ORIGINAL_RUNTIME_BRIDGE_PORTS = [8795, 8798, 8799, 8800, 8796, 8797];
+const ORIGINAL_RUNTIME_BRIDGE_PORTS = [8795, 8799, 8800, 8796, 8797];
 const VISUAL_ICON_TYPES = Object.freeze(['equipment', 'item', 'skill']);
 function getVisualCardModule(type) {
     if (type === 'item') return 'inventory';
@@ -1235,9 +1235,12 @@ function renderChatSnapshot(snapshot, options = {}) {
     if (message) {
         const waitingForReply = snapshotAwaitsReply(snapshot);
         const displayingLatest = messageIndex === snapshot.messages.length - 1;
+        // Use the original visible message for truncation detection. The
+        // display projection removes a valid trailing action block first;
+        // checking that shortened text can hide complete RPG choices.
         const incompleteReply = message.role === 'character'
             && displayingLatest
-            && detectIncompleteRpgResponse(message.displayText || message.text || '');
+            && detectIncompleteRpgResponse(message.text || message.displayText || '');
         const segments = createVisualNovelDisplaySegments(message.displayText || message.text, {
             fallbackSpeaker: message.role === 'player' ? '你' : message.speaker || getMainCharacterName(),
             role: message.role,
