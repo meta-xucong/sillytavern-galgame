@@ -6,8 +6,8 @@ import {
     materializeManifestForArc,
     validateActiveReleaseManifestBinding,
     validateScenarioManifest,
-} from './protocol.js?v=auto-cc3e8e0c1603';
-import { LocalReleaseStore } from './storage.js?v=auto-cc3e8e0c1603';
+} from './protocol.js?v=auto-2817f48812be';
+import { LocalReleaseStore } from './storage.js?v=auto-2817f48812be';
 
 export const CONFIG_SERVICE_PROTOCOL_VERSION = '1.0';
 

@@ -2,7 +2,7 @@ import {
     getActiveSillyTavernBindings,
     sanitizeText,
     summarizeSillyTavernBindings,
-} from './protocol.js?v=auto-cc3e8e0c1603';
+} from './protocol.js?v=auto-2817f48812be';
 
 export const SILLYTAVERN_ENDPOINTS = Object.freeze({
     csrf: '/csrf-token',
@@ -982,6 +982,23 @@ const VISUAL_PROJECTION_LABEL_ATTRIBUTE_CODES = Object.freeze({
     skill: 'skill-visible-label',
 });
 
+// Natural-language scene hints stay deliberately small and deterministic.
+// They are presentation evidence only: the original chat text remains the
+// source of truth, and hidden reasoning/status blocks have already been
+// removed by formatVisualNovelDisplayText before this table is consulted.
+const NATURAL_SCENE_HINT_PATTERNS = Object.freeze([
+    // Tavern-like places in the curated catalog are city interiors. Include
+    // both normalized labels so the matcher gets a specific scene.city
+    // overlap instead of stopping at generic scene.interior.
+    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:酒馆|客栈|旅店|酒吧|酒窖)/gu, category: '室内 城市' },
+    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:神殿|圣殿|教堂|圣堂|图书馆|书库|档案室|宫殿|城堡|房间|大厅|工坊|铁匠铺)/gu, category: '室内' },
+    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:地下室|地窖|地牢|迷宫)/gu, category: '地牢' },
+    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:城市的?中心区|市中心|城中心|城区|街道|广场|集市|市场|港口|码头|城市)/gu, category: '城市' },
+    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:森林|树林|林地|丛林)/gu, category: '森林' },
+    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:废墟|遗迹|古迹)/gu, category: '废墟' },
+    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:道路|街巷|野外|旷野|城外)/gu, category: '室外' },
+]);
+
 const CORE_VISUAL_DISPLAY_LABEL_TYPES = new Map([
     ...VISUAL_PROJECTION_LABEL_TYPES,
     ['角色', 'character'],
@@ -1112,6 +1129,22 @@ function createVisibleMessageEntityHints(message, {
             ? resolveCoreCharacterLabelAttributeCode
             : null,
     });
+    // Some original replies describe the current place in ordinary prose
+    // instead of emitting a `场景:` row. Add at most one deterministic hint,
+    // using the last explicit place phrase as the current location. This is
+    // intentionally skipped when the reply already contains a labeled scene
+    // so an authored label keeps precedence and no competing backgrounds are
+    // created for one visible message.
+    if (!labelEntities.some((entity) => entity.entityType === 'scene')) {
+        const actionProjection = extractSuggestedActionsFromOriginalText(text);
+        const sceneSourceText = actionProjection.suggestedActions.length >= 2
+            ? actionProjection.displayText
+            : text;
+        const naturalScene = extractNaturalSceneHint(sceneSourceText, message?.index);
+        if (naturalScene) {
+            labelEntities.push(naturalScene);
+        }
+    }
     if (mergeCurrentSpeakerCharacterAppearance) {
         const characterLabels = uniqueEntitiesBySeed(labelEntities.filter((entity) => entity.entityType === 'character'));
         const characterLabelAttributes = characterLabels.flatMap((entity) => entity.visibleAttributes || []);
@@ -1233,6 +1266,67 @@ function extractExplicitVisualProjectionLabelEntities(text, messageIndex, {
     return entities;
 }
 
+function extractNaturalSceneHint(text, messageIndex) {
+    const source = String(text || '');
+    const matches = [];
+    for (const { pattern, category } of NATURAL_SCENE_HINT_PATTERNS) {
+        pattern.lastIndex = 0;
+        for (const match of source.matchAll(pattern)) {
+            const rawLabel = normalizeNaturalSceneHintLabel(match[0]);
+            if (!rawLabel) continue;
+            const end = (Number.isInteger(match.index) ? match.index : 0) + match[0].length;
+            const followingText = source.slice(end, end + 8);
+            // A place word inside an item/name (for example `酒馆钥匙` or
+            // `森林地图`) is not a stage location by itself.
+            const nearbyText = source.slice(Math.max(0, end - 16), end + 8);
+            if (
+                /^(?:钥匙|地图|徽章|牌子|传闻|老板|账本|标记)/u.test(followingText)
+                || (/(?:钥匙|地图|徽章|牌子|传闻|老板|账本|标记)/u.test(nearbyText)
+                    && !/(?:走进|进入|来到|位于|处于|回到|返回|前往|离开|穿过|在|从|向)/u.test(nearbyText))
+            ) continue;
+            matches.push({
+                index: Number.isInteger(match.index) ? match.index : 0,
+                end,
+                label: rawLabel,
+                category,
+            });
+        }
+    }
+    if (!matches.length) return null;
+
+    // At one visible-message boundary, the final place phrase is the best
+    // approximation of the current stage. Prefer the longest phrase at the
+    // same offset so `城市的中心区` wins over the generic `城市` match.
+    matches.sort((left, right) => left.end - right.end || right.label.length - left.label.length);
+    const lastEnd = matches.reduce((max, item) => Math.max(max, item.end), -1);
+    const latestAtEnd = matches.filter((item) => item.end === lastEnd)
+        .sort((left, right) => right.label.length - left.label.length)[0];
+    const latest = latestAtEnd || matches.at(-1);
+    const value = `${latest.label}（${latest.category}）`;
+    return {
+        entityKeySeed: `${messageIndex ?? ''}:scene:natural:${latest.label}`,
+        entityType: 'scene',
+        displayLabel: latest.label.slice(0, 80),
+        visibleAttributes: [{
+            code: 'scene-location-kind',
+            value: value.slice(0, 160),
+            confidenceBand: 'explicit',
+        }],
+        confidenceBand: 'explicit',
+    };
+}
+
+function normalizeNaturalSceneHintLabel(value) {
+    let label = String(value || '').replace(/^[\s，。！？；：、]+|[\s，。！？；：、]+$/gu, '');
+    // The bounded prefix in the patterns may include a narration verb. Keep
+    // the actual place noun while retaining descriptive modifiers such as
+    // `光辉神殿` in `光辉神殿酒馆`.
+    label = label.replace(/^(?:现在|当前|目前)/u, '');
+    label = label.replace(/^.*?(?:走进|进入|来到|位于|处于|回到|返回|前往|离开|穿过|(?<!现)在|从|向)/u, '');
+    label = label.replace(/^(?:那座|那间|这座|这间|一家|一间|一个|附近的|旁边的)/u, '');
+    return label.trim().slice(-48);
+}
+
 function resolveCoreCharacterLabelAttributeCode(rawLabel, type) {
     if (type !== 'character') return null;
     if (['性别', '性别表现', 'gender', 'gender presentation'].includes(rawLabel)) {
@@ -1336,8 +1430,13 @@ export function createVisualNovelDisplaySegments(value, {
         ...(Array.isArray(knownSpeakers) ? knownSpeakers : []),
         ...(Array.isArray(characterNames) ? characterNames : []),
     ]);
+    // The original runtime may put several `name + action + quoted speech`
+    // clauses inside one long visible paragraph. Split those clauses only for
+    // presentation so the active speaker can select its verified visual
+    // binding; the canonical chat message remains unchanged.
+    const segmentedDisplayText = splitKnownInlineNarrativeDialogues(displayText, knownSpeakerMap);
     let lastSpeaker = role === 'player' ? '你' : fallbackName;
-    return displayText
+    return segmentedDisplayText
         .split(/\n{2,}/)
         .map((paragraph) => paragraph.trim())
         .filter((paragraph) => paragraph && !isPunctuationOnlyVisualNovelSegment(paragraph))
@@ -1398,6 +1497,17 @@ function classifyVisualNovelSegment(text, { fallbackSpeaker, lastSpeaker, role, 
     }
 
     if (/^[“"「『].+[”"」』]$/su.test(text) || /^[“"「『]/u.test(text)) {
+        // A quoted paragraph that contains another quote is usually a
+        // narrative action with an embedded sound/dialogue quote (for
+        // example, `"他拿出鹅毛笔"唰唰唰"写下...`). Do not let it inherit
+        // the previous character's portrait.
+        if (/^[“"「『][\s\S]*[“"「『]/u.test(text)) {
+            return {
+                type: 'narration',
+                speaker: '旁白',
+                text,
+            };
+        }
         const quoteSpeaker = sanitizeText(lastSpeaker || fallbackSpeaker || '', 80);
         if (isNarratorSpeaker(quoteSpeaker)) {
             return {
@@ -1458,7 +1568,7 @@ function matchKnownNarrativeDialogue(text, knownSpeakerMap) {
         const displayName = knownSpeakerMap.get(normalizedName);
         const escaped = normalizedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const boundary = /^[A-Za-z0-9_-]+$/u.test(normalizedName) ? '(?![A-Za-z0-9_-])' : '';
-        const match = text.match(new RegExp(`^${escaped}${boundary}\\s*(.{1,48}?)\\s*[：:]\\s*([“"「『][\\s\\S]*[”"」』])$`, 'iu'));
+        const match = text.match(new RegExp(`^[“「『"]?${escaped}${boundary}\\s*(.{1,48}?)\\s*[：:]\\s*([“"「『][\\s\\S]*(?:[”"」』]|$))$`, 'iu'));
         if (!match || !hasNarrativeDialogueVerb(match[1].trim())) continue;
         return {
             type: 'dialogue',
@@ -1469,15 +1579,65 @@ function matchKnownNarrativeDialogue(text, knownSpeakerMap) {
     return null;
 }
 
+/**
+ * Add display-only paragraph boundaries before known speakers embedded in a
+ * long narrative paragraph. This intentionally requires both a published
+ * speaker name and a bounded narrative action followed by quoted text, so a
+ * name mentioned as an ordinary noun is not promoted to a speaker.
+ */
+function splitKnownInlineNarrativeDialogues(text, knownSpeakerMap) {
+    if (!(knownSpeakerMap instanceof Map) || !knownSpeakerMap.size) return text;
+    const source = String(text || '');
+    if (!source) return source;
+
+    const matches = [];
+    const ordered = [...knownSpeakerMap.keys()].sort((left, right) => right.length - left.length);
+    for (const normalizedName of ordered) {
+        const escaped = normalizedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const asciiName = /^[A-Za-z0-9_-]+$/u.test(normalizedName);
+        const boundaryAfter = asciiName
+            ? '(?![A-Za-z0-9_-])'
+            : '(?![\\p{Script=Han}ぁ-んァ-ヶー])';
+        // Keep the quote tail conservative. Curly/CJK quotes are paired; an
+        // ASCII quote closes at the next ASCII quote, which is sufficient for
+        // presentation segmentation and avoids consuming the rest of a reply.
+        const quoteTail = '(?:[“「『][^\\r\\n]*?(?:[”」』]|(?=\\n{2,}|$))|"[^"\\r\\n]*(?:"|(?=\\n{2,}|$)))';
+        const pattern = new RegExp(`(^|[^A-Za-z0-9_-])(${escaped})${boundaryAfter}\\s*(.{1,64}?)\\s*[：:]\\s*${quoteTail}`, 'giu');
+        for (const match of source.matchAll(pattern)) {
+            const prefix = match[1] || '';
+            const nameStart = (match.index ?? 0) + prefix.length;
+            const action = String(match[3] || '').trim();
+            if (!hasNarrativeDialogueVerb(action)) continue;
+            // A name at the beginning may be preceded by a display-only quote
+            // left by ASCII quote normalization; the classifier accepts it.
+            // For later clauses, insert a boundary immediately before name.
+            if (nameStart > 0) matches.push(nameStart);
+        }
+    }
+    if (!matches.length) return source;
+    const unique = [...new Set(matches)].sort((left, right) => left - right);
+    let result = source;
+    for (let index = unique.length - 1; index >= 0; index -= 1) {
+        const offset = unique[index];
+        if (offset <= 0 || result.slice(offset - 2, offset) === '\n\n') continue;
+        result = `${result.slice(0, offset)}\n\n${result.slice(offset)}`;
+    }
+    return result;
+}
+
 function isNarrativeDialogueParagraph(text) {
     return Boolean(parseNarrativeDialogueParagraph(text));
 }
 
 function parseNarrativeDialogueParagraph(text) {
-    const match = text.match(/^(.{2,80}?)\s*[：:]\s*([“"「『][\s\S]*[”"」』])$/u);
+    // ASCII quote normalization can leave a paragraph without its closing
+    // quote when the next sentence starts on a new display page. Keep it a
+    // narration candidate instead of inheriting the previous character's
+    // avatar.
+    const match = text.match(/^(.{2,80}?)\s*[：:]\s*([“"「『][\s\S]*(?:[”"」』]|$))$/u);
     if (!match) return null;
     const prefix = match[1].trim();
-    const actionStart = prefix.search(/(?:说|道|问|答|喊|叫|反对|同意|拒绝|摇头|点头|举手|嘶声|低声|高声|大声|小声|笑|哭|怒|冷|轻|急|颤|哆嗦|结巴|打断|回应|坚持|承认|警告|威胁|提醒|解释|嘟囔|嘀咕|喃喃|立即|立刻|马上|着|地|say|said|says|ask|asked|reply|replied|object|objected|agree|agreed|shout|shouted|yell|yelled|whisper|whispered|mutter|muttered|stammer|raise|raised|interrupt|warn|warning|insist|insisted|answer|answered|immediately|quickly|softly|loudly)/iu);
+    const actionStart = prefix.search(/(?:说|道|问|答|喊|叫|反对|同意|拒绝|摇头|点头|举手|嘶声|低声|高声|大声|小声|笑|哭|怒|冷|轻|急|颤|哆嗦|结巴|打断|回应|坚持|承认|警告|威胁|提醒|解释|嘟囔|嘀咕|喃喃|立即|立刻|马上|着|地|松了口气|眼睛一亮|插话|竖起大拇指|翻了个白眼|咧嘴笑|压低声音|满意地点头|转头看向|say|said|says|ask|asked|reply|replied|object|objected|agree|agreed|shout|shouted|yell|yelled|whisper|whispered|mutter|muttered|stammer|raise|raised|interrupt|warn|warning|insist|insisted|answer|answered|immediately|quickly|softly|loudly)/iu);
     if (actionStart <= 0 || !hasNarrativeDialogueVerb(prefix.slice(actionStart).trim())) return null;
     return {
         normalizedName: normalizeKnownSpeaker(prefix.slice(0, actionStart)),
@@ -1486,7 +1646,7 @@ function parseNarrativeDialogueParagraph(text) {
 }
 
 function hasNarrativeDialogueVerb(value) {
-    return /^(?:说|道|问|答|喊|叫|反对|同意|拒绝|摇头|点头|举手|嘶声|低声|高声|大声|小声|笑|哭|怒|冷|轻|急|颤|哆嗦|结巴|打断|回应|坚持|承认|警告|威胁|提醒|解释|嘟囔|嘀咕|喃喃|立即|立刻|马上|着|地|say|said|says|ask|asked|reply|replied|object|objected|agree|agreed|shout|shouted|yell|yelled|whisper|whispered|mutter|muttered|stammer|raise|raised|interrupt|warn|warning|insist|insisted|answer|answered|immediately|quickly|softly|loudly)/iu.test(String(value || ''));
+    return /^(?:说|道|问|答|喊|叫|反对|同意|拒绝|摇头|点头|举手|嘶声|低声|高声|大声|小声|笑|哭|怒|冷|轻|急|颤|哆嗦|结巴|打断|回应|坚持|承认|警告|威胁|提醒|解释|嘟囔|嘀咕|喃喃|立即|立刻|马上|着|地|松了口气|眼睛一亮|插话|竖起大拇指|翻了个白眼|咧嘴笑|压低声音|满意地点头|转头看向|say|said|says|ask|asked|reply|replied|object|objected|agree|agreed|shout|shouted|yell|yelled|whisper|whispered|mutter|muttered|stammer|raise|raised|interrupt|warn|warning|insist|insisted|answer|answered|immediately|quickly|softly|loudly)/iu.test(String(value || ''));
 }
 
 function isNonDialogueLabel(value) {

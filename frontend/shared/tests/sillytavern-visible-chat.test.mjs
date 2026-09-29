@@ -198,6 +198,60 @@ const naturalLanguageOnlyHints = createVisualProjectionEntityHints({
 });
 assert.deepEqual(naturalLanguageOnlyHints.map((entity) => entity.entityType), ['unknown']);
 
+const naturalSceneHints = createVisualProjectionEntityHints({
+    index: 18,
+    role: 'character',
+    speaker: 'Dungeon Master',
+    text: '众人走进光辉神殿酒馆，短暂休息后又来到城市的中心区。',
+});
+assert.deepEqual(naturalSceneHints.filter((entity) => entity.entityType === 'scene').map((entity) => ({
+    displayLabel: entity.displayLabel,
+    value: entity.visibleAttributes[0].value,
+})), [{
+    displayLabel: '城市的中心区',
+    value: '城市的中心区（城市）',
+}]);
+
+const naturalTavernHints = createVisualProjectionEntityHints({
+    index: 18,
+    role: 'character',
+    speaker: 'Dungeon Master',
+    text: '铁砧酒馆的炉火映在石墙上。',
+});
+assert.equal(naturalTavernHints.find((entity) => entity.entityType === 'scene')?.visibleAttributes[0].value, '铁砧酒馆（室内 城市）');
+
+const naturalSceneCategoryHints = createVisualProjectionEntityHints({
+    index: 19,
+    role: 'player',
+    speaker: 'Player',
+    text: '你穿过森林遗迹，进入地下室寻找出口。',
+});
+assert.equal(naturalSceneCategoryHints.filter((entity) => entity.entityType === 'scene').at(-1)?.displayLabel, '地下室');
+
+const naturalSceneIgnoresChoiceLocations = createVisualProjectionEntityHints({
+    index: 22,
+    role: 'character',
+    speaker: 'Dungeon Master',
+    text: '众人现在位于铁砧酒馆。\n\n可选行动：\n1. 前往森林\n2. 返回城市\n3. 留在酒馆',
+});
+assert.equal(naturalSceneIgnoresChoiceLocations.find((entity) => entity.entityType === 'scene')?.displayLabel, '铁砧酒馆');
+
+const locationWordInsideItem = createVisualProjectionEntityHints({
+    index: 20,
+    role: 'player',
+    speaker: 'Player',
+    text: '我拿起酒馆钥匙和森林地图，然后检查背包。',
+});
+assert.equal(locationWordInsideItem.some((entity) => entity.entityType === 'scene'), false);
+
+const hiddenNaturalScene = createVisualProjectionEntityHints({
+    index: 21,
+    role: 'character',
+    speaker: 'Dungeon Master',
+    text: '```\n[thinking]\n我们将在地牢里埋伏。\n```\n\n雨水落在石阶上。',
+});
+assert.equal(hiddenNaturalScene.some((entity) => entity.entityType === 'scene'), false);
+
 const duplicateHints = createVisualProjectionEntityHints({
     index: 9,
     role: 'player',

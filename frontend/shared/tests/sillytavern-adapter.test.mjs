@@ -478,6 +478,45 @@ const chineseSpeakerBoundary = createVisualNovelDisplaySegments('尼布尔哆嗦
 });
 assert.equal(chineseSpeakerBoundary[0].type, 'narration');
 
+const inlineKnownNarrativeDialogues = createVisualNovelDisplaySegments(
+    '你拍了拍桌子：“好。”Pippa立刻竖起大拇指：“明智。”尼布松了口气：“太好了。”Celestia插话：“我同意。”',
+    {
+        fallbackSpeaker: 'Dungeon Master',
+        knownSpeakers: ['Pippa', '尼布', 'Celestia'],
+    },
+);
+assert.deepEqual(
+    inlineKnownNarrativeDialogues.filter((segment) => ['Pippa', '尼布', 'Celestia'].includes(segment.speaker)).map((segment) => ({
+        type: segment.type,
+        speaker: segment.speaker,
+        text: segment.text,
+    })),
+    [
+        { type: 'dialogue', speaker: 'Pippa', text: '“明智。”' },
+        { type: 'dialogue', speaker: '尼布', text: '“太好了。”' },
+        { type: 'dialogue', speaker: 'Celestia', text: '“我同意。”' },
+    ],
+);
+
+const inlineAsciiQuoteDialogues = createVisualNovelDisplaySegments(
+    '\"Pippa立刻竖起大拇指:\"明智!有奶妈。\"尼布松了口气:\"太好了!\"',
+    { knownSpeakers: ['Pippa', '尼布'] },
+);
+assert.deepEqual(inlineAsciiQuoteDialogues.filter((segment) => ['Pippa', '尼布'].includes(segment.speaker)).map((segment) => segment.speaker), ['Pippa', '尼布']);
+
+const inlineBoundaryAndNarration = createVisualNovelDisplaySegments(
+    '尼布尔松了口气：“这只是提到的名字。”守卫立刻反对：“这里禁止通行。”尼布松了口气：“我有一个办法。”',
+    { knownSpeakers: ['尼布'] },
+);
+assert.equal(inlineBoundaryAndNarration.filter((segment) => segment.speaker === '尼布').length, 1);
+assert.equal(inlineBoundaryAndNarration.some((segment) => segment.text.includes('守卫立刻反对')), true);
+
+const inlineNarrativeSoundCue = createVisualNovelDisplaySegments(
+    '尼布哆嗦着举手：“我有一个办法。”“他拿出鹅毛笔”唰唰唰”写了几行字。',
+    { knownSpeakers: ['尼布'] },
+);
+assert.equal(inlineNarrativeSoundCue.at(-1).speaker, '旁白');
+
 const excludedNarrativeSpeakers = createVisualNovelDisplaySegments('旁白低声说道：“雾气正在散去。”', {
     fallbackSpeaker: 'Dungeon Master',
     knownSpeakers: ['旁白', '你', '系统', 'Pippa'],

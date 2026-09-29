@@ -3,8 +3,8 @@
 /**
  * Deterministic, provider-neutral curated visual batch importer.
  *
- * The command deliberately generates small procedural illustrations rather than
- * pretending that a remote image provider was called.  It exercises the same
+ * The command generates deterministic provider-neutral illustrations when an
+ * administrator has not supplied PNGs.  It exercises the same
  * production sanitizer, content hashing, analysis, catalog lifecycle and
  * activation code used by the visual asset service.  A real image provider can
  * replace `renderAsset` later; the manifest identity/seed and upload contract
@@ -74,6 +74,33 @@ function pixelNoiseByte(x, y, salt = 0) {
   return (n ^ (n >>> 16)) & 255;
 }
 
+function inRect(x, y, left, top, right, bottom) {
+  return x >= left && x <= right && y >= top && y <= bottom;
+}
+
+function inEllipse(x, y, cx, cy, rx, ry) {
+  const dx = (x - cx) / rx;
+  const dy = (y - cy) / ry;
+  return dx * dx + dy * dy <= 1;
+}
+
+function inTriangle(x, y, ax, ay, bx, by, cx, cy) {
+  const edge = (px, py, qx, qy, rx, ry) => (px - rx) * (qy - ry) - (qx - rx) * (py - ry);
+  const a = edge(x, y, ax, ay, bx, by);
+  const b = edge(x, y, bx, by, cx, cy);
+  const c = edge(x, y, cx, cy, ax, ay);
+  return (a >= 0 && b >= 0 && c >= 0) || (a <= 0 && b <= 0 && c <= 0);
+}
+
+function mixColor(left, right, amount) {
+  const t = Math.max(0, Math.min(1, amount));
+  return [
+    left[0] * (1 - t) + right[0] * t,
+    left[1] * (1 - t) + right[1] * t,
+    left[2] * (1 - t) + right[2] * t,
+  ];
+}
+
 function pixelBuffer(width, height, channels, fn) {
   const scanlines = Buffer.alloc((width * channels + 1) * height);
   for (let y = 0; y < height; y += 1) {
@@ -102,12 +129,53 @@ function renderScene(seed, key) {
     const stripe = Math.sin((x + jitter) / 42) * 5 + Math.sin(y / 31) * 3 + pixelNoise(x, y, jitter) - 3;
     if (sky) {
       const p = y / horizon;
-      return [base[0] + tint[0] * p + stripe, base[1] + tint[1] * p + stripe, base[2] + tint[2] * p + stripe];
+      let color = mixColor([base[0] + tint[0], base[1] + tint[1], base[2] + tint[2]], base, p);
+      if (time === 'night' && inEllipse(x, y, w * 0.78, h * 0.18, 48, 48)) color = [239, 224, 174];
+      if (time !== 'day' && (pixelNoiseByte(x, y, jitter) % 97) === 0) color = [230, 220, 185];
+      if (place === 'city' && y > h * 0.39 && y < h * 0.61) {
+        const buildingIndex = Math.floor((x + 23) / 130) % 6;
+        const buildingHeight = h * (0.14 + buildingIndex * 0.018);
+        const buildingTop = horizon - buildingHeight;
+        if (y >= buildingTop) {
+          color = buildingIndex % 2 ? [44, 55, 80] : [57, 65, 91];
+          const window = inRect(x % 130, y % 82, 22, 24, 37, 40) || inRect(x % 130, y % 82, 70, 24, 85, 40);
+          if (window) color = time === 'night' ? [231, 183, 96] : [146, 173, 194];
+        }
+      }
+      return [color[0] + stripe, color[1] + stripe, color[2] + stripe];
     }
     const p = (y - horizon) / (h - horizon);
-    const foreground = place === 'forest' ? [32, 74, 42] : place === 'coast' ? [48, 93, 105] : [42, 41, 48];
+    const foreground = place === 'forest' ? [32, 74, 42] : place === 'coast' ? [48, 93, 105] : place === 'tavern' ? [73, 45, 31] : [42, 41, 48];
     const path = Math.abs(x - w / 2) < (70 + p * 360);
-    return path ? [foreground[0] + 25 * (1 - p), foreground[1] + 22 * (1 - p), foreground[2] + 15 * (1 - p)] : [foreground[0] * (1 - p * 0.2), foreground[1] * (1 - p * 0.2), foreground[2] * (1 - p * 0.2)];
+    let color = path ? [foreground[0] + 25 * (1 - p), foreground[1] + 22 * (1 - p), foreground[2] + 15 * (1 - p)] : [foreground[0] * (1 - p * 0.2), foreground[1] * (1 - p * 0.2), foreground[2] * (1 - p * 0.2)];
+    if (place === 'forest') {
+      const treeX = ((Math.floor(x / 170) * 170) + 70) % w;
+      const treeH = 170 + (Math.floor(treeX / 170) % 3) * 45;
+      if (inTriangle(x, y, treeX, horizon - treeH, treeX - 120, horizon + 18, treeX + 120, horizon + 18)) color = [23, 55, 38];
+      if (inRect(x, y, treeX - 18, horizon - 10, treeX + 18, horizon + 110)) color = [77, 48, 31];
+    } else if (place === 'coast') {
+      if (y > horizon + 30 && Math.abs(Math.sin((x + y) / 33)) < 0.08) color = [105, 185, 193];
+      if (inEllipse(x, y, w * 0.18, h * 0.55, 70, 70)) color = [245, 190, 102];
+    } else if (place === 'tavern') {
+      if (inRect(x, y, w * 0.12, h * 0.66, w * 0.88, h * 0.72)) color = [121, 73, 39];
+      if (inRect(x, y, w * 0.18, h * 0.52, w * 0.25, h * 0.66) || inRect(x, y, w * 0.75, h * 0.52, w * 0.82, h * 0.66)) color = [211, 150, 73];
+      if (inEllipse(x, y, w * 0.5, h * 0.43, 28, 42)) color = [239, 176, 81];
+    } else if (place === 'ruins' || place === 'dungeon') {
+      const pillar = inRect(x, y, w * 0.18, h * 0.37, w * 0.27, h * 0.86) || inRect(x, y, w * 0.73, h * 0.31, w * 0.82, h * 0.86);
+      if (pillar) color = place === 'ruins' ? [113, 111, 126] : [74, 78, 99];
+      if (inEllipse(x, y, w * 0.5, h * 0.42, w * 0.28, h * 0.22)) color = place === 'ruins' ? [32, 32, 45] : [20, 21, 31];
+      if (inEllipse(x, y, w * 0.25, h * 0.5, 18, 28) || inEllipse(x, y, w * 0.75, h * 0.5, 18, 28)) color = [244, 151, 63];
+    } else if (place === 'manor') {
+      if (inRect(x, y, w * 0.2, h * 0.37, w * 0.8, h * 0.7)) color = [105, 75, 104];
+      if (inTriangle(x, y, w * 0.16, h * 0.37, w * 0.5, h * 0.18, w * 0.84, h * 0.37)) color = [66, 48, 78];
+      if (inRect(x, y, w * 0.3, h * 0.46, w * 0.37, h * 0.56) || inRect(x, y, w * 0.63, h * 0.46, w * 0.7, h * 0.56)) color = [238, 187, 103];
+    } else if (place === 'battlefield') {
+      if (inTriangle(x, y, w * 0.2, h * 0.56, w * 0.34, h * 0.35, w * 0.48, h * 0.56)) color = [91, 65, 68];
+      if (inTriangle(x, y, w * 0.56, h * 0.56, w * 0.7, h * 0.31, w * 0.84, h * 0.56)) color = [86, 60, 64];
+      if (inRect(x, y, w * 0.31, h * 0.35, w * 0.315, h * 0.66) || inRect(x, y, w * 0.69, h * 0.31, w * 0.695, h * 0.66)) color = [63, 42, 43];
+    }
+    if (place === 'city' && y > horizon + 40 && inRect(x, y, w * 0.48, h * 0.7, w * 0.52, h * 0.76)) color = [178, 147, 98];
+    return color;
   }));
 }
 
@@ -116,21 +184,30 @@ function renderCharacter(seed, key) {
   const gender = parts[1] || 'woman';
   const archetype = parts.slice(2).join('-') || 'human';
   const base = CHARACTER_PALETTE[archetype] || CHARACTER_PALETTE.human;
-  const hair = gender === 'man' ? [55, 66, 87] : [105, 58, 105];
+  const hair = gender === 'man' ? [42, 53, 74] : archetype === 'elf' ? [62, 116, 108] : [105, 58, 105];
   const wobble = hash32(seed) % 37;
   const width = 1024; const height = 1536;
   return encodePng({ width, height, bitDepth: 8, colorType: RGBA, compression: 0, filter: 0, interlace: 0 }, pixelBuffer(width, height, 4, (x, y, w, h) => {
     const nx = (x - w / 2) / (w * 0.25);
+    const cx = w / 2;
     const headY = h * 0.22 + wobble;
     const bodyY = h * 0.48;
-    const head = ((x - w / 2) ** 2) / (w * 0.13) ** 2 + ((y - headY) ** 2) / (h * 0.075) ** 2 < 1;
-    const hairShape = ((x - w / 2) ** 2) / (w * 0.145) ** 2 + ((y - headY + 18) ** 2) / (h * 0.09) ** 2 < 1;
-    const torso = Math.abs(nx) < 0.44 && y > bodyY && y < h * 0.78;
+    const head = inEllipse(x, y, cx, headY, w * 0.13, h * 0.075);
+    const hairShape = inEllipse(x, y, cx, headY - 18, w * 0.145, h * 0.09) && y < headY + h * 0.005;
+    const elfEar = archetype === 'elf' && (inTriangle(x, y, cx - w * 0.12, headY - 15, cx - w * 0.27, headY - 50, cx - w * 0.16, headY + 8) || inTriangle(x, y, cx + w * 0.12, headY - 15, cx + w * 0.27, headY - 50, cx + w * 0.16, headY + 8));
+    const neck = inRect(x, y, cx - w * 0.045, headY + h * 0.06, cx + w * 0.045, bodyY + h * 0.03);
+    const shoulder = inEllipse(x, y, cx, bodyY + h * 0.09, w * 0.25, h * 0.12);
+    const torso = Math.abs(nx) < (archetype === 'knight' ? 0.5 : 0.42) && y > bodyY && y < h * 0.78;
+    const arms = inRect(x, y, cx - w * 0.48, bodyY + h * 0.05, cx - w * 0.3, h * 0.73) || inRect(x, y, cx + w * 0.3, bodyY + h * 0.05, cx + w * 0.48, h * 0.73);
     const legs = Math.abs(nx) < 0.3 && y >= h * 0.78 && y < h * 0.98;
+    const eye = inEllipse(x, y, cx - w * 0.052, headY + h * 0.005, w * 0.018, h * 0.009) || inEllipse(x, y, cx + w * 0.052, headY + h * 0.005, w * 0.018, h * 0.009);
+    const mouth = inRect(x, y, cx - w * 0.035, headY + h * 0.045, cx + w * 0.035, headY + h * 0.05);
     const grain = pixelNoise(x, y, wobble) - 3;
-    if (hairShape) return [hair[0] + grain, hair[1] + grain, hair[2] + grain, 255];
+    const outfit = archetype === 'mage' ? [78, 67, 142] : archetype === 'knight' ? [112, 128, 152] : archetype === 'rogue' ? [48, 64, 86] : [base[0] * 0.55, base[1] * 0.55, base[2] * 0.7];
+    if (hairShape || elfEar) return [hair[0] + grain, hair[1] + grain, hair[2] + grain, 255];
+    if (eye || mouth) return [34, 29, 41, 255];
     if (head) return [base[0] + grain, base[1] + grain, base[2] + grain, 255];
-    if (torso) return [base[0] * 0.55 + grain, base[1] * 0.55 + grain, base[2] * 0.7 + grain, 255];
+    if (neck || shoulder || torso || arms) return [outfit[0] + grain, outfit[1] + grain, outfit[2] + grain, 255];
     if (legs) return [base[0] * 0.35 + grain, base[1] * 0.35 + grain, base[2] * 0.45 + grain, 255];
     return [grain, grain, grain, 0];
   }));
