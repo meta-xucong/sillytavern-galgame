@@ -18,6 +18,11 @@ assert.match(configScript, /set "SILLYTAVERN_BASE_URL=http:\/\/127\.0\.0\.1:8001
 assert.match(configScript, /set "GALGAME_SILLYTAVERN_BASE_URL=http:\/\/127\.0\.0\.1:8001"/);
 assert.match(bridgeScript, /set "SILLYTAVERN_BASE_URL=http:\/\/127\.0\.0\.1:8001"/);
 assert.match(bridgeScript, /set "GALGAME_SILLYTAVERN_BASE_URL=http:\/\/127\.0\.0\.1:8001"/);
+assert.match(configScript, /GALGAME_COMPUTERNAME_LOWER/);
+assert.match(bridgeScript, /GALGAME_COMPUTERNAME_LOWER/);
+const visualScript = await readFile(new URL('StartGalgameVisualAssetService.cmd', repoRoot), 'utf8');
+assert.match(visualScript, /GALGAME_VISUAL_CORE_PLAYER_ORIGINS/);
+assert.match(visualScript, /GALGAME_COMPUTERNAME_LOWER/);
 assert.match(servicesScript, /Url='http:\/\/127\.0\.0\.1:8001\/'/);
 assert.match(servicesScript, /shared runtime proof configured by paired launcher/);
 assert.match(configScript, /set \/p GALGAME_BRIDGE_PROOF_SECRET=<"%SECRET_FILE%"/);
