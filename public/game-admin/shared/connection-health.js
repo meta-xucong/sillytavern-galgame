@@ -272,7 +272,9 @@ function createServiceState() {
 
 function summarizeOverall(services, { generationPending = false } = {}) {
     if (generationPending) return 'degraded';
-    const states = Object.values(services).map((service) => service.status === 'idle' ? 'up' : service.status);
+    const states = Object.entries(services)
+        .filter(([name, service]) => name !== 'generation' || service.status !== 'unknown')
+        .map(([, service]) => service.status === 'idle' ? 'up' : service.status);
     if (states.every((status) => status === 'up')) return 'up';
     if (states.some((status) => status === 'down')) return states.some((status) => status === 'up') ? 'degraded' : 'down';
     if (states.some((status) => status === 'up')) return 'degraded';

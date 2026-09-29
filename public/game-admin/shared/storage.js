@@ -11,7 +11,7 @@ import {
     validateActiveReleaseManifestBinding,
     validateReleaseArcSelection,
     validateScenarioManifest,
-} from './protocol.js?v=auto-6923a6936f85';
+} from './protocol.js?v=auto-9a4399a4b40e';
 
 const DB_NAME = 'galgame-local-v1';
 const STORE_NAME = 'records';

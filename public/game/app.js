@@ -1,4 +1,4 @@
-import { createReleaseStore } from './shared/config-service.js?v=auto-6923a6936f85';
+import { createReleaseStore } from './shared/config-service.js?v=auto-9a4399a4b40e';
 import {
     getAssetUrl,
     getVisualCharacterBindings,
@@ -6,13 +6,13 @@ import {
     getActiveSillyTavernBindings,
     materializeManifestForArc,
     resolveAdaptivePresentationProfileBinding,
-} from './shared/protocol.js?v=auto-6923a6936f85';
+} from './shared/protocol.js?v=auto-9a4399a4b40e';
 import {
     AUTO_SAVE_ID,
     createCanonicalPlayerSaveRelease,
     createPlayerSaveStore,
     manualSaveIds,
-} from './shared/player-save.js?v=auto-6923a6936f85';
+} from './shared/player-save.js?v=auto-9a4399a4b40e';
 import {
     createCoreVisualDisplayEntityHints,
     createCoreVisualDisplayEntityKey,
@@ -20,11 +20,11 @@ import {
     createVisualNovelDisplaySegments,
     OriginalRuntimeBridgeClient,
     SillyTavernOriginalChatBridge,
-} from './shared/sillytavern-adapter.js?v=auto-6923a6936f85';
-import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-6923a6936f85';
-import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-6923a6936f85';
-import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-6923a6936f85';
-import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-6923a6936f85';
+} from './shared/sillytavern-adapter.js?v=auto-9a4399a4b40e';
+import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-9a4399a4b40e';
+import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-9a4399a4b40e';
+import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-9a4399a4b40e';
+import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-9a4399a4b40e';
 
 const releaseStore = createReleaseStore(null, { fallbackToLocal: false });
 const playerSaveStore = createPlayerSaveStore();
@@ -290,6 +290,7 @@ async function probeVisualService(signal) {
         method: 'GET',
         cache: 'no-cache',
         signal,
+        headers: { accept: 'application/json' },
     });
     const body = await response.json().catch(() => ({}));
     return {

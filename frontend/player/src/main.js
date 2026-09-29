@@ -290,6 +290,7 @@ async function probeVisualService(signal) {
         method: 'GET',
         cache: 'no-cache',
         signal,
+        headers: { accept: 'application/json' },
     });
     const body = await response.json().catch(() => ({}));
     return {

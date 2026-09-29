@@ -52,6 +52,20 @@ test('generation status is visible independently of transport probes', async () 
     assert.equal(recovered.services.generation.consecutiveFailures, 0);
 });
 
+test('unstarted generation does not mark healthy transport as degraded', async () => {
+    const monitor = createConnectionHealthMonitor({
+        probes: {
+            sillyTavern: async () => ({ ok: true }),
+            configService: async () => ({ ok: true }),
+            runtimeBridge: async () => ({ ok: true, connectionState: 'idle' }),
+            visualService: async () => ({ ok: true }),
+        },
+    });
+    const snapshot = await monitor.probeNow();
+    assert.equal(snapshot.services.generation.status, 'unknown');
+    assert.equal(snapshot.overall, 'up');
+});
+
 test('transport probes preserve generation state across heartbeat cycles', async () => {
     const monitor = createConnectionHealthMonitor({
         probes: {
