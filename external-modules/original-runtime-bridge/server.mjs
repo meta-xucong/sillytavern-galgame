@@ -82,6 +82,7 @@ export function createOriginalRuntimeBridgeServer({
                     proofRequired: proofVerifier.required,
                     ...runtimeBridge.getStatus?.(),
                     ...health,
+                    ok: resolveBridgeReady(health, runtimeBridge.getStatus?.()),
                 });
                 return;
             }
@@ -778,7 +779,9 @@ function generateInOriginalRuntimeExpression(payload) {
                 if (stModule?.characters?.[characterIndex]) {
                     stModule.characters[characterIndex].chat = targetChatId;
                 }
-                if (stModule?.this_chid !== undefined && stModule?.characters?.[stModule.this_chid]) {
+                if (stModule?.this_chid !== undefined
+                    && Number(stModule.this_chid) === Number(characterIndex)
+                    && stModule?.characters?.[stModule.this_chid]) {
                     stModule.characters[stModule.this_chid].chat = targetChatId;
                 }
                 const selectedChat = document.querySelector('#selected_chat_pole');

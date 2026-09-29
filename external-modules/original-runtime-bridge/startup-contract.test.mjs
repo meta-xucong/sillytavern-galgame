@@ -144,6 +144,25 @@ try {
     await close(bridgeServer);
 }
 
+const busyBridge = createOriginalRuntimeBridgeServer({
+    runtime: {
+        async healthCheck() { return { ok: true, browser: true }; },
+        getStatus() { return { ready: false, pending: true, connectionState: 'generating' }; },
+    },
+    sillyTavernBaseUrl: 'http://127.0.0.1:8001',
+    allowedOrigins: ['http://127.0.0.1:8001'],
+    proofSecret: sharedProofSecret,
+});
+await listen(busyBridge);
+try {
+    const busyHealth = await fetch(`${serverUrl(busyBridge)}/health`).then((response) => response.json());
+    assert.equal(busyHealth.ready, false);
+    assert.equal(busyHealth.connectionState, 'generating');
+    assert.equal(busyHealth.ok, false);
+} finally {
+    await close(busyBridge);
+}
+
 const unconfiguredBridge = createOriginalRuntimeBridgeServer({
     runtime: bridgeRuntime,
     sillyTavernBaseUrl: 'http://127.0.0.1:8001',
