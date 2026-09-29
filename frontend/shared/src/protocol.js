@@ -138,7 +138,9 @@ const VISUAL_BINDING_DEFAULT_ASSET_KEYS = Object.freeze({
 });
 
 function validateVisualBindingAssetId(value, label, errors) {
-    if (value !== undefined && (!value || !/^asset_character_[a-z0-9_-]{6,80}$/.test(String(value)))) {
+    const isCharacterCatalogAsset = /^asset_character_[a-z0-9_-]{6,80}$/.test(String(value || ''))
+        || /^asset_curated_character-[a-z0-9_-]{2,80}$/.test(String(value || ''));
+    if (value !== undefined && (!value || !isCharacterCatalogAsset)) {
         errors.push(`${label} must reference a character catalog asset.`);
     }
 }

@@ -1,7 +1,7 @@
 import {
     createDefaultAdaptivePresentationProfile,
     validateAdaptivePresentationProfile,
-} from './adaptive-presentation-schema.js?v=auto-7cc806620ed5';
+} from './adaptive-presentation-schema.js?v=auto-2a72e2a79a23';
 
 export const PROTOCOL_VERSION = '1.0';
 export const ARC_BINDING_PROTOCOL_VERSION = 'galgame.arc-release.v1';
@@ -138,7 +138,9 @@ const VISUAL_BINDING_DEFAULT_ASSET_KEYS = Object.freeze({
 });
 
 function validateVisualBindingAssetId(value, label, errors) {
-    if (value !== undefined && (!value || !/^asset_character_[a-z0-9_-]{6,80}$/.test(String(value)))) {
+    const isCharacterCatalogAsset = /^asset_character_[a-z0-9_-]{6,80}$/.test(String(value || ''))
+        || /^asset_curated_character-[a-z0-9_-]{2,80}$/.test(String(value || ''));
+    if (value !== undefined && (!value || !isCharacterCatalogAsset)) {
         errors.push(`${label} must reference a character catalog asset.`);
     }
 }

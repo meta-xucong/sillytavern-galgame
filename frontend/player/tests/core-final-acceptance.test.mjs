@@ -165,7 +165,7 @@ await withServer(unavailableService, async (baseUrl) => {
     assert.equal(fetchCount('/v1/core/visual-decisions'), 1);
     assert.equal(contentReadCount(), 0);
     assert.deepEqual(activeVisualClasses(), unavailableVisualClasses());
-    assert.equal(stageBackdropElement.style.backgroundImage, `url("${VISUAL_PLACEHOLDER_URL}")`);
+    assert.equal(stageBackdropElement.style.backgroundImage, 'url("/assets/default-background.png")');
     assert.equal(stageHeroineElement.style.backgroundImage, `url("${VISUAL_PLACEHOLDER_URL}")`);
     assert.deepEqual(visualIconStripElement.children.map((item) => item.children[0].src), [
         VISUAL_PLACEHOLDER_URL,
@@ -270,7 +270,7 @@ await withServer(analyzerService, async (baseUrl) => {
         speaker: '银发骑士',
         text: '她望向雨幕，台词没有任何视觉素材标签。',
     }, { expectedDecisionReads: 1, expectedContentReads: 0 });
-    assert.equal(stageBackdropElement.style.backgroundImage, `url("${VISUAL_PLACEHOLDER_URL}")`);
+    assert.equal(stageBackdropElement.style.backgroundImage, 'url("/assets/default-background.png")');
     assert.equal(stageHeroineElement.style.backgroundImage, `url("${NARRATOR_PLACEHOLDER_URL}")`);
     assert.deepEqual(visualIconStripElement.children.map((item) => item.className), [
         'visual-icon visual-icon-equipment is-visual-active',
@@ -296,7 +296,7 @@ await withServer(analyzerService, async (baseUrl) => {
         text: '场景: 雨中的旧庭院',
     }, { expectedDecisionReads: 0, expectedContentReads: 0 });
     await new Promise((resolve) => setTimeout(resolve, 25));
-    assert.equal(stageBackdropElement.style.backgroundImage, `url(\"${VISUAL_PLACEHOLDER_URL}\")`);
+    assert.equal(stageBackdropElement.style.backgroundImage, 'url("/assets/default-background.png")');
     assert.equal(stageHeroineElement.style.backgroundImage, `url(\"${NARRATOR_PLACEHOLDER_URL}\")`);
     assert.equal(visualStatusElement.hidden, true);
 });
@@ -304,7 +304,7 @@ await withServer(analyzerService, async (baseUrl) => {
 const playerSource = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
 assert.equal(/playerVisualSessionReader|visual-bundle|visual-assets|projection-proof|restore-proof|\/v1\/visual-match|binding writer|provider|\bLLM\b/i.test(playerSource), false);
 assert.match(playerSource, /runtimeBridge\.generateReply/);
-    assert.equal(stageBackdropElement.style.backgroundImage, `url(\"${VISUAL_PLACEHOLDER_URL}\")`);
+    assert.equal(stageBackdropElement.style.backgroundImage, 'url("/assets/default-background.png")');
     assert.equal(stageHeroineElement.style.backgroundImage, `url(\"${NARRATOR_PLACEHOLDER_URL}\")`);
 
 console.log('CORE-5 focused final acceptance tests passed: unavailable fallback and test-only analyzer overlap paths');

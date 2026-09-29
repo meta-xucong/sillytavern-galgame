@@ -172,7 +172,7 @@ globalThis.__GALGAME_TEST_RENDER_CHAT__({
 await new Promise((resolve) => setTimeout(resolve, 0));
 
 assert.equal(fetchCalls.length, 0);
-assert.equal(stageBackdropElement.style.backgroundImage, `url("${VISUAL_PLACEHOLDER_URL}")`);
+assert.equal(stageBackdropElement.style.backgroundImage, 'url("/assets/default-background.png")');
 assert.equal(stageHeroineElement.style.backgroundImage, `url("${NARRATOR_PLACEHOLDER_URL}")`);
 assert.equal(stageBackdropElement.classList.contains('is-visual-active'), false);
 assert.equal(stageHeroineElement.classList.contains('is-visual-active'), false);
@@ -298,6 +298,26 @@ assert.deepEqual(recentRequest.projection.entities.map((entity) => entity.entity
 assert.deepEqual(recentRequest.projection.entities.filter((entity) => entity.entityType !== 'character').map((entity) => entity.displayLabel).sort(), ['场景', '技能', '装备', '道具']);
 
 fetchCalls = [];
+const longVisibleReply = `角色: 银发骑士\\n${'长回复内容。'.repeat(900)}`;
+globalThis.__GALGAME_TEST_RENDER_CHAT__({
+    ok: true,
+    fileName: 'chat-visual-core.json',
+    writable: true,
+    messages: [{
+        role: 'character',
+        speaker: 'Test Heroine',
+        displayText: longVisibleReply,
+        text: longVisibleReply,
+    }],
+}, { messageIndex: 0 });
+await waitForCoreDecision();
+const boundedRequest = JSON.parse(fetchCalls.find((call) => call.url.endsWith('/v1/core/visual-decisions')).options.body);
+const boundedTexts = [boundedRequest.visibleContext.current, ...boundedRequest.visibleContext.recent]
+    .map((message) => message.text);
+assert.equal(boundedTexts.every((text) => Array.from(text).length <= 4000), true);
+assert.equal(boundedTexts.some((text) => text.includes('\n[…]\n')), true);
+
+fetchCalls = [];
 globalThis.__GALGAME_TEST_RENDER_CHAT__({
     ok: true,
     fileName: 'chat-visual-core.json',
@@ -418,7 +438,7 @@ globalThis.__GALGAME_TEST_RENDER_CHAT__({
 }, { messageIndex: 0 });
 await waitForCoreDecision();
 assert.equal(fetchCalls.filter((call) => call.url.endsWith('/v1/core/visual-decisions')).length, 1);
-assert.equal(stageBackdropElement.style.backgroundImage, `url(\"${VISUAL_PLACEHOLDER_URL}\")`);
+assert.equal(stageBackdropElement.style.backgroundImage, 'url("/assets/default-background.png")');
 assert.equal(stageHeroineElement.style.backgroundImage, `url(\"${VISUAL_PLACEHOLDER_URL}\")`);
 
 globalThis.__GALGAME_TEST_RENDER_CHAT__({
@@ -475,7 +495,7 @@ globalThis.__GALGAME_TEST_RENDER_CHAT__({
     }],
 }, { messageIndex: 0 });
 await new Promise((resolve) => setTimeout(resolve, 60));
-assert.equal(stageBackdropElement.style.backgroundImage, 'url(\"./assets/visual-placeholder.svg\")');
+assert.equal(stageBackdropElement.style.backgroundImage, 'url("/assets/default-background.png")');
 assert.equal(stageHeroineElement.style.backgroundImage, 'url(\"http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_character_1b4268f70a37/1/content\")');
 assert.deepEqual(visualIconStripElement.children.map((item) => item.className), [
     'visual-icon visual-icon-equipment is-unavailable is-placeholder',

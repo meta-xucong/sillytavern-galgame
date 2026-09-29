@@ -57,6 +57,21 @@ const visualBindingManifest = {
 };
 const visualBindingStatus = validateVisualCharacterBindings(visualBindingManifest);
 assert.equal(visualBindingStatus.valid, true, visualBindingStatus.errors.join('\\n'));
+const curatedVisualBindingManifest = {
+    ...visualBindingManifest,
+    visualBindings: {
+        ...visualBindingManifest.visualBindings,
+        characters: visualBindingManifest.visualBindings.characters.map((binding, index) => index === 0
+            ? {
+                ...binding,
+                assetId: 'asset_curated_character-woman-mage',
+                assetVersion: 2,
+            }
+            : binding),
+    },
+};
+const curatedVisualBindingStatus = validateVisualCharacterBindings(curatedVisualBindingManifest);
+assert.equal(curatedVisualBindingStatus.valid, true, curatedVisualBindingStatus.errors.join('\\n'));
 assert.equal(
     resolveVisualCharacterBinding(visualBindingManifest, { name: '皮帕', role: 'character' }).assetId,
     'asset_character_1b4268f70a37',

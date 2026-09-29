@@ -1415,10 +1415,13 @@ function renderCoreVisualFallback({ preserveVerified = false, role = 'character'
     if (preserveVerified && coreVisualHasVerifiedPresentation) {
         return;
     }
-    // Runtime failures and low-confidence matches use the same neutral
-    // placeholder for every visual layer. Authored defaults are only used
-    // when entering/resetting a stage, never as a visual-service fallback.
-    renderCoreVisualPlaceholder(role);
+    // Keep the authored stage background visible when runtime matching is
+    // unavailable. It is a scenario-owned default, so it cannot be confused
+    // with a stale remote match. Character roles still use role-specific
+    // neutral placeholders until a validated bound portrait is available.
+    restoreDefaultBackgroundLayer();
+    applyCoreVisualPlaceholderCharacter(role);
+    renderCoreVisualIconStrip();
     coreVisualHasVerifiedPresentation = false;
     setVisualStatus('');
 }
@@ -1719,7 +1722,7 @@ async function renderCoreVisualDecisions(decisions, baseUrl, token, request, res
     await Promise.all([
         byType.has('scene')
             ? applyCoreVisualBackground(byType.get('scene'), baseUrl, token)
-            : Promise.resolve().then(() => applyCoreVisualPlaceholderBackground()),
+            : Promise.resolve().then(() => restoreDefaultBackgroundLayer()),
         byType.has('character')
             ? (immediateCharacterStillValid
                 ? Promise.resolve()
@@ -1797,6 +1800,24 @@ function isRenderableCoreVisualDecision(decision, type, request, response) {
 
 const visualObjectUrlCache = new Map();
 const visualObjectUrlInflight = new Map();
+const VISUAL_RUNTIME_MESSAGE_MAX_TEXT_LENGTH = 4000;
+const VISUAL_RUNTIME_MESSAGE_HEAD_LENGTH = 1400;
+
+function normalizePlayerVisualRuntimeMessage(message) {
+    if (!message || typeof message !== 'object') {
+        return normalizeVisualRuntimeMessage(message);
+    }
+    const text = String(message.text || '');
+    if (Array.from(text).length <= VISUAL_RUNTIME_MESSAGE_MAX_TEXT_LENGTH) {
+        return normalizeVisualRuntimeMessage(message);
+    }
+    const marker = '\n[…]\n';
+    const headLength = Math.min(VISUAL_RUNTIME_MESSAGE_HEAD_LENGTH, VISUAL_RUNTIME_MESSAGE_MAX_TEXT_LENGTH - marker.length);
+    const tailLength = VISUAL_RUNTIME_MESSAGE_MAX_TEXT_LENGTH - marker.length - headLength;
+    const codePoints = Array.from(text);
+    const boundedText = `${codePoints.slice(0, headLength).join('')}${marker}${codePoints.slice(-tailLength).join('')}`;
+    return normalizeVisualRuntimeMessage({ ...message, text: boundedText });
+}
 
 // Cross-origin CSS backgrounds can report a successful response yet remain unpainted in the player.
 // Fetch the bytes and render a same-origin blob URL instead.
@@ -2156,7 +2177,7 @@ function rememberRenderedVisualRuntimeMessage(snapshot, message, messageIndex) {
             visibleRuntimeMessages.delete(index);
             continue;
         }
-        const normalizedSnapshotMessage = normalizeVisualRuntimeMessage({
+        const normalizedSnapshotMessage = normalizePlayerVisualRuntimeMessage({
             index,
             role: snapshotMessage.role === 'player' ? 'player' : 'character',
             speaker: snapshotMessage.role === 'player' ? '你' : snapshotMessage.speaker || getMainCharacterName(),
@@ -2174,7 +2195,7 @@ function rememberRenderedVisualRuntimeMessage(snapshot, message, messageIndex) {
             visibleRuntimeMessages.delete(index);
             continue;
         }
-        const normalizedSnapshotMessage = normalizeVisualRuntimeMessage({
+        const normalizedSnapshotMessage = normalizePlayerVisualRuntimeMessage({
             index,
             role: snapshotMessage.role === 'player' ? 'player' : 'character',
             speaker: snapshotMessage.role === 'player' ? '你' : snapshotMessage.speaker || getMainCharacterName(),
@@ -2187,7 +2208,7 @@ function rememberRenderedVisualRuntimeMessage(snapshot, message, messageIndex) {
             }
         }
     }
-    const normalized = normalizeVisualRuntimeMessage({
+    const normalized = normalizePlayerVisualRuntimeMessage({
         index: messageIndex,
         role: message?.role === 'player' ? 'player' : 'character',
         speaker: message?.role === 'player' ? '你' : message?.speaker || getMainCharacterName(),
@@ -2255,7 +2276,7 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
     const activeSegmentRole = activeSpeakerContext.role;
     const activeSegmentSpeaker = activeSegment ? activeSpeakerContext.speaker : '';
     const segmentMessage = activeSegment
-        ? normalizeVisualRuntimeMessage({
+        ? normalizePlayerVisualRuntimeMessage({
             index: messageIndex,
             role: activeSegmentRole,
             speaker: activeSegmentSpeaker,
@@ -2263,7 +2284,7 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
         })
         : null;
     const displayedMessage = segmentMessage || visibleContext.current;
-    const fullMessage = normalizeVisualRuntimeMessage({
+    const fullMessage = normalizePlayerVisualRuntimeMessage({
         index: messageIndex,
         role: message?.role === 'player'
             ? 'player'
