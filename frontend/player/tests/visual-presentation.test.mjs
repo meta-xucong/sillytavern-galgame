@@ -16,6 +16,8 @@ const stageHeroineElement = createStubElement();
 const visualIconStripElement = createStubElement();
 const visualStatusElement = createStubElement();
 const VISUAL_PLACEHOLDER_URL = './assets/visual-placeholder.svg';
+const NARRATOR_PLACEHOLDER_URL = './assets/narrator-placeholder.svg';
+const PLAYER_PLACEHOLDER_URL = './assets/player-placeholder.svg';
 let visualCoreServiceMeta = '';
 let coreDecisionPaths = createValidCoreDecisionPaths();
 elements.set('#stageBackdrop', stageBackdropElement);
@@ -171,7 +173,7 @@ await new Promise((resolve) => setTimeout(resolve, 0));
 
 assert.equal(fetchCalls.length, 0);
 assert.equal(stageBackdropElement.style.backgroundImage, `url("${VISUAL_PLACEHOLDER_URL}")`);
-assert.equal(stageHeroineElement.style.backgroundImage, `url("${VISUAL_PLACEHOLDER_URL}")`);
+assert.equal(stageHeroineElement.style.backgroundImage, `url("${NARRATOR_PLACEHOLDER_URL}")`);
 assert.equal(stageBackdropElement.classList.contains('is-visual-active'), false);
 assert.equal(stageHeroineElement.classList.contains('is-visual-active'), false);
 assert.equal(stageHeroineElement.classList.contains('is-visual-unknown'), false);
@@ -369,7 +371,7 @@ globalThis.__GALGAME_TEST_RENDER_CHAT__({
 }, { messageIndex: 0 });
 await waitForCoreDecision();
 assert.equal(stageBackdropElement.style.backgroundImage, 'url("http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_scene_player_route/1/content")');
-assert.equal(stageHeroineElement.style.backgroundImage, `url("${VISUAL_PLACEHOLDER_URL}")`);
+assert.equal(stageHeroineElement.style.backgroundImage, `url("${NARRATOR_PLACEHOLDER_URL}")`);
 assert.deepEqual(visualIconStripElement.children.map((item) => item.children[0].src), [
     'http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_equipment_player_route/1/content',
     'http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_item_player_route/1/content',
@@ -472,9 +474,9 @@ globalThis.__GALGAME_TEST_RENDER_CHAT__({
         text: '角色: 银发骑士\n场景: 庭院\n装备: 银盾\n道具: 钥匙\n技能: 守护',
     }],
 }, { messageIndex: 0 });
-await new Promise((resolve) => setTimeout(resolve, 20));
-assert.equal(stageBackdropElement.style.backgroundImage, 'url(\"http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_scene_player_route/1/content\")');
-assert.equal(stageHeroineElement.style.backgroundImage, 'url(\"http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_character_player_route/1/content\")');
+await new Promise((resolve) => setTimeout(resolve, 60));
+assert.equal(stageBackdropElement.style.backgroundImage, 'url(\"./assets/visual-placeholder.svg\")');
+assert.equal(stageHeroineElement.style.backgroundImage, 'url(\"http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_character_1b4268f70a37/1/content\")');
 assert.deepEqual(visualIconStripElement.children.map((item) => item.className), [
     'visual-icon visual-icon-equipment is-unavailable is-placeholder',
     'visual-icon visual-icon-item is-unavailable is-placeholder',

@@ -33,6 +33,7 @@ const stageHeroineElement = createStubElement('div');
 const visualIconStripElement = createStubElement('div');
 const visualStatusElement = createStubElement('p');
 const VISUAL_PLACEHOLDER_URL = './assets/visual-placeholder.svg';
+const NARRATOR_PLACEHOLDER_URL = './assets/narrator-placeholder.svg';
 let visualCoreServiceMeta = '';
 elements.set('#stageBackdrop', stageBackdropElement);
 elements.set('.stage-heroine', stageHeroineElement);
@@ -157,7 +158,7 @@ await withServer(unavailableService, async (baseUrl) => {
     assert.equal(uploadedAssets.every(({ asset }) => asset.analysisStatus === 'unavailable'), true);
     assert.equal(uploadedAssets.every(({ asset }) => asset.analysis.tagCodes.length === 0 && asset.analysis.attributeCodes.length === 0), true);
     assert.equal(uploadedAssets.some(({ asset }) => asset.tagCodes.length > 0), true);
-    setManifestForCatalog(catalog);
+    setManifestForCatalog(catalog, { bindCharacter: false });
 
     await renderMessage(acceptanceMessage(), { expectedDecisionReads: 1, expectedContentReads: 0 });
 
@@ -259,7 +260,7 @@ await withServer(analyzerService, async (baseUrl) => {
 
     const decisionBodies = networkEvidence.filter((entry) => entry.url.endsWith('/v1/core/visual-decisions'));
     assert.equal(decisionBodies.every((entry) => entry.contentType.includes('application/json')), true);
-    assert.deepEqual(decisionBodies.at(-1).requestSummary.entityTypes.sort(), ['character', 'equipment', 'item', 'scene', 'skill']);
+    assert.deepEqual([...new Set(decisionBodies.at(-1).requestSummary.entityTypes)].sort(), ['character', 'equipment', 'item', 'scene', 'skill']);
     assert.equal(decisionBodies.at(-1).responseSummary.decisions
         .filter((decision) => decision.entityType !== 'character')
         .every((decision) => decision.reasonCodes.includes('tag-overlap')), true);
@@ -270,7 +271,7 @@ await withServer(analyzerService, async (baseUrl) => {
         text: '她望向雨幕，台词没有任何视觉素材标签。',
     }, { expectedDecisionReads: 1, expectedContentReads: 0 });
     assert.equal(stageBackdropElement.style.backgroundImage, `url("${VISUAL_PLACEHOLDER_URL}")`);
-    assert.equal(stageHeroineElement.style.backgroundImage, `url("${VISUAL_PLACEHOLDER_URL}")`);
+    assert.equal(stageHeroineElement.style.backgroundImage, `url("${NARRATOR_PLACEHOLDER_URL}")`);
     assert.deepEqual(visualIconStripElement.children.map((item) => item.className), [
         'visual-icon visual-icon-equipment is-visual-active',
         'visual-icon visual-icon-item is-visual-active',
@@ -296,7 +297,7 @@ await withServer(analyzerService, async (baseUrl) => {
     }, { expectedDecisionReads: 0, expectedContentReads: 0 });
     await new Promise((resolve) => setTimeout(resolve, 25));
     assert.equal(stageBackdropElement.style.backgroundImage, `url(\"${VISUAL_PLACEHOLDER_URL}\")`);
-    assert.equal(stageHeroineElement.style.backgroundImage, `url(\"${VISUAL_PLACEHOLDER_URL}\")`);
+    assert.equal(stageHeroineElement.style.backgroundImage, `url(\"${NARRATOR_PLACEHOLDER_URL}\")`);
     assert.equal(visualStatusElement.hidden, true);
 });
 
@@ -304,7 +305,7 @@ const playerSource = await readFile(new URL('../src/main.js', import.meta.url), 
 assert.equal(/playerVisualSessionReader|visual-bundle|visual-assets|projection-proof|restore-proof|\/v1\/visual-match|binding writer|provider|\bLLM\b/i.test(playerSource), false);
 assert.match(playerSource, /runtimeBridge\.generateReply/);
     assert.equal(stageBackdropElement.style.backgroundImage, `url(\"${VISUAL_PLACEHOLDER_URL}\")`);
-    assert.equal(stageHeroineElement.style.backgroundImage, `url(\"${VISUAL_PLACEHOLDER_URL}\")`);
+    assert.equal(stageHeroineElement.style.backgroundImage, `url(\"${NARRATOR_PLACEHOLDER_URL}\")`);
 
 console.log('CORE-5 focused final acceptance tests passed: unavailable fallback and test-only analyzer overlap paths');
 
@@ -385,7 +386,7 @@ function resetAcceptanceEvidence() {
     currentCatalog = null;
 }
 
-function setManifestForCatalog(catalog) {
+function setManifestForCatalog(catalog, { bindCharacter = true } = {}) {
     globalThis.__GALGAME_TEST_SET_MANIFEST__({
         id: 'scenario_core_final',
         title: 'Core Final Visual Test',
@@ -417,13 +418,13 @@ function setManifestForCatalog(catalog) {
         },
         visualBindings: {
             schemaVersion: 'galgame.visual-character-bindings.v1',
-            characters: [{
+            characters: bindCharacter ? [{
                 characterKey: '人类骑士',
                 aliases: ['人类'],
                 assetId: catalog.assetRefs.find((item) => item.assetType === 'character')?.assetId,
                 assetVersion: 1,
                 channel: 'character',
-            }],
+            }] : [],
         },
     }, {
         release: {

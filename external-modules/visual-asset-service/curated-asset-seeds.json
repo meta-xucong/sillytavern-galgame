@@ -1,0 +1,1365 @@
+{
+  "schemaVersion": "galgame.visual-curated-asset-seeds.v1",
+  "generatedAt": "2026-09-29",
+  "generationPolicy": {
+    "providerNeutral": true,
+    "source": "external image generator selected by administrator",
+    "uploadFlow": [
+      "upload PNG",
+      "sanitize and hash",
+      "analyze with closed dictionary",
+      "draft",
+      "validate",
+      "publish",
+      "activate"
+    ],
+    "dedupe": "assetContentSha256",
+    "rejectDiagnostics": true,
+    "preserveRollback": true
+  },
+  "targets": {
+    "scene": 32,
+    "character": 24,
+    "equipment": 8,
+    "item": 8,
+    "skill": 8
+  },
+  "assets": [
+    {
+      "assetKey": "scene-tavern-day",
+      "assetType": "scene",
+      "identityKey": "scene:tavern:day",
+      "promptTemplate": "fantasy visual novel background, warm timber tavern interior, readable empty foreground, no characters, no text, day lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-tavern-day-v1",
+      "tags": [
+        "tavern",
+        "day"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-tavern-dusk",
+      "assetType": "scene",
+      "identityKey": "scene:tavern:dusk",
+      "promptTemplate": "fantasy visual novel background, warm timber tavern interior, readable empty foreground, no characters, no text, dusk lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-tavern-dusk-v1",
+      "tags": [
+        "tavern",
+        "dusk"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-tavern-night",
+      "assetType": "scene",
+      "identityKey": "scene:tavern:night",
+      "promptTemplate": "fantasy visual novel background, warm timber tavern interior, readable empty foreground, no characters, no text, night lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-tavern-night-v1",
+      "tags": [
+        "tavern",
+        "night"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-tavern-rain",
+      "assetType": "scene",
+      "identityKey": "scene:tavern:rain",
+      "promptTemplate": "fantasy visual novel background, warm timber tavern interior, readable empty foreground, no characters, no text, rain lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-tavern-rain-v1",
+      "tags": [
+        "tavern",
+        "rain"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-forest-day",
+      "assetType": "scene",
+      "identityKey": "scene:forest:day",
+      "promptTemplate": "fantasy visual novel background, ancient forest path, layered foliage, readable empty foreground, no characters, no text, day lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-forest-day-v1",
+      "tags": [
+        "forest",
+        "day"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-forest-dusk",
+      "assetType": "scene",
+      "identityKey": "scene:forest:dusk",
+      "promptTemplate": "fantasy visual novel background, ancient forest path, layered foliage, readable empty foreground, no characters, no text, dusk lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-forest-dusk-v1",
+      "tags": [
+        "forest",
+        "dusk"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-forest-night",
+      "assetType": "scene",
+      "identityKey": "scene:forest:night",
+      "promptTemplate": "fantasy visual novel background, ancient forest path, layered foliage, readable empty foreground, no characters, no text, night lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-forest-night-v1",
+      "tags": [
+        "forest",
+        "night"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-forest-rain",
+      "assetType": "scene",
+      "identityKey": "scene:forest:rain",
+      "promptTemplate": "fantasy visual novel background, ancient forest path, layered foliage, readable empty foreground, no characters, no text, rain lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-forest-rain-v1",
+      "tags": [
+        "forest",
+        "rain"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-ruins-day",
+      "assetType": "scene",
+      "identityKey": "scene:ruins:day",
+      "promptTemplate": "fantasy visual novel background, moonlit ruined temple courtyard, readable empty foreground, no characters, no text, day lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-ruins-day-v1",
+      "tags": [
+        "ruins",
+        "day"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-ruins-dusk",
+      "assetType": "scene",
+      "identityKey": "scene:ruins:dusk",
+      "promptTemplate": "fantasy visual novel background, moonlit ruined temple courtyard, readable empty foreground, no characters, no text, dusk lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-ruins-dusk-v1",
+      "tags": [
+        "ruins",
+        "dusk"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-ruins-night",
+      "assetType": "scene",
+      "identityKey": "scene:ruins:night",
+      "promptTemplate": "fantasy visual novel background, moonlit ruined temple courtyard, readable empty foreground, no characters, no text, night lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-ruins-night-v1",
+      "tags": [
+        "ruins",
+        "night"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-ruins-rain",
+      "assetType": "scene",
+      "identityKey": "scene:ruins:rain",
+      "promptTemplate": "fantasy visual novel background, moonlit ruined temple courtyard, readable empty foreground, no characters, no text, rain lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-ruins-rain-v1",
+      "tags": [
+        "ruins",
+        "rain"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-city-day",
+      "assetType": "scene",
+      "identityKey": "scene:city:day",
+      "promptTemplate": "fantasy visual novel background, old stone city street at dusk, readable empty foreground, no characters, no text, day lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-city-day-v1",
+      "tags": [
+        "city",
+        "day"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-city-dusk",
+      "assetType": "scene",
+      "identityKey": "scene:city:dusk",
+      "promptTemplate": "fantasy visual novel background, old stone city street at dusk, readable empty foreground, no characters, no text, dusk lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-city-dusk-v1",
+      "tags": [
+        "city",
+        "dusk"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-city-night",
+      "assetType": "scene",
+      "identityKey": "scene:city:night",
+      "promptTemplate": "fantasy visual novel background, old stone city street at dusk, readable empty foreground, no characters, no text, night lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-city-night-v1",
+      "tags": [
+        "city",
+        "night"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-city-rain",
+      "assetType": "scene",
+      "identityKey": "scene:city:rain",
+      "promptTemplate": "fantasy visual novel background, old stone city street at dusk, readable empty foreground, no characters, no text, rain lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-city-rain-v1",
+      "tags": [
+        "city",
+        "rain"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-dungeon-day",
+      "assetType": "scene",
+      "identityKey": "scene:dungeon:day",
+      "promptTemplate": "fantasy visual novel background, torchlit dungeon corridor, readable empty foreground, no characters, no text, day lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-dungeon-day-v1",
+      "tags": [
+        "dungeon",
+        "day"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-dungeon-dusk",
+      "assetType": "scene",
+      "identityKey": "scene:dungeon:dusk",
+      "promptTemplate": "fantasy visual novel background, torchlit dungeon corridor, readable empty foreground, no characters, no text, dusk lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-dungeon-dusk-v1",
+      "tags": [
+        "dungeon",
+        "dusk"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-dungeon-night",
+      "assetType": "scene",
+      "identityKey": "scene:dungeon:night",
+      "promptTemplate": "fantasy visual novel background, torchlit dungeon corridor, readable empty foreground, no characters, no text, night lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-dungeon-night-v1",
+      "tags": [
+        "dungeon",
+        "night"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-dungeon-rain",
+      "assetType": "scene",
+      "identityKey": "scene:dungeon:rain",
+      "promptTemplate": "fantasy visual novel background, torchlit dungeon corridor, readable empty foreground, no characters, no text, rain lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-dungeon-rain-v1",
+      "tags": [
+        "dungeon",
+        "rain"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-coast-day",
+      "assetType": "scene",
+      "identityKey": "scene:coast:day",
+      "promptTemplate": "fantasy visual novel background, misty cliffside coast, readable empty foreground, no characters, no text, day lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-coast-day-v1",
+      "tags": [
+        "coast",
+        "day"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-coast-dusk",
+      "assetType": "scene",
+      "identityKey": "scene:coast:dusk",
+      "promptTemplate": "fantasy visual novel background, misty cliffside coast, readable empty foreground, no characters, no text, dusk lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-coast-dusk-v1",
+      "tags": [
+        "coast",
+        "dusk"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-coast-night",
+      "assetType": "scene",
+      "identityKey": "scene:coast:night",
+      "promptTemplate": "fantasy visual novel background, misty cliffside coast, readable empty foreground, no characters, no text, night lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-coast-night-v1",
+      "tags": [
+        "coast",
+        "night"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-coast-rain",
+      "assetType": "scene",
+      "identityKey": "scene:coast:rain",
+      "promptTemplate": "fantasy visual novel background, misty cliffside coast, readable empty foreground, no characters, no text, rain lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-coast-rain-v1",
+      "tags": [
+        "coast",
+        "rain"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-manor-day",
+      "assetType": "scene",
+      "identityKey": "scene:manor:day",
+      "promptTemplate": "fantasy visual novel background, noble manor library interior, readable empty foreground, no characters, no text, day lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-manor-day-v1",
+      "tags": [
+        "manor",
+        "day"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-manor-dusk",
+      "assetType": "scene",
+      "identityKey": "scene:manor:dusk",
+      "promptTemplate": "fantasy visual novel background, noble manor library interior, readable empty foreground, no characters, no text, dusk lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-manor-dusk-v1",
+      "tags": [
+        "manor",
+        "dusk"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-manor-night",
+      "assetType": "scene",
+      "identityKey": "scene:manor:night",
+      "promptTemplate": "fantasy visual novel background, noble manor library interior, readable empty foreground, no characters, no text, night lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-manor-night-v1",
+      "tags": [
+        "manor",
+        "night"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-manor-rain",
+      "assetType": "scene",
+      "identityKey": "scene:manor:rain",
+      "promptTemplate": "fantasy visual novel background, noble manor library interior, readable empty foreground, no characters, no text, rain lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-manor-rain-v1",
+      "tags": [
+        "manor",
+        "rain"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-battlefield-day",
+      "assetType": "scene",
+      "identityKey": "scene:battlefield:day",
+      "promptTemplate": "fantasy visual novel background, ruined battlefield before a storm, readable empty foreground, no characters, no text, day lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-battlefield-day-v1",
+      "tags": [
+        "battlefield",
+        "day"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-battlefield-dusk",
+      "assetType": "scene",
+      "identityKey": "scene:battlefield:dusk",
+      "promptTemplate": "fantasy visual novel background, ruined battlefield before a storm, readable empty foreground, no characters, no text, dusk lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-battlefield-dusk-v1",
+      "tags": [
+        "battlefield",
+        "dusk"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-battlefield-night",
+      "assetType": "scene",
+      "identityKey": "scene:battlefield:night",
+      "promptTemplate": "fantasy visual novel background, ruined battlefield before a storm, readable empty foreground, no characters, no text, night lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-battlefield-night-v1",
+      "tags": [
+        "battlefield",
+        "night"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "scene-battlefield-rain",
+      "assetType": "scene",
+      "identityKey": "scene:battlefield:rain",
+      "promptTemplate": "fantasy visual novel background, ruined battlefield before a storm, readable empty foreground, no characters, no text, rain lighting, 16:9 composition",
+      "width": 1536,
+      "height": 1024,
+      "alpha": "opaque",
+      "seed": "galgame-scene-battlefield-rain-v1",
+      "tags": [
+        "battlefield",
+        "rain"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-woman-human",
+      "assetType": "character",
+      "identityKey": "character:woman-human",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult woman, human, calm expression, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-woman-human-v1",
+      "tags": [
+        "character",
+        "woman-human"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-man-human",
+      "assetType": "character",
+      "identityKey": "character:man-human",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult man, human, calm expression, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-man-human-v1",
+      "tags": [
+        "character",
+        "man-human"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-woman-elf",
+      "assetType": "character",
+      "identityKey": "character:woman-elf",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult woman, elf, pointed ears, calm expression, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-woman-elf-v1",
+      "tags": [
+        "character",
+        "woman-elf"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-man-elf",
+      "assetType": "character",
+      "identityKey": "character:man-elf",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult man, elf, pointed ears, calm expression, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-man-elf-v1",
+      "tags": [
+        "character",
+        "man-elf"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-woman-dwarf",
+      "assetType": "character",
+      "identityKey": "character:woman-dwarf",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult woman, dwarf, braided hair, calm expression, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-woman-dwarf-v1",
+      "tags": [
+        "character",
+        "woman-dwarf"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-man-dwarf",
+      "assetType": "character",
+      "identityKey": "character:man-dwarf",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult man, dwarf, beard, calm expression, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-man-dwarf-v1",
+      "tags": [
+        "character",
+        "man-dwarf"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-woman-rogue",
+      "assetType": "character",
+      "identityKey": "character:woman-rogue",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult woman, rogue adventurer, hooded light leather outfit, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-woman-rogue-v1",
+      "tags": [
+        "character",
+        "woman-rogue"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-man-rogue",
+      "assetType": "character",
+      "identityKey": "character:man-rogue",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult man, rogue adventurer, hooded light leather outfit, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-man-rogue-v1",
+      "tags": [
+        "character",
+        "man-rogue"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-woman-mage",
+      "assetType": "character",
+      "identityKey": "character:woman-mage",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult woman, mage, staff and layered robe, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-woman-mage-v1",
+      "tags": [
+        "character",
+        "woman-mage"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-man-mage",
+      "assetType": "character",
+      "identityKey": "character:man-mage",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult man, mage, staff and layered robe, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-man-mage-v1",
+      "tags": [
+        "character",
+        "man-mage"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-woman-knight",
+      "assetType": "character",
+      "identityKey": "character:woman-knight",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult woman, armored knight, sword and shield, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-woman-knight-v1",
+      "tags": [
+        "character",
+        "woman-knight"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-man-knight",
+      "assetType": "character",
+      "identityKey": "character:man-knight",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult man, armored knight, sword and shield, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-man-knight-v1",
+      "tags": [
+        "character",
+        "man-knight"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-woman-beastkin",
+      "assetType": "character",
+      "identityKey": "character:woman-beastkin",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult woman, beastkin, distinctive ears and tail, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-woman-beastkin-v1",
+      "tags": [
+        "character",
+        "woman-beastkin"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-man-beastkin",
+      "assetType": "character",
+      "identityKey": "character:man-beastkin",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult man, beastkin, distinctive ears and tail, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-man-beastkin-v1",
+      "tags": [
+        "character",
+        "man-beastkin"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-woman-undead",
+      "assetType": "character",
+      "identityKey": "character:woman-undead",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult woman, undead fantasy character, pale features, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-woman-undead-v1",
+      "tags": [
+        "character",
+        "woman-undead"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-man-undead",
+      "assetType": "character",
+      "identityKey": "character:man-undead",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult man, undead fantasy character, pale features, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-man-undead-v1",
+      "tags": [
+        "character",
+        "man-undead"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-woman-cleric",
+      "assetType": "character",
+      "identityKey": "character:woman-cleric",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult woman, cleric, ceremonial robes, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-woman-cleric-v1",
+      "tags": [
+        "character",
+        "woman-cleric"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-man-cleric",
+      "assetType": "character",
+      "identityKey": "character:man-cleric",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult man, cleric, ceremonial robes, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-man-cleric-v1",
+      "tags": [
+        "character",
+        "man-cleric"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-woman-merchant",
+      "assetType": "character",
+      "identityKey": "character:woman-merchant",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult woman, merchant, travel clothes and satchel, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-woman-merchant-v1",
+      "tags": [
+        "character",
+        "woman-merchant"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-man-merchant",
+      "assetType": "character",
+      "identityKey": "character:man-merchant",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult man, merchant, travel clothes and satchel, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-man-merchant-v1",
+      "tags": [
+        "character",
+        "man-merchant"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-woman-noble",
+      "assetType": "character",
+      "identityKey": "character:woman-noble",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult woman, noble, formal fantasy attire, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-woman-noble-v1",
+      "tags": [
+        "character",
+        "woman-noble"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-man-noble",
+      "assetType": "character",
+      "identityKey": "character:man-noble",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult man, noble, formal fantasy attire, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-man-noble-v1",
+      "tags": [
+        "character",
+        "man-noble"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-woman-scholar",
+      "assetType": "character",
+      "identityKey": "character:woman-scholar",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult woman, scholar, spectacles and books, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-woman-scholar-v1",
+      "tags": [
+        "character",
+        "woman-scholar"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-man-scholar",
+      "assetType": "character",
+      "identityKey": "character:man-scholar",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, adult man, scholar, spectacles and books, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-man-scholar-v1",
+      "tags": [
+        "character",
+        "man-scholar"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "equipment-01",
+      "assetType": "equipment",
+      "identityKey": "equipment:01",
+      "promptTemplate": "fantasy visual novel equipment icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-equipment-01-v1",
+      "tags": [
+        "equipment"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "equipment-02",
+      "assetType": "equipment",
+      "identityKey": "equipment:02",
+      "promptTemplate": "fantasy visual novel equipment icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-equipment-02-v1",
+      "tags": [
+        "equipment"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "equipment-03",
+      "assetType": "equipment",
+      "identityKey": "equipment:03",
+      "promptTemplate": "fantasy visual novel equipment icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-equipment-03-v1",
+      "tags": [
+        "equipment"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "equipment-04",
+      "assetType": "equipment",
+      "identityKey": "equipment:04",
+      "promptTemplate": "fantasy visual novel equipment icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-equipment-04-v1",
+      "tags": [
+        "equipment"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "equipment-05",
+      "assetType": "equipment",
+      "identityKey": "equipment:05",
+      "promptTemplate": "fantasy visual novel equipment icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-equipment-05-v1",
+      "tags": [
+        "equipment"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "equipment-06",
+      "assetType": "equipment",
+      "identityKey": "equipment:06",
+      "promptTemplate": "fantasy visual novel equipment icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-equipment-06-v1",
+      "tags": [
+        "equipment"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "equipment-07",
+      "assetType": "equipment",
+      "identityKey": "equipment:07",
+      "promptTemplate": "fantasy visual novel equipment icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-equipment-07-v1",
+      "tags": [
+        "equipment"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "equipment-08",
+      "assetType": "equipment",
+      "identityKey": "equipment:08",
+      "promptTemplate": "fantasy visual novel equipment icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-equipment-08-v1",
+      "tags": [
+        "equipment"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "item-01",
+      "assetType": "item",
+      "identityKey": "item:01",
+      "promptTemplate": "fantasy visual novel item icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-item-01-v1",
+      "tags": [
+        "item"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "item-02",
+      "assetType": "item",
+      "identityKey": "item:02",
+      "promptTemplate": "fantasy visual novel item icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-item-02-v1",
+      "tags": [
+        "item"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "item-03",
+      "assetType": "item",
+      "identityKey": "item:03",
+      "promptTemplate": "fantasy visual novel item icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-item-03-v1",
+      "tags": [
+        "item"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "item-04",
+      "assetType": "item",
+      "identityKey": "item:04",
+      "promptTemplate": "fantasy visual novel item icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-item-04-v1",
+      "tags": [
+        "item"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "item-05",
+      "assetType": "item",
+      "identityKey": "item:05",
+      "promptTemplate": "fantasy visual novel item icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-item-05-v1",
+      "tags": [
+        "item"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "item-06",
+      "assetType": "item",
+      "identityKey": "item:06",
+      "promptTemplate": "fantasy visual novel item icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-item-06-v1",
+      "tags": [
+        "item"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "item-07",
+      "assetType": "item",
+      "identityKey": "item:07",
+      "promptTemplate": "fantasy visual novel item icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-item-07-v1",
+      "tags": [
+        "item"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "item-08",
+      "assetType": "item",
+      "identityKey": "item:08",
+      "promptTemplate": "fantasy visual novel item icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-item-08-v1",
+      "tags": [
+        "item"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "skill-01",
+      "assetType": "skill",
+      "identityKey": "skill:01",
+      "promptTemplate": "fantasy visual novel skill icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-skill-01-v1",
+      "tags": [
+        "skill"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "skill-02",
+      "assetType": "skill",
+      "identityKey": "skill:02",
+      "promptTemplate": "fantasy visual novel skill icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-skill-02-v1",
+      "tags": [
+        "skill"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "skill-03",
+      "assetType": "skill",
+      "identityKey": "skill:03",
+      "promptTemplate": "fantasy visual novel skill icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-skill-03-v1",
+      "tags": [
+        "skill"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "skill-04",
+      "assetType": "skill",
+      "identityKey": "skill:04",
+      "promptTemplate": "fantasy visual novel skill icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-skill-04-v1",
+      "tags": [
+        "skill"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "skill-05",
+      "assetType": "skill",
+      "identityKey": "skill:05",
+      "promptTemplate": "fantasy visual novel skill icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-skill-05-v1",
+      "tags": [
+        "skill"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "skill-06",
+      "assetType": "skill",
+      "identityKey": "skill:06",
+      "promptTemplate": "fantasy visual novel skill icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-skill-06-v1",
+      "tags": [
+        "skill"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "skill-07",
+      "assetType": "skill",
+      "identityKey": "skill:07",
+      "promptTemplate": "fantasy visual novel skill icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-skill-07-v1",
+      "tags": [
+        "skill"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "skill-08",
+      "assetType": "skill",
+      "identityKey": "skill:08",
+      "promptTemplate": "fantasy visual novel skill icon, centered readable silhouette, transparent background, no text",
+      "width": 1254,
+      "height": 1254,
+      "alpha": "transparent",
+      "seed": "galgame-skill-08-v1",
+      "tags": [
+        "skill"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    }
+  ]
+}

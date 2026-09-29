@@ -106,6 +106,19 @@ for (const metadataLine of [
     assert.equal(segment.type, 'narration', metadataLine);
     assert.equal(segment.speaker, '旁白', metadataLine);
 }
+const narratorLabelSegments = createVisualNovelDisplaySegments('角色: 旁白\n雨声落在石阶上。', {
+    fallbackSpeaker: 'Dungeon Master',
+    role: 'character',
+});
+assert.equal(narratorLabelSegments[0].type, 'narration');
+assert.equal(narratorLabelSegments[0].speaker, '旁白');
+const narratorLabelHints = createCoreVisualDisplayEntityHints({
+    index: 11,
+    role: 'character',
+    speaker: 'Dungeon Master',
+    text: '角色: 旁白\n雨声落在石阶上。',
+});
+assert.equal(narratorLabelHints.some((entity) => entity.entityType === 'character'), false);
 
 const coreCharacterLabelHints = createCoreVisualDisplayEntityHints({
     index: 12,
@@ -157,6 +170,25 @@ const coreAmbiguousCharacterHints = createCoreVisualDisplayEntityHints({
 });
 assert.deepEqual(coreAmbiguousCharacterHints.map((entity) => entity.entityType), ['character', 'unknown']);
 assert.deepEqual(coreAmbiguousCharacterHints[0].visibleAttributes.map((attribute) => attribute.code), ['character-explicit-name']);
+
+const coreTraitCharacterHints = createCoreVisualDisplayEntityHints({
+    index: 16,
+    role: 'character',
+    speaker: '艾琳',
+    text: [
+        '性别: 女性',
+        '种族: 精灵',
+        '外观: 银发与尖耳',
+        '服装: 深蓝法袍',
+    ].join('\n'),
+});
+assert.deepEqual(coreTraitCharacterHints[0].visibleAttributes.map((attribute) => attribute.code), [
+    'character-explicit-name',
+    'character-explicit-gender-presentation',
+    'character-explicit-species',
+    'character-explicit-appearance',
+    'character-explicit-clothing',
+]);
 
 const naturalLanguageOnlyHints = createVisualProjectionEntityHints({
     index: 8,

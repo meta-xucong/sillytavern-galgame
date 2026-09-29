@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 560" role="img" aria-labelledby="title desc">
+  <title id="title">玩家符号</title>
+  <desc id="desc">中性的玩家角色标识</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#243447"/>
+      <stop offset="1" stop-color="#41627b"/>
+    </linearGradient>
+  </defs>
+  <rect width="420" height="560" rx="32" fill="url(#bg)"/>
+  <circle cx="210" cy="186" r="62" fill="#d1d5db"/>
+  <path d="M92 430c15-103 72-154 118-154s103 51 118 154" fill="#9ca3af"/>
+  <path d="M142 432h136" fill="none" stroke="#f3f4f6" stroke-width="8" stroke-linecap="round"/>
+</svg>

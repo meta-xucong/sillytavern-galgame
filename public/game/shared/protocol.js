@@ -1,7 +1,7 @@
 import {
     createDefaultAdaptivePresentationProfile,
     validateAdaptivePresentationProfile,
-} from './adaptive-presentation-schema.js?v=auto-414143592721';
+} from './adaptive-presentation-schema.js?v=auto-98042d7b8e67';
 
 export const PROTOCOL_VERSION = '1.0';
 export const ARC_BINDING_PROTOCOL_VERSION = 'galgame.arc-release.v1';
@@ -164,6 +164,7 @@ export function validateVisualCharacterBindings(manifest) {
     }
     const validateBindingList = (list, listName, { rejectDuplicateKeys = true } = {}) => {
         const keys = new Set();
+        const usedAssetIds = new Set();
         (Array.isArray(list) ? list : []).forEach((binding, index) => {
             const label = `visualBindings.${listName}[${index}]`;
             if (!binding || typeof binding !== 'object' || Array.isArray(binding)) {
@@ -173,6 +174,13 @@ export function validateVisualCharacterBindings(manifest) {
             requireString(binding.characterKey, `${label}.characterKey`, errors);
             requireString(binding.assetId, `${label}.assetId`, errors);
             validateVisualBindingAssetId(binding.assetId, `${label}.assetId`, errors);
+            const assetId = String(binding.assetId || '').trim();
+            if (assetId) {
+                if (usedAssetIds.has(assetId)) {
+                    errors.push(`Duplicate visual character asset "${assetId}"; each asset may be bound to only one character in a scenario.`);
+                }
+                usedAssetIds.add(assetId);
+            }
             if (binding.assetVersion !== undefined && (!Number.isSafeInteger(binding.assetVersion) || binding.assetVersion <= 0)) {
                 errors.push(`${label}.assetVersion must be a positive integer.`);
             }
@@ -207,6 +215,22 @@ export function validateVisualCharacterBindings(manifest) {
         errors.push('visualBindings.characterPool may contain at most 64 entries.');
     }
     validateBindingList(bindings.characterPool, 'characterPool', { rejectDuplicateKeys: false });
+    // A pool may mirror an explicitly bound character so legacy manifests can
+    // keep their alias table, but the same asset must never represent a
+    // different character. This preserves one-to-one identity semantics while
+    // allowing exact character aliases to be listed in both places.
+    const explicitByAssetId = new Map((Array.isArray(bindings.characters) ? bindings.characters : [])
+        .filter((binding) => binding && typeof binding === 'object' && !Array.isArray(binding))
+        .map((binding) => [String(binding.assetId || '').trim(), normalizeVisualCharacterName(binding.characterKey)]));
+    (Array.isArray(bindings.characterPool) ? bindings.characterPool : []).forEach((binding, index) => {
+        const assetId = String(binding?.assetId || '').trim();
+        const explicitKey = explicitByAssetId.get(assetId);
+        if (!assetId || !explicitKey) return;
+        const poolKey = normalizeVisualCharacterName(binding.characterKey);
+        if (poolKey && poolKey !== explicitKey) {
+            errors.push(`visualBindings.characterPool[${index}].assetId duplicates an asset bound to a different character.`);
+        }
+    });
     const defaults = bindings.defaults;
     if (defaults !== undefined) {
         if (!defaults || typeof defaults !== 'object' || Array.isArray(defaults)) {
@@ -284,17 +308,17 @@ function formatVisualCharacterBinding(binding, fallbackKey = '') {
 
 const visualCharacterPoolAssignments = new Map();
 
-function resolvePooledVisualCharacterBinding(manifest, pool, { normalizedName, arcId }) {
+function getReservedVisualCharacterAssetIds(manifest, arcId) {
+    return new Set(getVisualCharacterBindings(manifest, arcId)
+        .filter((binding) => (binding.channel || 'any') === 'any' || (binding.channel || 'any') === 'character')
+        .map((binding) => String(binding.assetId || '').trim())
+        .filter(Boolean));
+}
+
+function resolvePooledVisualCharacterBinding(manifest, pool, { normalizedName, arcId, sessionKey = '' }) {
     if (!normalizedName || !pool.length) return null;
-    const exactPoolMatch = pool.find((binding) => {
-        const channel = binding.channel || 'any';
-        if (channel !== 'any' && channel !== 'character') return false;
-        const names = [binding.characterKey, ...(Array.isArray(binding.aliases) ? binding.aliases : [])];
-        return names.some((candidate) => normalizeVisualCharacterName(candidate) === normalizedName);
-    });
-    if (exactPoolMatch) return formatVisualCharacterBinding(exactPoolMatch);
     const manifestKey = String(manifest?.id || manifest?.manifestId || 'manifest');
-    const scopeKey = `${manifestKey}|${arcId || ''}`;
+    const scopeKey = `${manifestKey}|${arcId || ''}|${String(sessionKey || 'default').trim() || 'default'}`;
     const assignmentKey = `${scopeKey}|${normalizedName}`;
     const assignments = visualCharacterPoolAssignments.get(scopeKey) || new Map();
     if (assignments.has(assignmentKey)) {
@@ -302,7 +326,24 @@ function resolvePooledVisualCharacterBinding(manifest, pool, { normalizedName, a
         const assigned = pool.find((binding) => String(binding.assetId || '').trim() === assignedAssetId);
         if (assigned) return formatVisualCharacterBinding(assigned);
     }
+    const exactPoolMatch = pool.find((binding) => {
+        const channel = binding.channel || 'any';
+        if (channel !== 'any' && channel !== 'character') return false;
+        const names = [binding.characterKey, ...(Array.isArray(binding.aliases) ? binding.aliases : [])];
+        return names.some((candidate) => normalizeVisualCharacterName(candidate) === normalizedName);
+    });
+    if (exactPoolMatch) {
+        const exactAssetId = String(exactPoolMatch.assetId || '').trim();
+        const assignedToAnother = [...assignments.entries()].some(([key, assetId]) => key !== assignmentKey && assetId === exactAssetId);
+        if (!assignedToAnother) {
+            assignments.set(assignmentKey, exactAssetId);
+            visualCharacterPoolAssignments.set(scopeKey, assignments);
+            return formatVisualCharacterBinding(exactPoolMatch);
+        }
+        return null;
+    }
     const usedAssetIds = new Set(assignments.values());
+    for (const assetId of getReservedVisualCharacterAssetIds(manifest, arcId)) usedAssetIds.add(assetId);
     const startIndex = hashVisualCharacterName(normalizedName) % pool.length;
     let selected = null;
     for (let offset = 0; offset < pool.length; offset += 1) {
@@ -312,7 +353,6 @@ function resolvePooledVisualCharacterBinding(manifest, pool, { normalizedName, a
             break;
         }
     }
-    selected ||= pool[startIndex];
     if (!selected) return null;
     assignments.set(assignmentKey, String(selected.assetId || '').trim());
     visualCharacterPoolAssignments.set(scopeKey, assignments);
@@ -328,6 +368,8 @@ export function resolveVisualCharacterBinding(manifest, {
     // rather than borrowing an arbitrary character asset.
     allowCharacterPoolFallback = true,
     allowPooledCharacterFallback,
+    sessionKey = '',
+    chatId = '',
 } = {}) {
     const normalizedName = normalizeVisualCharacterName(name);
     const normalizedRole = VISUAL_BINDING_CHANNELS.includes(role) ? role : 'character';
@@ -348,13 +390,14 @@ export function resolveVisualCharacterBinding(manifest, {
         const pooled = resolvePooledVisualCharacterBinding(manifest, getVisualCharacterPool(manifest, arcId), {
             normalizedName,
             arcId,
+            sessionKey: sessionKey || chatId,
         });
         if (pooled) return pooled;
     }
     // A character without an exact alias is unknown when pool fallback is
     // disabled. Do not use the manifest's generic character default either:
     // that would silently lock an unrelated NPC to an existing portrait.
-    if (normalizedRole === 'character' && !poolFallbackAllowed) {
+    if (normalizedRole === 'character') {
         return null;
     }
     const defaults = getVisualBindingConfig(manifest, arcId).defaults || {};

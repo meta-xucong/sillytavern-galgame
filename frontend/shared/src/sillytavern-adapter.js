@@ -987,6 +987,25 @@ const CORE_VISUAL_DISPLAY_LABEL_TYPES = new Map([
     ['角色', 'character'],
     ['人物', 'character'],
     ['立绘', 'character'],
+    ['性别', 'character'],
+    ['性别表现', 'character'],
+    ['gender', 'character'],
+    ['gender presentation', 'character'],
+    ['种族', 'character'],
+    ['物种', 'character'],
+    ['race', 'character'],
+    ['species', 'character'],
+    ['特征', 'character'],
+    ['外观', 'character'],
+    ['外貌', 'character'],
+    ['appearance', 'character'],
+    ['features', 'character'],
+    ['traits', 'character'],
+    ['服装', 'character'],
+    ['衣着', 'character'],
+    ['穿着', 'character'],
+    ['clothing', 'character'],
+    ['outfit', 'character'],
     ['character', 'character'],
     ['sprite', 'character'],
 ]);
@@ -1086,15 +1105,27 @@ function createVisibleMessageEntityHints(message, {
             confidenceBand: 'explicit',
         }
         : null;
-    const labelEntities = extractExplicitVisualProjectionLabelEntities(text, message?.index, { labelTypes, labelAttributeCodes });
+    const labelEntities = extractExplicitVisualProjectionLabelEntities(text, message?.index, {
+        labelTypes,
+        labelAttributeCodes,
+        labelAttributeCodeResolver: mergeCurrentSpeakerCharacterAppearance
+            ? resolveCoreCharacterLabelAttributeCode
+            : null,
+    });
     if (mergeCurrentSpeakerCharacterAppearance) {
         const characterLabels = uniqueEntitiesBySeed(labelEntities.filter((entity) => entity.entityType === 'character'));
-        if (speakerCharacterEntity && characterLabels.length === 1) {
+        const characterLabelAttributes = characterLabels.flatMap((entity) => entity.visibleAttributes || []);
+        const attributeCounts = new Map();
+        for (const attribute of characterLabelAttributes) {
+            attributeCounts.set(attribute.code, (attributeCounts.get(attribute.code) || 0) + 1);
+        }
+        const hasConflictingCharacterLabels = [...attributeCounts.values()].some((count) => count > 1);
+        if (speakerCharacterEntity && characterLabels.length > 0 && !hasConflictingCharacterLabels) {
             pushEntity({
                 ...speakerCharacterEntity,
                 visibleAttributes: mergeVisibleAttributes([
                     ...speakerCharacterEntity.visibleAttributes,
-                    ...characterLabels[0].visibleAttributes,
+                    ...characterLabelAttributes,
                 ]),
             });
         } else if (speakerCharacterEntity) {
@@ -1160,7 +1191,11 @@ function mergeVisibleAttributes(attributes) {
     return merged;
 }
 
-function extractExplicitVisualProjectionLabelEntities(text, messageIndex, { labelTypes, labelAttributeCodes }) {
+function extractExplicitVisualProjectionLabelEntities(text, messageIndex, {
+    labelTypes,
+    labelAttributeCodes,
+    labelAttributeCodeResolver,
+}) {
     const entities = [];
     for (const line of text.split(/\n+/)) {
         const trimmed = sanitizeText(line, 400).trim().replace(/^[-*•]\s*/, '');
@@ -1178,19 +1213,41 @@ function extractExplicitVisualProjectionLabelEntities(text, messageIndex, { labe
         if (!value) {
             continue;
         }
+        if (type === 'character' && (isNarratorSpeaker(value) || /^(?:你|玩家|player|user)$/iu.test(value))) {
+            continue;
+        }
+        const attributeCodes = labelAttributeCodeResolver?.(rawLabel, type)
+            || [labelAttributeCodes[type]];
         entities.push({
             entityKeySeed: `${messageIndex ?? ''}:${type}:${rawLabel}:${value}`,
             entityType: type,
             displayLabel: value.slice(0, 80),
-            visibleAttributes: [{
-                code: labelAttributeCodes[type],
+            visibleAttributes: attributeCodes.filter(Boolean).map((code) => ({
+                code,
                 value: value.slice(0, 120),
                 confidenceBand: 'explicit',
-            }],
+            })),
             confidenceBand: 'explicit',
         });
     }
     return entities;
+}
+
+function resolveCoreCharacterLabelAttributeCode(rawLabel, type) {
+    if (type !== 'character') return null;
+    if (['性别', '性别表现', 'gender', 'gender presentation'].includes(rawLabel)) {
+        return ['character-explicit-gender-presentation'];
+    }
+    if (['种族', '物种', 'race', 'species'].includes(rawLabel)) {
+        return ['character-explicit-species'];
+    }
+    if (['服装', '衣着', '穿着', 'clothing', 'outfit'].includes(rawLabel)) {
+        return ['character-explicit-clothing'];
+    }
+    if (['特征', '外观', '外貌', 'appearance', 'features', 'traits'].includes(rawLabel)) {
+        return ['character-explicit-appearance'];
+    }
+    return null;
 }
 
 function normalizeVisualProjectionLabel(value) {

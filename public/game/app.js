@@ -1,17 +1,18 @@
-import { createReleaseStore } from './shared/config-service.js?v=auto-414143592721';
+import { createReleaseStore } from './shared/config-service.js?v=auto-98042d7b8e67';
 import {
     getAssetUrl,
+    getVisualCharacterBindings,
     resolveVisualCharacterBinding,
     getActiveSillyTavernBindings,
     materializeManifestForArc,
     resolveAdaptivePresentationProfileBinding,
-} from './shared/protocol.js?v=auto-414143592721';
+} from './shared/protocol.js?v=auto-98042d7b8e67';
 import {
     AUTO_SAVE_ID,
     createCanonicalPlayerSaveRelease,
     createPlayerSaveStore,
     manualSaveIds,
-} from './shared/player-save.js?v=auto-414143592721';
+} from './shared/player-save.js?v=auto-98042d7b8e67';
 import {
     createCoreVisualDisplayEntityHints,
     createCoreVisualDisplayEntityKey,
@@ -19,10 +20,10 @@ import {
     createVisualNovelDisplaySegments,
     OriginalRuntimeBridgeClient,
     SillyTavernOriginalChatBridge,
-} from './shared/sillytavern-adapter.js?v=auto-414143592721';
-import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-414143592721';
-import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-414143592721';
-import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-414143592721';
+} from './shared/sillytavern-adapter.js?v=auto-98042d7b8e67';
+import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-98042d7b8e67';
+import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-98042d7b8e67';
+import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-98042d7b8e67';
 
 const releaseStore = createReleaseStore(null, { fallbackToLocal: false });
 const playerSaveStore = createPlayerSaveStore();
@@ -50,6 +51,8 @@ const CORE_VISUAL_DECISION_REQUEST_VERSION = 'galgame.visual-core-visual-decisio
 const CORE_VISUAL_DECISION_RESPONSE_VERSION = 'galgame.visual-core-visual-decisions-response.v2';
 const CORE_VISUAL_CONTEXT_RESPONSE_VERSION = 'galgame.visual-core-context.v1';
 const CORE_VISUAL_PLACEHOLDER_URL = './assets/visual-placeholder.svg';
+const CORE_NARRATOR_PLACEHOLDER_URL = './assets/narrator-placeholder.svg';
+const CORE_PLAYER_PLACEHOLDER_URL = './assets/player-placeholder.svg';
 const VISUAL_CONTEXT_REVALIDATION_INTERVAL_MS = 30_000;
 const CORE_VISUAL_LOCAL_DISABLE_CODES = new Set([
     'VISUAL_CORE_DISABLED',
@@ -1145,7 +1148,12 @@ function scheduleVisualBundleRefresh(snapshot, messageIndex) {
     visualBundleRequestToken = token;
     immediateVisualCharacterIdentity = '';
     coreVisualPresentationDetails.clear();
-    renderCoreVisualFallback({ preserveVerified: true });
+    const message = snapshot?.messages?.[messageIndex] || null;
+    const visualRole = getActiveVisualSpeakerContext(message, messageIndex).role;
+    // Clear the portrait before each visible message. Keeping the previous
+    // character during a narrator/player turn makes the avatar appear to
+    // speak for the wrong entity while the validated decision is pending.
+    renderCoreVisualFallback({ preserveVerified: false, role: visualRole });
     // Bind the active speaker locally as soon as the segment is shown. The
     // remote visual decision still validates and corrects the result later.
     void renderCoreVisualImmediateCharacter(snapshot, messageIndex, token);
@@ -1157,6 +1165,9 @@ function getActiveVisualSpeakerContext(message, messageIndex) {
         ? activeMessageSegments[activeSegmentIndex]
         : null;
     if (!activeSegment) {
+        if (message?.role === 'character' && isManifestNarratorSpeaker(message.speaker)) {
+            return { role: 'narrator', speaker: '旁白' };
+        }
         return {
             role: message?.role === 'player' ? 'player' : 'character',
             speaker: message?.role === 'player' ? '你' : message?.speaker || getMainCharacterName(),
@@ -1164,6 +1175,15 @@ function getActiveVisualSpeakerContext(message, messageIndex) {
     }
     if (message?.role === 'system') {
         return { role: 'system', speaker: '系统' };
+    }
+    if (message?.role === 'character' && isManifestNarratorSpeaker(activeSegment.speaker || message.speaker)) {
+        return { role: 'narrator', speaker: '旁白' };
+    }
+    if (message?.role === 'character'
+        && activeSegment.type === 'narration'
+        && isCharacterVisualMetadataSegment(activeSegment.text)
+        && !isManifestNarratorSpeaker(message.speaker)) {
+        return { role: 'character', speaker: message.speaker || getMainCharacterName() };
     }
     const role = activeSegment.type === 'narration'
         ? 'narrator'
@@ -1180,6 +1200,30 @@ function getActiveVisualSpeakerContext(message, messageIndex) {
                 ? '系统'
                 : activeSegment.speaker || message?.speaker || getMainCharacterName();
     return { role, speaker };
+}
+
+function isCharacterVisualMetadataSegment(value) {
+    return /^(?:角色|人物|立绘|性别|性别表现|种族|物种|外观|外貌|特征|服装|衣着|穿着|character|person|sprite|gender|species|appearance|features|clothing|outfit)\s*[:：]/iu.test(String(value || '').trim());
+}
+
+function normalizeManifestSpeakerName(value) {
+    return String(value || '')
+        .normalize('NFKC')
+        .replace(/[：:，,。！？!?]+$/u, '')
+        .replace(/\s+/gu, ' ')
+        .trim()
+        .toLocaleLowerCase();
+}
+
+function isManifestNarratorSpeaker(value) {
+    const normalized = normalizeManifestSpeakerName(value);
+    if (!normalized || !manifest) return false;
+    const arcId = release?.activeArcId || release?.arcId || manifest?.defaultArcId || '';
+    return getVisualCharacterBindings(manifest, arcId).some((binding) => {
+        if (binding?.channel !== 'narrator') return false;
+        return [binding.characterKey, ...(Array.isArray(binding.aliases) ? binding.aliases : [])]
+            .some((candidate) => normalizeManifestSpeakerName(candidate) === normalized);
+    });
 }
 
 async function renderCoreVisualImmediateCharacter(snapshot, messageIndex, token) {
@@ -1237,39 +1281,46 @@ function resetVisualPresentation() {
     setVisualStatus('');
 }
 
-function renderCoreVisualFallback({ preserveVerified = false } = {}) {
+function renderCoreVisualFallback({ preserveVerified = false, role = 'character' } = {}) {
     if (preserveVerified && coreVisualHasVerifiedPresentation) {
         return;
     }
     // Runtime failures and low-confidence matches use the same neutral
     // placeholder for every visual layer. Authored defaults are only used
     // when entering/resetting a stage, never as a visual-service fallback.
-    renderCoreVisualPlaceholder();
+    renderCoreVisualPlaceholder(role);
     coreVisualHasVerifiedPresentation = false;
     setVisualStatus('');
 }
 
-function renderCoreVisualPlaceholder() {
+function getCoreVisualPlaceholderUrl(role = 'character') {
+    if (role === 'player') return CORE_PLAYER_PLACEHOLDER_URL;
+    if (role === 'narrator' || role === 'system') return CORE_NARRATOR_PLACEHOLDER_URL;
+    return CORE_VISUAL_PLACEHOLDER_URL;
+}
+
+function renderCoreVisualPlaceholder(role = 'character') {
     applyCoreVisualPlaceholderBackground();
-    applyCoreVisualPlaceholderCharacter();
+    applyCoreVisualPlaceholderCharacter(role);
     renderCoreVisualIconStrip();
 }
 
 async function renderCoreVisualPresentation(snapshot, messageIndex, token) {
+    const visualRole = getActiveVisualSpeakerContext(snapshot?.messages?.[messageIndex], messageIndex).role;
     try {
         const baseUrl = getCoreVisualServiceUrl();
         if (!baseUrl) {
-            renderCoreVisualFallback({ preserveVerified: false });
+            renderCoreVisualFallback({ preserveVerified: false, role: visualRole });
             return;
         }
         const context = await readCoreVisualContext(baseUrl);
         if (!context?.enabled || !context.visualProfile) {
-            renderCoreVisualFallback({ preserveVerified: false });
+            renderCoreVisualFallback({ preserveVerified: false, role: visualRole });
             return;
         }
         const message = snapshot?.messages?.[messageIndex];
         if (!message) {
-            renderCoreVisualFallback({ preserveVerified: false });
+            renderCoreVisualFallback({ preserveVerified: false, role: visualRole });
             return;
         }
         const request = await createCoreVisualDecisionRequest({
@@ -1289,26 +1340,26 @@ async function renderCoreVisualPresentation(snapshot, messageIndex, token) {
         }
         if (!response.ok) {
             markCoreVisualUnavailable('VISUAL_CORE_SERVICE_REJECTED');
-            renderCoreVisualFallback({ preserveVerified: false });
+            renderCoreVisualFallback({ preserveVerified: false, role: visualRole });
             setVisualStatus('');
             return;
         }
         const body = await response.json();
         if (body?.schemaVersion !== CORE_VISUAL_DECISION_RESPONSE_VERSION) {
             markCoreVisualUnavailable('VISUAL_CORE_SERVICE_INVALID_RESPONSE');
-            renderCoreVisualFallback({ preserveVerified: false });
+            renderCoreVisualFallback({ preserveVerified: false, role: visualRole });
             setVisualStatus('');
             return;
         }
         if (body.ok !== true) {
             markCoreVisualUnavailable(body?.error?.code || 'VISUAL_CORE_SERVICE_INVALID_RESPONSE');
-            renderCoreVisualFallback({ preserveVerified: false });
+            renderCoreVisualFallback({ preserveVerified: false, role: visualRole });
             setVisualStatus('');
             return;
         }
         if (!Array.isArray(body.decisions)) {
             markCoreVisualUnavailable('VISUAL_CORE_SERVICE_INVALID_RESPONSE');
-            renderCoreVisualFallback({ preserveVerified: false });
+            renderCoreVisualFallback({ preserveVerified: false, role: visualRole });
             setVisualStatus('');
             return;
         }
@@ -1316,7 +1367,7 @@ async function renderCoreVisualPresentation(snapshot, messageIndex, token) {
     } catch (_error) {
         if (token === visualBundleRequestToken) {
             markCoreVisualUnavailable('VISUAL_CORE_SERVICE_UNAVAILABLE');
-            renderCoreVisualFallback({ preserveVerified: false });
+            renderCoreVisualFallback({ preserveVerified: false, role: visualRole });
             setVisualStatus('');
         }
     }
@@ -1485,8 +1536,15 @@ function decorateCoreVisualDecision(decision, request) {
 
 async function renderCoreVisualDecisions(decisions, baseUrl, token, request, response) {
     const byType = new Map();
+    const currentRole = request?.visibleContext?.current?.role || 'character';
     for (const type of CORE_VISUAL_TYPES) {
-        const typeDecisions = decisions.filter((decision) => decision?.entityType === type);
+        // Character assets belong only to character turns. A remote or
+        // stale projection must never make a narrator/player turn inherit a
+        // portrait, even if the response contains a character decision.
+        const typeDecisions = decisions.filter((decision) => (
+            decision?.entityType === type
+            && (type !== 'character' || currentRole === 'character')
+        ));
         const renderable = typeDecisions
             .filter((decision) => isRenderableCoreVisualDecision(decision, type, request, response))
             .map((decision) => decorateCoreVisualDecision(decision, request));
@@ -1520,13 +1578,25 @@ async function renderCoreVisualDecisions(decisions, baseUrl, token, request, res
     // The verified response is scoped to this visible message. Missing layers
     // remain unknown instead of inheriting an unrelated earlier entity.
     coreVisualHasVerifiedPresentation = coreVisualHasVerifiedPresentation || byType.size > 0;
+    const remoteCharacterIdentity = byType.get('character')
+        ? `${byType.get('character').assetId}:${byType.get('character').assetVersion}`
+        : '';
+    const immediateCharacterStillValid = Boolean(
+        remoteCharacterIdentity
+        && remoteCharacterIdentity === immediateVisualCharacterIdentity
+        && ui.stageHeroine?.dataset.visualAssetIdentity === immediateVisualCharacterIdentity,
+    );
     await Promise.all([
         byType.has('scene')
             ? applyCoreVisualBackground(byType.get('scene'), baseUrl, token)
             : Promise.resolve().then(() => applyCoreVisualPlaceholderBackground()),
         byType.has('character')
-            ? applyCoreVisualCharacter(byType.get('character'), baseUrl, token)
-            : Promise.resolve().then(() => applyCoreVisualPlaceholderCharacter()),
+            ? (immediateCharacterStillValid
+                ? Promise.resolve()
+                : applyCoreVisualCharacter(byType.get('character'), baseUrl, token))
+            : (currentRole === 'character' && immediateVisualCharacterIdentity
+                ? Promise.resolve()
+                : Promise.resolve().then(() => applyCoreVisualPlaceholderCharacter(currentRole))),
         applyCoreVisualIcons(byType, baseUrl, token),
     ]);
     if (token === visualBundleRequestToken) {
@@ -1891,11 +1961,11 @@ function applyCoreVisualPlaceholderBackground() {
     ui.stageBackdrop.classList.remove('is-visual-active', 'is-visual-transitioning');
 }
 
-function applyCoreVisualPlaceholderCharacter() {
+function applyCoreVisualPlaceholderCharacter(role = 'character') {
     if (!ui.stageHeroine) {
         return;
     }
-    ui.stageHeroine.style.backgroundImage = `url("${CORE_VISUAL_PLACEHOLDER_URL}")`;
+    ui.stageHeroine.style.backgroundImage = `url("${getCoreVisualPlaceholderUrl(role)}")`;
     delete ui.stageHeroine.dataset.visualAssetIdentity;
     ui.stageHeroine.classList.remove('is-visual-active', 'is-visual-unknown', 'is-visual-transitioning');
 }
@@ -2113,8 +2183,10 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
         : fullHints.filter((hint) => hint.entityType !== 'character' || isExplicitCharacterHint(hint));
     if (segmentMessage) {
         const segmentHints = createCoreVisualDisplayEntityHints(segmentMessage);
+        const segmentCharacterHint = segmentHints.find((hint) => hint.entityType === 'character');
+        const fullCharacterHint = fullHints.find((hint) => hint.entityType === 'character');
         const activeCharacterHint = hasActiveCharacterBinding
-            ? (segmentHints.find((hint) => hint.entityType === 'character') || {
+            ? (segmentCharacterHint || {
                 entityKeySeed: `active-speaker:${displayedMessage.speaker}`,
                 entityType: 'character',
                 displayLabel: displayedMessage.speaker || '角色',
@@ -2126,9 +2198,22 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
                 confidenceBand: 'explicit',
             })
             : null;
+        if (activeCharacterHint && fullCharacterHint && activeCharacterHint !== fullCharacterHint) {
+            const attributes = [...(activeCharacterHint.visibleAttributes || [])];
+            const seenCodes = new Set(attributes.map((attribute) => attribute.code));
+            for (const attribute of fullCharacterHint.visibleAttributes || []) {
+                if (!seenCodes.has(attribute.code)) {
+                    attributes.push(attribute);
+                    seenCodes.add(attribute.code);
+                }
+            }
+            activeCharacterHint.visibleAttributes = attributes;
+        }
         hints = [
             ...(activeCharacterHint ? [activeCharacterHint] : []),
-            ...fullHints.filter((hint) => hint.entityType !== 'character' || isExplicitCharacterHint(hint)),
+            ...fullHints.filter((hint) => activeCharacterHint
+                ? hint.entityType !== 'character'
+                : hint.entityType !== 'character' || isExplicitCharacterHint(hint)),
         ];
     } else if (hasActiveCharacterBinding && !hints.some((hint) => hint.entityType === 'character')) {
         hints = [{
@@ -2143,12 +2228,23 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
             confidenceBand: 'explicit',
         }, ...hints];
     }
+    const entityKeys = new Set();
+    const entityTypes = new Set();
     for (const hint of hints) {
         if (!CORE_VISUAL_TYPES.includes(hint.entityType)) {
             continue;
         }
+        if (hint.entityType === 'character' && entityTypes.has('character')) {
+            continue;
+        }
+        const entityKey = await createCoreVisualDisplayEntityKey(hint.entityType, hint.entityKeySeed);
+        if (entityKeys.has(entityKey)) {
+            continue;
+        }
+        entityKeys.add(entityKey);
+        entityTypes.add(hint.entityType);
         entities.push({
-            entityKey: await createCoreVisualDisplayEntityKey(hint.entityType, hint.entityKeySeed),
+            entityKey,
             entityType: hint.entityType,
             displayLabel: sanitizeCoreVisualProtocolValue(hint.displayLabel, 80)
                 || getVisualTypeLabel(hint.entityType),

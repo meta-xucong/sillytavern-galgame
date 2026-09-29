@@ -74,8 +74,8 @@ assert.equal(
     'asset_character_3946efea1eb5',
 );
 assert.equal(
-    resolveVisualCharacterBinding(visualBindingManifest, { name: '未登记角色', role: 'character' }).assetId,
-    'asset_character_8e5132df0905',
+    resolveVisualCharacterBinding(visualBindingManifest, { name: '未登记角色', role: 'character' }),
+    null,
 );
 const pooledVisualBindingManifest = {
     ...visualBindingManifest,
@@ -86,7 +86,7 @@ const pooledVisualBindingManifest = {
             {
                 characterKey: 'Pippa',
                 aliases: ['mage'],
-                assetId: 'asset_character_1b4268f70a37',
+                assetId: 'asset_character_7ab26f70c123',
                 assetVersion: 1,
                 channel: 'character',
             },
@@ -102,13 +102,78 @@ const pooledVisualBindingManifest = {
 };
 const pooledVisualBindingStatus = validateVisualCharacterBindings(pooledVisualBindingManifest);
 assert.equal(pooledVisualBindingStatus.valid, true, pooledVisualBindingStatus.errors.join('\\n'));
+const crossListDuplicateStatus = validateVisualCharacterBindings({
+    ...pooledVisualBindingManifest,
+    visualBindings: {
+        ...pooledVisualBindingManifest.visualBindings,
+        characterPool: [{
+            characterKey: 'Other Character',
+            aliases: [],
+            assetId: 'asset_character_1b4268f70a37',
+            assetVersion: 1,
+            channel: 'character',
+        }],
+    },
+});
+assert.equal(crossListDuplicateStatus.valid, false);
+assert.match(crossListDuplicateStatus.errors.join('\\n'), /different character/);
+const duplicateVisualBindingStatus = validateVisualCharacterBindings({
+    ...pooledVisualBindingManifest,
+    visualBindings: {
+        ...pooledVisualBindingManifest.visualBindings,
+        characters: [
+            ...pooledVisualBindingManifest.visualBindings.characters,
+            {
+                characterKey: 'Duplicate Portrait',
+                aliases: [],
+                assetId: 'asset_character_1b4268f70a37',
+                assetVersion: 1,
+                channel: 'character',
+            },
+        ],
+    },
+});
+assert.equal(duplicateVisualBindingStatus.valid, false);
+assert.match(duplicateVisualBindingStatus.errors.join('\\n'), /each asset may be bound to only one character/);
 assert.equal(
     resolveVisualCharacterBinding(pooledVisualBindingManifest, { name: '矮人', role: 'character' }).assetId,
     'asset_character_ef87a34e79ed',
 );
 const pooledUnknownOne = resolveVisualCharacterBinding(pooledVisualBindingManifest, { name: '陌生角色甲', role: 'character' });
 const pooledUnknownTwo = resolveVisualCharacterBinding(pooledVisualBindingManifest, { name: '陌生角色乙', role: 'character' });
-assert.notEqual(pooledUnknownOne.assetId, pooledUnknownTwo.assetId);
+const pooledUnknownThree = resolveVisualCharacterBinding(pooledVisualBindingManifest, { name: '陌生角色丙', role: 'character' });
+assert.equal(pooledUnknownOne.assetId, 'asset_character_7ab26f70c123');
+assert.equal(pooledUnknownTwo, null);
+assert.equal(pooledUnknownThree, null);
+assert.notEqual(pooledUnknownOne.assetId, 'asset_character_1b4268f70a37');
+const pooledConflictManifest = {
+    ...pooledVisualBindingManifest,
+    id: 'visual-binding-pool-conflict-test',
+    visualBindings: {
+        ...pooledVisualBindingManifest.visualBindings,
+        characterPool: [{
+            characterKey: 'Dwarf Warrior',
+            aliases: ['dwarf', '矮人'],
+            assetId: 'asset_character_ef87a34e79ed',
+            assetVersion: 1,
+            channel: 'character',
+        }],
+    },
+};
+assert.equal(resolveVisualCharacterBinding(pooledConflictManifest, { name: '陌生角色', role: 'character' }).assetId, 'asset_character_ef87a34e79ed');
+assert.equal(resolveVisualCharacterBinding(pooledConflictManifest, { name: '矮人', role: 'character' }), null);
+const sessionScopedA = resolveVisualCharacterBinding(pooledConflictManifest, {
+    name: '另一场游戏角色',
+    role: 'character',
+    sessionKey: 'chat-a',
+});
+const sessionScopedB = resolveVisualCharacterBinding(pooledConflictManifest, {
+    name: '另一场游戏角色',
+    role: 'character',
+    sessionKey: 'chat-b',
+});
+assert.equal(sessionScopedA.assetId, 'asset_character_ef87a34e79ed');
+assert.equal(sessionScopedB.assetId, 'asset_character_ef87a34e79ed');
 assert.equal(
     resolveVisualCharacterBinding(pooledVisualBindingManifest, {
         name: '陌生角色甲',
