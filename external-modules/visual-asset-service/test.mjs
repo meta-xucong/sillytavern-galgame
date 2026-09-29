@@ -22,6 +22,8 @@ import {
   VISUAL_RUNTIME_FIXED_INSTRUCTION,
   DICTIONARY_HASH,
   DICTIONARY_VERSION,
+  PREVIOUS_DICTIONARY_HASH,
+  PREVIOUS_DICTIONARY_VERSION,
   LEGACY_DICTIONARY_HASH,
   LEGACY_DICTIONARY_VERSION,
   VISUAL_ANALYSIS_SCHEMA_VERSION,
@@ -29,6 +31,8 @@ import {
   compareCandidateScores,
   createRuntimeV2MigrationPlan,
   executeRuntimeV2Migration,
+  createRuntimeV3MigrationPlan,
+  executeRuntimeV3Migration,
   ENTITY_TYPES,
   FileContentStore,
   FileVisualAnalysisCacheStore,
@@ -51,6 +55,7 @@ import {
   createUnknownCompatibilityReport,
   createVisualCandidateAssetInputFromAsset,
   createVisualCandidateDecision,
+  normalizeVisibleValue,
   createVisualAssetService,
   isMainModule,
   parseRuntimeV2MigrationCliArgs,
@@ -210,6 +215,19 @@ async function testRuntimeDictionaryV2AndScorer() {
   }, { entityType: 'character', codes: ['character.human'], confidence: 0.9, confidenceBand: 'explicit' }, { recent: [] });
   assert.equal(characterScore.policy.score, 59);
   assert.equal(characterScore.policy.runtimeTerms.capped, true);
+  assert.deepEqual([...normalizeVisibleValue('female human')].sort(), ['character.feminine', 'character.human']);
+  assert.deepEqual([...normalizeVisibleValue('male human')].sort(), ['character.human', 'character.masculine']);
+  assert.deepEqual([...normalizeVisibleValue('human')].sort(), ['character.human']);
+  const feminineCharacter = makeValidatedAssetRecord({
+    assetId: 'asset_character_feminine_dictionary',
+    assetType: 'character',
+    role: 'transparent-sprite',
+    tagCodes: ['character.feminine', 'character.elf'],
+    featureCodes: ['feature.transparent'],
+    analysis: makeAnalysis('character', ['character.feminine', 'character.elf'], ['feature.transparent']),
+    assetContentSha256: BUILTIN_UNKNOWN_ASSETS.character.assetContentSha256,
+  });
+  assert.deepEqual(feminineCharacter.analysis.tagCodes, ['character.feminine', 'character.elf']);
 
   const asset = makeValidatedAssetRecord({
     assetId: 'asset_scene_runtime_plan',
@@ -348,6 +366,55 @@ async function testRuntimeDictionaryV2AndScorer() {
     },
   }), (error) => error?.code === 'VISUAL_RUNTIME_MIGRATION_ROLLED_BACK');
   assert.equal(transactionState, 'old-active');
+
+  // Revision-2 catalogs remain readable and can be upgraded to the gender-aware
+  // revision-3 dictionary without changing their source records.
+  const previousAsset = {
+    ...structuredClone(asset),
+    dictionaryVersion: PREVIOUS_DICTIONARY_VERSION,
+    dictionaryHash: PREVIOUS_DICTIONARY_HASH,
+    analysis: {
+      schemaVersion: VISUAL_ANALYSIS_SCHEMA_VERSION,
+      status: 'ready',
+      description: 'previous scene',
+      tagCodes: ['scene.forest'],
+      attributeCodes: ['feature.dark'],
+      confidence: 0.8,
+      analyzerVersion: 'previous-fixture-v2',
+      errorCode: null,
+      dictionaryVersion: PREVIOUS_DICTIONARY_VERSION,
+      dictionaryHash: PREVIOUS_DICTIONARY_HASH,
+    },
+  };
+  previousAsset.assetMetadataHash = computeAssetMetadataHash(previousAsset);
+  const previousCatalog = {
+    ...structuredClone(catalog),
+    dictionaryVersion: PREVIOUS_DICTIONARY_VERSION,
+    dictionaryHash: PREVIOUS_DICTIONARY_HASH,
+    assetRefs: [{ ...catalog.assetRefs[0], assetMetadataHash: previousAsset.assetMetadataHash }],
+  };
+  previousCatalog.catalogHash = computeCatalogHash(previousCatalog);
+  const migrationV3 = await createRuntimeV3MigrationPlan({
+    catalog: previousCatalog,
+    assets: [previousAsset],
+    analyzeAsset: async () => makeAnalysis('scene', ['scene.forest'], ['feature.dark'], 0.96),
+  });
+  assert.equal(migrationV3.sourceDictionaryVersion, PREVIOUS_DICTIONARY_VERSION);
+  assert.equal(migrationV3.catalog.dictionaryVersion, DICTIONARY_VERSION);
+  assert.equal(migrationV3.assets[0].analysis.dictionaryHash, DICTIONARY_HASH);
+  let migrationV3State = 'old-active';
+  await executeRuntimeV3Migration({
+    catalog: previousCatalog,
+    assets: [previousAsset],
+    analyzeAsset: async () => makeAnalysis('scene', ['scene.forest'], ['feature.dark'], 0.96),
+    transaction: {
+      snapshot: async () => migrationV3State,
+      stage: async () => { migrationV3State = 'staged'; },
+      activate: async () => { migrationV3State = 'new-active'; },
+      rollback: async (snapshot) => { migrationV3State = snapshot; },
+    },
+  });
+  assert.equal(migrationV3State, 'new-active');
 
   const migrationPng = makePng({ colorType: 2, rgb: [71, 72, 73] });
   const migrationContentHash = `sha256:${createHash('sha256').update(migrationPng).digest('hex')}`;

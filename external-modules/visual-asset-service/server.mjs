@@ -49,7 +49,10 @@ const ANALYSIS_CACHE_RECORD_SCHEMA_VERSION = 'galgame.visual-asset-analysis-cach
 const DEFAULT_ANALYZER_CACHE_SCOPE = 'independent-analyzer-v1';
 const UNKNOWN_CATALOG_ID = 'galgame_builtin_unknown_assets';
 const UNKNOWN_CATALOG_REVISION = 1;
-const DICTIONARY_VERSION = 2;
+// Revision 3 adds explicit character presentation codes for gender expression.
+// Keep the previous hashes below so existing v2 catalogs can be migrated without
+// rewriting or deleting their source records.
+const DICTIONARY_VERSION = 3;
 const PNG_MIME = 'image/png';
 const MAX_REQUEST_BYTES = 24 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
@@ -97,7 +100,7 @@ const LICENSE_CODES = Object.freeze(['user-owned', 'public-domain', 'cc0', 'lice
 const LICENSE_CODE_SET = new Set(LICENSE_CODES);
 const TAG_DICTIONARY = Object.freeze({
   scene: ['scene.interior', 'scene.exterior', 'scene.ruins', 'scene.forest', 'scene.city', 'scene.dungeon', 'scene.night', 'scene.day'],
-  character: ['character.humanoid', 'character.elf', 'character.dwarf', 'character.human', 'character.rogue', 'character.mage', 'character.armored'],
+  character: ['character.humanoid', 'character.elf', 'character.dwarf', 'character.human', 'character.beastkin', 'character.undead', 'character.rogue', 'character.mage', 'character.cleric', 'character.merchant', 'character.noble', 'character.armored', 'character.masculine', 'character.feminine', 'character.androgynous'],
   equipment: ['equipment.weapon', 'equipment.armor', 'equipment.melee', 'equipment.ranged', 'equipment.magical', 'equipment.common'],
   item: ['item.consumable', 'item.quest', 'item.key', 'item.treasure', 'item.tool', 'item.misc'],
   skill: ['skill.magic', 'skill.stealth', 'skill.social', 'skill.combat', 'skill.crafting', 'skill.survival', 'skill.fire', 'skill.fireball', 'skill.shadow', 'skill.protective-ward', 'skill.ward'],
@@ -158,10 +161,23 @@ const DICTIONARY_HASH = `sha256:${sha256Hex(Buffer.from(canonicalJson({
   tags: TAG_DICTIONARY,
   features: FEATURE_DICTIONARY,
 }), 'utf8'))}`;
+const PREVIOUS_DICTIONARY_VERSION = 2;
+const PREVIOUS_TAG_DICTIONARY = Object.freeze({
+  scene: ['scene.interior', 'scene.exterior', 'scene.ruins', 'scene.forest', 'scene.city', 'scene.dungeon', 'scene.night', 'scene.day'],
+  character: ['character.humanoid', 'character.elf', 'character.dwarf', 'character.human', 'character.rogue', 'character.mage', 'character.armored'],
+  equipment: ['equipment.weapon', 'equipment.armor', 'equipment.melee', 'equipment.ranged', 'equipment.magical', 'equipment.common'],
+  item: ['item.consumable', 'item.quest', 'item.key', 'item.treasure', 'item.tool', 'item.misc'],
+  skill: ['skill.magic', 'skill.stealth', 'skill.social', 'skill.combat', 'skill.crafting', 'skill.survival', 'skill.fire', 'skill.fireball', 'skill.shadow', 'skill.protective-ward', 'skill.ward'],
+});
+const PREVIOUS_DICTIONARY_HASH = `sha256:${sha256Hex(Buffer.from(canonicalJson({
+  version: PREVIOUS_DICTIONARY_VERSION,
+  tags: PREVIOUS_TAG_DICTIONARY,
+  features: FEATURE_DICTIONARY,
+}), 'utf8'))}`;
 const LEGACY_DICTIONARY_VERSION = 1;
 const LEGACY_TAG_DICTIONARY = Object.freeze({
-  ...TAG_DICTIONARY,
-  skill: TAG_DICTIONARY.skill.slice(0, 6),
+  ...PREVIOUS_TAG_DICTIONARY,
+  skill: PREVIOUS_TAG_DICTIONARY.skill.slice(0, 6),
 });
 const LEGACY_DICTIONARY_HASH = `sha256:${sha256Hex(Buffer.from(canonicalJson({
   version: LEGACY_DICTIONARY_VERSION,
@@ -918,6 +934,12 @@ function validateVisualAnalysis(analysis, assetType) {
     if (allCodes.has(code)) throw visualError('VISUAL_ANALYSIS_SCHEMA_INVALID', 'analysis codes must be unique across arrays', 500);
     allCodes.add(code);
   }
+  if (assetType === 'character') {
+    const genderCodes = [...allCodes].filter((code) => ['character.masculine', 'character.feminine', 'character.androgynous'].includes(code));
+    if (genderCodes.length > 1) {
+      throw visualError('VISUAL_ANALYSIS_SCHEMA_INVALID', 'character analysis may contain at most one gender presentation code', 500);
+    }
+  }
   if (typeof analysis.confidence !== 'number' || !Number.isFinite(analysis.confidence) || analysis.confidence < 0 || analysis.confidence > 1) {
     throw visualError('VISUAL_ANALYSIS_SCHEMA_INVALID', 'analysis confidence is invalid', 500);
   }
@@ -971,6 +993,13 @@ const VISIBLE_VALUE_CODE_ALIASES = Object.freeze({
   精灵: 'character.elf',
   dwarf: 'character.dwarf',
   矮人: 'character.dwarf',
+  beastkin: 'character.beastkin',
+  beast: 'character.beastkin',
+  兽人: 'character.beastkin',
+  兽族: 'character.beastkin',
+  undead: 'character.undead',
+  不死: 'character.undead',
+  亡灵: 'character.undead',
   rogue: 'character.rogue',
   盗贼: 'character.rogue',
   mage: 'character.mage',
@@ -979,6 +1008,30 @@ const VISIBLE_VALUE_CODE_ALIASES = Object.freeze({
   armor: 'character.armored',
   knight: 'character.armored',
   骑士: 'character.armored',
+  cleric: 'character.cleric',
+  priest: 'character.cleric',
+  牧师: 'character.cleric',
+  merchant: 'character.merchant',
+  商人: 'character.merchant',
+  noble: 'character.noble',
+  贵族: 'character.noble',
+  masculine: 'character.masculine',
+  male: 'character.masculine',
+  man: 'character.masculine',
+  男性: 'character.masculine',
+  男: 'character.masculine',
+  masculine_presenting: 'character.masculine',
+  feminine: 'character.feminine',
+  female: 'character.feminine',
+  woman: 'character.feminine',
+  女性: 'character.feminine',
+  女: 'character.feminine',
+  feminine_presenting: 'character.feminine',
+  androgynous: 'character.androgynous',
+  nonbinary: 'character.androgynous',
+  unisex: 'character.androgynous',
+  中性: 'character.androgynous',
+  无性别: 'character.androgynous',
   武器: 'equipment.weapon',
   weapon: 'equipment.weapon',
   sword: 'equipment.weapon',
@@ -1046,6 +1099,13 @@ const VISIBLE_VALUE_CODE_ALIASES = Object.freeze({
   icon: 'feature.icon',
   图标: 'feature.icon',
 });
+// These tokens must only match as a complete normalized value. Substring
+// matching would otherwise classify "female" as male or "human" as man.
+const NON_SUBSTRING_VISIBLE_ALIASES = new Set([
+  'masculine', 'male', 'man', '男性', '男', 'masculine_presenting',
+  'feminine', 'female', 'woman', '女性', '女', 'feminine_presenting',
+  'androgynous', 'nonbinary', 'unisex', '中性', '无性别',
+]);
 
 function normalizeVisibleValue(value) {
   const text = String(value || '').trim().toLocaleLowerCase();
@@ -1053,7 +1113,12 @@ function normalizeVisibleValue(value) {
   if (!text) return codes;
   const exact = VISIBLE_VALUE_CODE_ALIASES[text];
   if (exact) codes.add(exact);
+  const tokens = text.split(/[^\p{L}\p{N}_-]+/u).filter(Boolean);
   for (const [alias, code] of Object.entries(VISIBLE_VALUE_CODE_ALIASES)) {
+    if (NON_SUBSTRING_VISIBLE_ALIASES.has(alias)) {
+      if (tokens.includes(alias)) codes.add(code);
+      continue;
+    }
     if (alias.length >= 2 && text.includes(alias)) codes.add(code);
   }
   return codes;
@@ -1180,6 +1245,59 @@ function assertLegacyVisualAnalysis(analysis, assetType) {
   if (analysis.errorCode !== null && !ANALYSIS_ERROR_CODE_SET.has(analysis.errorCode)) throw visualError('VISUAL_RUNTIME_MIGRATION_INVALID', 'legacy analysis error code is invalid', 409);
 }
 
+function assertPreviousVisualAnalysis(analysis, assetType) {
+  requireExactKeys(analysis, ['schemaVersion', 'status', 'description', 'tagCodes', 'attributeCodes', 'confidence', 'analyzerVersion', 'errorCode', 'dictionaryVersion', 'dictionaryHash'], 'previousAnalysis');
+  if (analysis.schemaVersion !== VISUAL_ANALYSIS_SCHEMA_VERSION || !ANALYSIS_STATUS_SET.has(analysis.status)) {
+    throw visualError('VISUAL_RUNTIME_MIGRATION_INVALID', 'previous analysis schema is not supported', 409);
+  }
+  if (analysis.dictionaryVersion !== PREVIOUS_DICTIONARY_VERSION || analysis.dictionaryHash !== PREVIOUS_DICTIONARY_HASH) {
+    throw visualError('VISUAL_RUNTIME_MIGRATION_DICTIONARY_MISMATCH', 'analysis is not an exact revision-2 record', 409);
+  }
+  assertSafeAnalyzerDescription(analysis.description, 'previousAnalysis.description', 0, MAX_ANALYZER_DESCRIPTION_LENGTH);
+  const allowed = new Set([...(PREVIOUS_TAG_DICTIONARY[assetType] || []), ...(FEATURE_DICTIONARY[assetType] || [])]);
+  for (const [field, values] of [['tagCodes', analysis.tagCodes], ['attributeCodes', analysis.attributeCodes]]) {
+    if (!Array.isArray(values) || values.length > MAX_ANALYZER_CODES) throw visualError('VISUAL_RUNTIME_MIGRATION_INVALID', `${field} is invalid`, 409);
+    const seen = new Set();
+    for (const code of values) {
+      assertSafeString(code, field, 1, 80, /^[a-z0-9._:-]+$/);
+      if (!allowed.has(code) || seen.has(code)) throw visualError('VISUAL_RUNTIME_MIGRATION_INVALID', `${field} contains an invalid previous code`, 409);
+      seen.add(code);
+    }
+  }
+  if (typeof analysis.confidence !== 'number' || !Number.isFinite(analysis.confidence) || analysis.confidence < 0 || analysis.confidence > 1) {
+    throw visualError('VISUAL_RUNTIME_MIGRATION_INVALID', 'previous analysis confidence is invalid', 409);
+  }
+  assertSafeString(analysis.analyzerVersion, 'previousAnalysis.analyzerVersion', 1, 80, /^[A-Za-z0-9._:-]+$/);
+  if (analysis.errorCode !== null && !ANALYSIS_ERROR_CODE_SET.has(analysis.errorCode)) throw visualError('VISUAL_RUNTIME_MIGRATION_INVALID', 'previous analysis error code is invalid', 409);
+}
+
+function assertPreviousVisualAsset(asset) {
+  if (!isPlainObject(asset) || asset.dictionaryVersion !== PREVIOUS_DICTIONARY_VERSION || asset.dictionaryHash !== PREVIOUS_DICTIONARY_HASH) {
+    throw visualError('VISUAL_RUNTIME_MIGRATION_DICTIONARY_MISMATCH', 'asset is not an exact revision-2 record', 409);
+  }
+  if (asset.schemaVersion !== ASSET_SCHEMA_VERSION || asset.status !== 'published') {
+    throw visualError('VISUAL_RUNTIME_MIGRATION_INVALID', 'previous asset is not published', 409);
+  }
+  assertPreviousVisualAnalysis(asset.analysis, asset.assetType);
+  if (asset.assetMetadataHash !== computeAssetMetadataHash(asset)) throw visualError('VISUAL_RUNTIME_MIGRATION_INVALID', 'previous asset metadata hash is invalid', 409);
+}
+
+function assertPreviousVisualCatalog(catalog) {
+  requireExactKeys(catalog, [
+    'schemaVersion', 'catalogId', 'catalogRevision', 'status', 'assetRefs', 'unknownAssetRefs',
+    'dictionaryVersion', 'dictionaryHash', 'createdAt', 'updatedAt', 'publishedAt', 'archivedAt', 'catalogHash',
+  ], 'previousCatalog');
+  if (catalog.schemaVersion !== CATALOG_SCHEMA_VERSION || catalog.dictionaryVersion !== PREVIOUS_DICTIONARY_VERSION || catalog.dictionaryHash !== PREVIOUS_DICTIONARY_HASH) {
+    throw visualError('VISUAL_RUNTIME_MIGRATION_DICTIONARY_MISMATCH', 'catalog is not an exact revision-2 record', 409);
+  }
+  if (catalog.status !== 'published') throw visualError('VISUAL_RUNTIME_MIGRATION_INVALID', 'previous catalog is not published', 409);
+  validateAssetRefs(catalog.assetRefs, 'previousCatalog.assetRefs', 512);
+  validateAssetRefs(catalog.unknownAssetRefs, 'previousCatalog.unknownAssetRefs', 5);
+  if (catalog.unknownAssetRefs.length !== 5 || catalog.catalogHash !== computeCatalogHash(catalog)) {
+    throw visualError('VISUAL_RUNTIME_MIGRATION_INVALID', 'previous catalog metadata is invalid', 409);
+  }
+}
+
 function assertLegacyVisualAsset(asset) {
   if (!isPlainObject(asset) || asset.dictionaryVersion !== LEGACY_DICTIONARY_VERSION || asset.dictionaryHash !== LEGACY_DICTIONARY_HASH) {
     throw visualError('VISUAL_RUNTIME_MIGRATION_DICTIONARY_MISMATCH', 'asset is not an exact revision-1 record', 409);
@@ -1273,6 +1391,73 @@ async function executeRuntimeV2Migration({ catalog, assets, analyzeAsset, transa
   if (!transaction || typeof transaction.stage !== 'function' || typeof transaction.activate !== 'function' || typeof transaction.rollback !== 'function') {
     return plan;
   }
+  const snapshot = typeof transaction.snapshot === 'function' ? await transaction.snapshot() : null;
+  try {
+    await transaction.stage(plan);
+    await transaction.activate(plan);
+    return plan;
+  } catch (error) {
+    await transaction.rollback(snapshot);
+    throw visualError('VISUAL_RUNTIME_MIGRATION_ROLLED_BACK', 'runtime dictionary migration rolled back', 409);
+  }
+}
+
+/**
+ * Migrate a published revision-2 catalog to revision 3. The source records
+ * remain untouched; every asset is re-analyzed so the resulting metadata is
+ * stamped with the new dictionary hash. This is intentionally separate from
+ * the historical v1 -> v2 migration above.
+ */
+async function createRuntimeV3MigrationPlan({ catalog, assets, analyzeAsset }) {
+  if (!isPlainObject(catalog) || !Array.isArray(assets) || typeof analyzeAsset !== 'function') {
+    throw visualError('VISUAL_RUNTIME_MIGRATION_INVALID', 'migration inputs are invalid', 400);
+  }
+  assertPreviousVisualCatalog(catalog);
+  const assetMap = new Map(assets.map((asset) => [`${asset.assetId}:${asset.assetVersion}`, asset]));
+  const migratedAssets = [];
+  for (const ref of catalog.assetRefs || []) {
+    const asset = assetMap.get(`${ref.assetId}:${ref.assetVersion}`);
+    if (!asset) throw visualError('VISUAL_RUNTIME_MIGRATION_ASSET_MISSING', 'catalog asset is missing', 409);
+    assertPreviousVisualAsset(asset);
+    if (canonicalJson(ref) !== canonicalJson(legacyAssetRef(asset))) {
+      throw visualError('VISUAL_RUNTIME_MIGRATION_REF_MISMATCH', 'previous catalog ref does not match asset', 409);
+    }
+    const analysis = await analyzeAsset(structuredClone(asset));
+    validateVisualAnalysis(analysis, asset.assetType);
+    const migrated = {
+      ...structuredClone(asset),
+      dictionaryVersion: DICTIONARY_VERSION,
+      dictionaryHash: DICTIONARY_HASH,
+      analysisStatus: analysis.status,
+      analysis: structuredClone(analysis),
+    };
+    migrated.assetMetadataHash = computeAssetMetadataHash(migrated);
+    validateAsset(migrated);
+    migratedAssets.push(migrated);
+  }
+  const migratedCatalog = {
+    ...structuredClone(catalog),
+    dictionaryVersion: DICTIONARY_VERSION,
+    dictionaryHash: DICTIONARY_HASH,
+    assetRefs: migratedAssets.map((asset) => assetToRef(asset)),
+    unknownAssetRefs: ENTITY_TYPES.map((type) => assetToRef(BUILTIN_UNKNOWN_ASSETS[type])),
+  };
+  migratedCatalog.catalogHash = computeCatalogHash(migratedCatalog);
+  validateCatalog(migratedCatalog);
+  return {
+    ok: true,
+    sourceDictionaryVersion: PREVIOUS_DICTIONARY_VERSION,
+    sourceDictionaryHash: PREVIOUS_DICTIONARY_HASH,
+    targetDictionaryVersion: DICTIONARY_VERSION,
+    targetDictionaryHash: DICTIONARY_HASH,
+    assets: migratedAssets,
+    catalog: migratedCatalog,
+  };
+}
+
+async function executeRuntimeV3Migration({ catalog, assets, analyzeAsset, transaction }) {
+  const plan = await createRuntimeV3MigrationPlan({ catalog, assets, analyzeAsset });
+  if (!transaction || typeof transaction.stage !== 'function' || typeof transaction.activate !== 'function' || typeof transaction.rollback !== 'function') return plan;
   const snapshot = typeof transaction.snapshot === 'function' ? await transaction.snapshot() : null;
   try {
     await transaction.stage(plan);
@@ -3886,6 +4071,9 @@ class FileVisualAssetStore extends MemoryVisualAssetStore {
     this.legacyAssets = new Map();
     this.legacyCatalogs = new Map();
     this.legacyActiveCatalogs = new Map();
+    this.previousAssets = new Map();
+    this.previousCatalogs = new Map();
+    this.previousActiveCatalogs = new Map();
     mkdirSync(this.assetsDir, { recursive: true });
     mkdirSync(this.catalogsDir, { recursive: true });
     mkdirSync(this.activeDir, { recursive: true });
@@ -3936,6 +4124,9 @@ class FileVisualAssetStore extends MemoryVisualAssetStore {
       assets: new Map([...this.assets.entries()].map(([key, value]) => [key, structuredClone(value)])),
       catalogs: new Map([...this.catalogs.entries()].map(([key, value]) => [key, structuredClone(value)])),
       activeCatalogs: new Map([...this.activeCatalogs.entries()].map(([key, value]) => [key, structuredClone(value)])),
+      previousAssets: new Map([...this.previousAssets.entries()].map(([key, value]) => [key, structuredClone(value)])),
+      previousCatalogs: new Map([...this.previousCatalogs.entries()].map(([key, value]) => [key, structuredClone(value)])),
+      previousActiveCatalogs: new Map([...this.previousActiveCatalogs.entries()].map(([key, value]) => [key, structuredClone(value)])),
     };
   }
 
@@ -3992,7 +4183,10 @@ class FileVisualAssetStore extends MemoryVisualAssetStore {
     const catalogRecord = parseJsonNoBom(readFileSync(files.catalog));
     requireExactKeys(catalogRecord, ['schemaVersion', 'catalog'], 'migrationCatalogRecord');
     if (catalogRecord.schemaVersion !== CATALOG_STORE_SCHEMA_VERSION) throw visualError('VISUAL_RUNTIME_MIGRATION_BATCH_INVALID', 'migration catalog schema invalid', 500);
-    validateCatalog(catalogRecord.catalog);
+    const isPreviousDictionaryBatch = catalogRecord.catalog.dictionaryVersion === PREVIOUS_DICTIONARY_VERSION
+      && catalogRecord.catalog.dictionaryHash === PREVIOUS_DICTIONARY_HASH;
+    if (isPreviousDictionaryBatch) assertPreviousVisualCatalog(catalogRecord.catalog);
+    else validateCatalog(catalogRecord.catalog);
     if (catalogRecord.catalog.status !== 'published' || catalogRecord.catalog.catalogHash !== manifest.targetCatalogHash || catalogRecord.catalog.catalogId !== manifest.targetCatalogId || catalogRecord.catalog.catalogRevision !== manifest.targetCatalogRevision) {
       throw visualError('VISUAL_RUNTIME_MIGRATION_BATCH_INVALID', 'migration catalog identity invalid', 500);
     }
@@ -4015,12 +4209,17 @@ class FileVisualAssetStore extends MemoryVisualAssetStore {
       const record = parseJsonNoBom(readFileSync(assetPath));
       requireExactKeys(record, ['schemaVersion', 'asset'], 'migrationAssetRecord');
       if (record.schemaVersion !== ASSET_STORE_SCHEMA_VERSION) throw visualError('VISUAL_RUNTIME_MIGRATION_BATCH_INVALID', 'migration asset schema invalid', 500);
-      validateAsset(record.asset);
+      if (isPreviousDictionaryBatch) assertPreviousVisualAsset(record.asset);
+      else validateAsset(record.asset);
       const key = this.migrationAssetKey(record.asset);
       if (key !== fileName.slice(0, -5).replace(/-(\d+)$/, ':$1')) {
         throw visualError('VISUAL_RUNTIME_MIGRATION_BATCH_INVALID', 'migration asset key mismatch', 500);
       }
-      if (!manifestHashesByKey.has(key) || record.asset.status !== 'published' || record.asset.dictionaryVersion !== DICTIONARY_VERSION || record.asset.assetContentSha256 !== manifestHashesByKey.get(key)) {
+      if (!manifestHashesByKey.has(key) || record.asset.status !== 'published'
+        || (isPreviousDictionaryBatch
+          ? (record.asset.dictionaryVersion !== PREVIOUS_DICTIONARY_VERSION || record.asset.dictionaryHash !== PREVIOUS_DICTIONARY_HASH)
+          : (record.asset.dictionaryVersion !== DICTIONARY_VERSION || record.asset.dictionaryHash !== DICTIONARY_HASH))
+        || record.asset.assetContentSha256 !== manifestHashesByKey.get(key)) {
         throw visualError('VISUAL_RUNTIME_MIGRATION_BATCH_INVALID', 'migration asset identity invalid', 500);
       }
       if (assetsByKey.has(key)) throw visualError('VISUAL_RUNTIME_MIGRATION_DUPLICATE_RECORD', 'migration batch has duplicate asset', 500);
@@ -4033,16 +4232,20 @@ class FileVisualAssetStore extends MemoryVisualAssetStore {
     const orderedAssets = [];
     for (const ref of catalogRecord.catalog.assetRefs) {
       const asset = assetsByKey.get(this.migrationAssetKey(ref));
-      if (!asset || canonicalJson(ref) !== canonicalJson(assetToRef(asset))) throw visualError('VISUAL_RUNTIME_MIGRATION_BATCH_INVALID', 'migration catalog ref mismatch', 500);
+      if (!asset || canonicalJson(ref) !== canonicalJson(legacyAssetRef(asset))) throw visualError('VISUAL_RUNTIME_MIGRATION_BATCH_INVALID', 'migration catalog ref mismatch', 500);
       orderedAssets.push(asset);
     }
     return { manifest, catalog: catalogRecord.catalog, pointer, assets: orderedAssets };
   }
 
   applyMigrationBatch(batch) {
-    for (const asset of batch.assets) this.assets.set(this.key(asset.assetId, asset.assetVersion), structuredClone(asset));
-    this.catalogs.set(this.catalogKey(batch.catalog.catalogId, batch.catalog.catalogRevision), structuredClone(batch.catalog));
-    this.activeCatalogs.set(batch.pointer.catalogId, {
+    const previous = batch.catalog.dictionaryVersion === PREVIOUS_DICTIONARY_VERSION && batch.catalog.dictionaryHash === PREVIOUS_DICTIONARY_HASH;
+    const assetMap = previous ? this.previousAssets : this.assets;
+    const catalogMap = previous ? this.previousCatalogs : this.catalogs;
+    const activeMap = previous ? this.previousActiveCatalogs : this.activeCatalogs;
+    for (const asset of batch.assets) assetMap.set(this.key(asset.assetId, asset.assetVersion), structuredClone(asset));
+    catalogMap.set(this.catalogKey(batch.catalog.catalogId, batch.catalog.catalogRevision), structuredClone(batch.catalog));
+    activeMap.set(batch.pointer.catalogId, {
       catalogId: batch.pointer.catalogId,
       catalogRevision: batch.pointer.catalogRevision,
       catalogHash: batch.pointer.catalogHash,
@@ -4053,13 +4256,42 @@ class FileVisualAssetStore extends MemoryVisualAssetStore {
 
   async getActiveMigrationSource() {
     if (this.activeMigrationPointer) {
-      const catalog = this.catalogs.get(this.catalogKey(this.activeMigrationPointer.catalogId, this.activeMigrationPointer.catalogRevision));
+      const key = this.catalogKey(this.activeMigrationPointer.catalogId, this.activeMigrationPointer.catalogRevision);
+      const catalog = [this.catalogs, this.previousCatalogs, this.legacyCatalogs]
+        .map((catalogs) => catalogs.get(key))
+        .find((record) => record?.catalogHash === this.activeMigrationPointer.catalogHash);
       if (catalog && catalog.catalogHash === this.activeMigrationPointer.catalogHash) {
-        const assets = catalog.assetRefs.map((ref) => this.assets.get(this.key(ref.assetId, ref.assetVersion))).filter(Boolean).map((asset) => structuredClone(asset));
+        const assetMap = catalog.dictionaryVersion === DICTIONARY_VERSION
+          ? this.assets
+          : catalog.dictionaryVersion === PREVIOUS_DICTIONARY_VERSION
+            ? this.previousAssets
+            : this.legacyAssets;
+        const assets = catalog.assetRefs.map((ref) => assetMap.get(this.key(ref.assetId, ref.assetVersion))).filter(Boolean).map((asset) => structuredClone(asset));
         if (assets.length !== catalog.assetRefs.length) throw visualError('VISUAL_RUNTIME_MIGRATION_ASSET_MISSING', 'active migration catalog asset is missing', 409);
         return { catalog: structuredClone(catalog), assets };
       }
       throw visualError('VISUAL_RUNTIME_MIGRATION_SOURCE_INVALID', 'active migration pointer is stale', 409);
+    }
+    if (this.previousActiveCatalogs.size > 1) {
+      throw visualError('VISUAL_RUNTIME_MIGRATION_SOURCE_AMBIGUOUS', 'multiple previous active catalogs found', 409);
+    }
+    if (this.previousActiveCatalogs.size === 1) {
+      const pointer = [...this.previousActiveCatalogs.values()][0];
+      const catalog = this.previousCatalogs.get(this.catalogKey(pointer.catalogId, pointer.catalogRevision));
+      if (!catalog || catalog.catalogHash !== pointer.catalogHash) {
+        throw visualError('VISUAL_RUNTIME_MIGRATION_SOURCE_INVALID', 'previous active catalog pointer is stale', 409);
+      }
+      const assets = [];
+      for (const ref of catalog.assetRefs) {
+        const asset = this.previousAssets.get(this.key(ref.assetId, ref.assetVersion));
+        if (!asset) throw visualError('VISUAL_RUNTIME_MIGRATION_ASSET_MISSING', 'previous active catalog asset is missing', 409);
+        assertPreviousVisualAsset(asset);
+        if (canonicalJson(ref) !== canonicalJson(legacyAssetRef(asset))) {
+          throw visualError('VISUAL_RUNTIME_MIGRATION_REF_MISMATCH', 'previous active catalog ref does not match asset', 409);
+        }
+        assets.push(structuredClone(asset));
+      }
+      return { catalog: structuredClone(catalog), assets };
     }
     if (this.legacyActiveCatalogs.size > 1) {
       throw visualError('VISUAL_RUNTIME_MIGRATION_SOURCE_AMBIGUOUS', 'multiple legacy active catalogs found', 409);
@@ -4096,6 +4328,23 @@ class FileVisualAssetStore extends MemoryVisualAssetStore {
       return { catalog: structuredClone(catalog), assets };
     }
     throw visualError('VISUAL_RUNTIME_MIGRATION_SOURCE_MISSING', 'no active catalog is available for migration', 409);
+  }
+
+  async getMigrationSourceForPointer(pointer) {
+    if (!pointer || typeof pointer !== 'object') throw visualError('VISUAL_RUNTIME_MIGRATION_SOURCE_INVALID', 'migration pointer is invalid', 409);
+    const key = this.catalogKey(pointer.catalogId, pointer.catalogRevision);
+    const catalog = [this.catalogs, this.previousCatalogs, this.legacyCatalogs]
+      .map((catalogs) => catalogs.get(key))
+      .find((record) => record?.catalogHash === pointer.catalogHash);
+    if (!catalog) throw visualError('VISUAL_RUNTIME_MIGRATION_SOURCE_INVALID', 'migration pointer is stale', 409);
+    const assetMap = catalog.dictionaryVersion === DICTIONARY_VERSION
+      ? this.assets
+      : catalog.dictionaryVersion === PREVIOUS_DICTIONARY_VERSION
+        ? this.previousAssets
+        : this.legacyAssets;
+    const assets = catalog.assetRefs.map((ref) => assetMap.get(this.key(ref.assetId, ref.assetVersion))).filter(Boolean).map((asset) => structuredClone(asset));
+    if (assets.length !== catalog.assetRefs.length) throw visualError('VISUAL_RUNTIME_MIGRATION_ASSET_MISSING', 'migration catalog asset is missing', 409);
+    return { catalog: structuredClone(catalog), assets };
   }
 
   readActiveMigrationPointerSync() {
@@ -4217,8 +4466,11 @@ class FileVisualAssetStore extends MemoryVisualAssetStore {
           this.assets = new Map([...snapshot.assets.entries()].map(([key, value]) => [key, structuredClone(value)]));
           this.catalogs = new Map([...snapshot.catalogs.entries()].map(([key, value]) => [key, structuredClone(value)]));
           this.activeCatalogs = new Map([...snapshot.activeCatalogs.entries()].map(([key, value]) => [key, structuredClone(value)]));
-          this.activeMigrationPointer = snapshot.activeMigrationPointer ? structuredClone(snapshot.activeMigrationPointer) : null;
-          this.migrationBatchId = snapshot.migrationBatchId || null;
+      this.activeMigrationPointer = snapshot.activeMigrationPointer ? structuredClone(snapshot.activeMigrationPointer) : null;
+      this.migrationBatchId = snapshot.migrationBatchId || null;
+          this.previousAssets = new Map([...(snapshot.previousAssets || new Map()).entries()].map(([key, value]) => [key, structuredClone(value)]));
+          this.previousCatalogs = new Map([...(snapshot.previousCatalogs || new Map()).entries()].map(([key, value]) => [key, structuredClone(value)]));
+          this.previousActiveCatalogs = new Map([...(snapshot.previousActiveCatalogs || new Map()).entries()].map(([key, value]) => [key, structuredClone(value)]));
         }
       },
     };
@@ -4237,6 +4489,13 @@ class FileVisualAssetStore extends MemoryVisualAssetStore {
         this.legacyAssets.set(legacyKey, record.asset);
         continue;
       }
+      if (record.asset.dictionaryVersion === PREVIOUS_DICTIONARY_VERSION && record.asset.dictionaryHash === PREVIOUS_DICTIONARY_HASH) {
+        assertPreviousVisualAsset(record.asset);
+        const previousKey = this.key(record.asset.assetId, record.asset.assetVersion);
+        if (this.previousAssets.has(previousKey)) throw visualError('VISUAL_RUNTIME_MIGRATION_INVALID', 'duplicate previous asset record', 500);
+        this.previousAssets.set(previousKey, record.asset);
+        continue;
+      }
       validateAsset(record.asset);
       const key = this.key(record.asset.assetId, record.asset.assetVersion);
       if (this.assets.has(key)) throw visualError('VISUAL_ASSET_METADATA_INVALID', 'duplicate asset record', 500);
@@ -4252,6 +4511,13 @@ class FileVisualAssetStore extends MemoryVisualAssetStore {
         const legacyKey = this.catalogKey(record.catalog.catalogId, record.catalog.catalogRevision);
         if (this.legacyCatalogs.has(legacyKey)) throw visualError('VISUAL_RUNTIME_MIGRATION_INVALID', 'duplicate legacy catalog record', 500);
         this.legacyCatalogs.set(legacyKey, record.catalog);
+        continue;
+      }
+      if (record.catalog.dictionaryVersion === PREVIOUS_DICTIONARY_VERSION && record.catalog.dictionaryHash === PREVIOUS_DICTIONARY_HASH) {
+        assertPreviousVisualCatalog(record.catalog);
+        const previousKey = this.catalogKey(record.catalog.catalogId, record.catalog.catalogRevision);
+        if (this.previousCatalogs.has(previousKey)) throw visualError('VISUAL_RUNTIME_MIGRATION_INVALID', 'duplicate previous catalog record', 500);
+        this.previousCatalogs.set(previousKey, record.catalog);
         continue;
       }
       validateCatalog(record.catalog);
@@ -4275,6 +4541,10 @@ class FileVisualAssetStore extends MemoryVisualAssetStore {
       } else if (legacyCatalog) {
         if (legacyCatalog.catalogHash !== record.catalogHash) throw visualError('VISUAL_RUNTIME_MIGRATION_SOURCE_INVALID', 'legacy active catalog pointer invalid', 500);
         this.legacyActiveCatalogs.set(record.catalogId, record);
+      } else if (this.previousCatalogs.has(key)) {
+        const previousCatalog = this.previousCatalogs.get(key);
+        if (previousCatalog.catalogHash !== record.catalogHash) throw visualError('VISUAL_RUNTIME_MIGRATION_SOURCE_INVALID', 'previous active catalog pointer invalid', 500);
+        this.previousActiveCatalogs.set(record.catalogId, record);
       } else {
         throw visualError('VISUAL_CATALOG_METADATA_INVALID', 'active catalog pointer invalid', 500);
       }
@@ -4503,6 +4773,16 @@ class FileVisualAnalysisCacheStore extends MemoryVisualAnalysisCacheStore {
       let record;
       try {
         record = parseJsonNoBom(readFileSync(filePath));
+        // Historical analysis cache entries are immutable evidence from an
+        // older dictionary.  Keep the files on disk, but do not load them into
+        // the current cache because their output cannot satisfy the current
+        // closed dictionary contract. They will be refreshed lazily when the
+        // asset is analyzed again.
+        const historicalDictionary = record?.analysis?.dictionaryVersion === PREVIOUS_DICTIONARY_VERSION
+          && record?.analysis?.dictionaryHash === PREVIOUS_DICTIONARY_HASH;
+        const historicalLegacyDictionary = record?.analysis?.dictionaryVersion === LEGACY_DICTIONARY_VERSION
+          && record?.analysis?.dictionaryHash === LEGACY_DICTIONARY_HASH;
+        if (historicalDictionary || historicalLegacyDictionary) continue;
         validateVisualAnalysisCacheRecord(record);
       } catch (error) {
         if (error?.code?.startsWith?.('VISUAL_ANALYSIS_') || error?.code === 'VISUAL_ASSET_JSON_BOM_REJECTED') throw error;
@@ -6404,6 +6684,9 @@ export function createVisualAssetService({
   }
 
   function createAnalyzerTask(assetType) {
+    const characterGenderInstruction = assetType === 'character'
+      ? 'For a character, add at most one gender-presentation tag: character.masculine, character.feminine or character.androgynous; omit it when the image is ambiguous.'
+      : '';
     return [
       'Return only closed visual tags as a JSON object with description, tagCodes, attributeCodes, confidence and analyzerVersion for this PNG.',
       'Use only the finite dictionary codes listed here; do not return prose or extra fields.',
@@ -6411,6 +6694,7 @@ export function createVisualAssetService({
       'confidence must be a JSON number strictly greater than 0 and less than or equal to 1; never return a percentage, string, zero, NaN or Infinity.',
       `Allowed tagCodes: ${TAG_DICTIONARY[assetType].join(', ')}.`,
       `Allowed attributeCodes: ${FEATURE_DICTIONARY[assetType].join(', ')}.`,
+      characterGenderInstruction,
     ].join(' ');
   }
 
@@ -6793,15 +7077,20 @@ export function createVisualAssetService({
     };
   }
 
-  async function analyzeRuntimeMigrationAsset(asset) {
+  async function analyzeRuntimeMigrationAsset(asset, { allowUnavailable = false } = {}) {
     const content = await contentStore.get(asset.assetContentSha256);
     if (!content) throw visualError('VISUAL_RUNTIME_MIGRATION_CONTENT_MISSING', 'legacy asset content is missing', 409);
     if (content.mime !== asset.canonicalMime || `sha256:${sha256Hex(content.bytes)}` !== asset.assetContentSha256) {
       throw visualError('VISUAL_RUNTIME_MIGRATION_CONTENT_MISMATCH', 'legacy asset content does not match', 409);
     }
     const analysis = await analyzeVisualAsset({ bytes: content.bytes, assetType: asset.assetType, contentHash: asset.assetContentSha256 });
-    if (analysis?.status !== 'ready') {
-      throw visualError('VISUAL_RUNTIME_MIGRATION_ANALYSIS_UNAVAILABLE', 'runtime migration requires ready visual analysis', 409);
+    // A dictionary migration must remain possible when the optional analyzer is
+    // offline.  Ready analyses are preferred; unavailable/failed analyses are
+    // still valid closed records and are carried forward with the new
+    // dictionary hash.  This preserves the source catalog without inventing
+    // tags.  A later analyzer run can refresh these assets normally.
+    if (analysis?.status !== 'ready' && (!allowUnavailable || !['unavailable', 'failed'].includes(analysis?.status))) {
+      throw visualError('VISUAL_RUNTIME_MIGRATION_ANALYSIS_UNAVAILABLE', 'runtime migration analysis result is invalid', 409);
     }
     return analysis;
   }
@@ -6810,11 +7099,14 @@ export function createVisualAssetService({
     if (!(assetStore instanceof FileVisualAssetStore) || typeof assetStore.getActiveMigrationSource !== 'function') {
       throw visualError('VISUAL_RUNTIME_MIGRATION_SOURCE_INVALID', 'service-owned migration requires FileVisualAssetStore', 409);
     }
-    const source = await assetStore.getActiveMigrationSource();
-    const oldPointer = migrationPointerFromCatalog(source.catalog);
     const control = await effectiveVisualControlStore.getControl();
     validateVisualControl(control);
-    if (!control.activeCatalog || canonicalJson(control.activeCatalog) !== canonicalJson(oldPointer)) {
+    if (!control.activeCatalog) throw visualError('VISUAL_RUNTIME_MIGRATION_CONTROL_MISMATCH', 'visual control does not point to a migration source', 409);
+    const source = typeof assetStore.getMigrationSourceForPointer === 'function'
+      ? await assetStore.getMigrationSourceForPointer(control.activeCatalog)
+      : await assetStore.getActiveMigrationSource();
+    const oldPointer = migrationPointerFromCatalog(source.catalog);
+    if (canonicalJson(control.activeCatalog) !== canonicalJson(oldPointer)) {
       throw visualError('VISUAL_RUNTIME_MIGRATION_CONTROL_MISMATCH', 'visual control does not point to the migration source', 409, { oldPointer });
     }
     return { source, control, oldPointer };
@@ -6828,11 +7120,16 @@ export function createVisualAssetService({
   }
 
   async function createOwnedRuntimeMigrationPlan(context) {
-    return createRuntimeV2MigrationPlan({
+    const allowUnavailable = context.source.catalog.dictionaryVersion === PREVIOUS_DICTIONARY_VERSION;
+    const args = {
       catalog: context.source.catalog,
       assets: context.source.assets,
-      analyzeAsset: analyzeRuntimeMigrationAsset,
-    });
+      analyzeAsset: (asset) => analyzeRuntimeMigrationAsset(asset, { allowUnavailable }),
+    };
+    if (context.source.catalog.dictionaryVersion === PREVIOUS_DICTIONARY_VERSION && context.source.catalog.dictionaryHash === PREVIOUS_DICTIONARY_HASH) {
+      return createRuntimeV3MigrationPlan(args);
+    }
+    return createRuntimeV2MigrationPlan(args);
   }
 
   async function previewRuntimeV2CatalogMigration() {
@@ -6914,10 +7211,15 @@ export function createVisualAssetService({
       },
     };
     try {
-      await executeRuntimeV2Migration({
+      const executeMigration = context.source.catalog.dictionaryVersion === PREVIOUS_DICTIONARY_VERSION
+        ? executeRuntimeV3Migration
+        : executeRuntimeV2Migration;
+      await executeMigration({
         catalog: context.source.catalog,
         assets: context.source.assets,
-        analyzeAsset: analyzeRuntimeMigrationAsset,
+        analyzeAsset: (asset) => analyzeRuntimeMigrationAsset(asset, {
+          allowUnavailable: context.source.catalog.dictionaryVersion === PREVIOUS_DICTIONARY_VERSION,
+        }),
         transaction,
       });
     } catch (error) {
@@ -6952,13 +7254,27 @@ export function createVisualAssetService({
         ? assetStore.createRuntimeV2MigrationTransaction()
         : null
     );
-    return executeRuntimeV2Migration({
+    const migrationArgs = {
       catalog: sourceCatalog,
       assets: sourceAssets,
-      analyzeAsset: async (asset) => {
-        return analyzeRuntimeMigrationAsset(asset);
-      },
+      analyzeAsset: async (asset) => analyzeRuntimeMigrationAsset(asset, {
+        allowUnavailable: sourceCatalog.dictionaryVersion === PREVIOUS_DICTIONARY_VERSION,
+      }),
       transaction: effectiveTransaction,
+    };
+    if (sourceCatalog.dictionaryVersion === PREVIOUS_DICTIONARY_VERSION && sourceCatalog.dictionaryHash === PREVIOUS_DICTIONARY_HASH) {
+      return executeRuntimeV3Migration(migrationArgs);
+    }
+    return executeRuntimeV2Migration(migrationArgs);
+  }
+
+  async function migrateRuntimeV3Catalog({ catalog, assets, transaction } = {}) {
+    if (!catalog || !Array.isArray(assets)) throw visualError('VISUAL_RUNTIME_MIGRATION_SOURCE_INVALID', 'migration catalog and assets must be loaded together', 400);
+    return executeRuntimeV3Migration({
+      catalog,
+      assets,
+      analyzeAsset: async (asset) => analyzeRuntimeMigrationAsset(asset, { allowUnavailable: true }),
+      transaction: transaction || null,
     });
   }
 
@@ -8499,6 +8815,7 @@ export function createVisualAssetService({
     updateCatalogLifecycle,
     rollbackCatalog,
     migrateRuntimeV2Catalog,
+    migrateRuntimeV3Catalog,
     previewRuntimeV2CatalogMigration,
     migrateRuntimeV2CatalogAndActivateControl,
     stores: { assetStore, contentStore },
@@ -8883,6 +9200,10 @@ export {
   BUILTIN_UNKNOWN_ASSETS,
   DICTIONARY_HASH,
   DICTIONARY_VERSION,
+  TAG_DICTIONARY,
+  FEATURE_DICTIONARY,
+  PREVIOUS_DICTIONARY_HASH,
+  PREVIOUS_DICTIONARY_VERSION,
   LEGACY_DICTIONARY_HASH,
   LEGACY_DICTIONARY_VERSION,
   VISUAL_ANALYSIS_SCHEMA_VERSION,
@@ -8916,10 +9237,13 @@ export {
   compareCandidateScores,
   createRuntimeV2MigrationPlan,
   executeRuntimeV2Migration,
+  createRuntimeV3MigrationPlan,
+  executeRuntimeV3Migration,
   parseRuntimeV2MigrationCliArgs,
   createPngChunk,
   createVisualCandidateAssetInputFromAsset,
   createVisualCandidateDecision,
+  normalizeVisibleValue,
   encodePng,
   parseVisualCandidateDecisionInputJson,
   validateUnknownCompatibilityReport,

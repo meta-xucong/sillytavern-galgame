@@ -27,6 +27,10 @@ import {
   FileVisualControlStore,
   UPLOAD_SCHEMA_VERSION,
   CATALOG_DRAFT_SCHEMA_VERSION,
+  DICTIONARY_VERSION,
+  DICTIONARY_HASH,
+  VISUAL_ANALYSIS_SCHEMA_VERSION,
+  computeAssetMetadataHash,
   encodePng,
 } from '../../external-modules/visual-asset-service/server.mjs';
 
@@ -198,6 +202,23 @@ function metadataFor(asset) {
   };
 }
 
+function curatedAnalysisFor(metadata) {
+  const tagCodes = [...new Set(metadata.tagCodes)];
+  const attributeCodes = [...new Set(metadata.featureCodes)].filter((code) => !tagCodes.includes(code));
+  return {
+    schemaVersion: VISUAL_ANALYSIS_SCHEMA_VERSION,
+    status: 'ready',
+    description: `Curated manifest metadata for ${metadata.title}`,
+    tagCodes,
+    attributeCodes,
+    confidence: 1,
+    analyzerVersion: 'curated-manifest-v1',
+    errorCode: null,
+    dictionaryVersion: DICTIONARY_VERSION,
+    dictionaryHash: DICTIONARY_HASH,
+  };
+}
+
 export async function runCuratedBatch({ manifestPath = DEFAULT_MANIFEST, dataDir, inputDir = null, outputDir = null, activate = true, keepTemp = false } = {}) {
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
   if (manifest.schemaVersion !== 'galgame.visual-curated-asset-seeds.v1') throw new Error('unsupported curated seed manifest');
@@ -217,15 +238,36 @@ export async function runCuratedBatch({ manifestPath = DEFAULT_MANIFEST, dataDir
   for (const asset of manifest.assets) {
     const suppliedPath = inputDir ? path.join(inputDir, `${asset.assetKey}.png`) : null;
     const bytes = suppliedPath && existsSync(suppliedPath) ? await readFile(suppliedPath) : renderAsset(asset.seed, asset);
-    const uploadedAsset = await service.uploadAsset({ schemaVersion: UPLOAD_SCHEMA_VERSION, metadata: metadataFor(asset), imageBase64: bytes.toString('base64') });
+    const metadata = metadataFor(asset);
+    let version = metadata.assetVersion;
+    while (await stores.assetStore.getAsset(metadata.assetId, version)) version += 1;
+    metadata.assetVersion = version;
+    const uploadedAsset = await service.uploadAsset({ schemaVersion: UPLOAD_SCHEMA_VERSION, metadata, imageBase64: bytes.toString('base64') });
+    // The manifest is itself an explicit, operator-reviewed closed tag source.
+    // Promote those tags to a ready analysis record when no external analyzer
+    // is configured, without claiming that a provider was called.
+    const finalizedAsset = {
+      ...uploadedAsset,
+      analysisStatus: 'ready',
+      analysis: curatedAnalysisFor(metadata),
+      updatedAt: new Date().toISOString(),
+    };
+    finalizedAsset.assetMetadataHash = computeAssetMetadataHash(finalizedAsset);
+    const storedAsset = await stores.assetStore.replaceAsset(finalizedAsset, uploadedAsset.assetMetadataHash);
     if (outputDir) {
-      const canonical = await service.stores.contentStore.get(uploadedAsset.assetContentSha256);
+      const canonical = await service.stores.contentStore.get(storedAsset.assetContentSha256);
       if (!canonical) throw new Error(`sanitized content missing for ${asset.assetKey}`);
       await writeFile(path.join(outputDir, `${asset.assetKey}.png`), canonical.bytes);
     }
-    uploaded.push(uploadedAsset);
+    uploaded.push(storedAsset);
   }
-  const catalogId = `galgame_curated_batch_${new Date().toISOString().slice(0, 10).replaceAll('-', '')}`;
+  const baseCatalogId = `galgame_curated_batch_${new Date().toISOString().slice(0, 10).replaceAll('-', '')}`;
+  let catalogId = baseCatalogId;
+  let catalogAttempt = 1;
+  while (previousCatalogs.some((catalog) => catalog.catalogId === catalogId && catalog.catalogRevision === 1)) {
+    catalogAttempt += 1;
+    catalogId = `${baseCatalogId}_r${catalogAttempt}`;
+  }
   const draft = await service.createCatalogDraft({ schemaVersion: CATALOG_DRAFT_SCHEMA_VERSION, catalogId, catalogRevision: 1, assetRefs: uploaded.map((asset) => ({ assetId: asset.assetId, assetVersion: asset.assetVersion })) });
   const validated = await service.updateCatalogLifecycle(catalogId, 1, 'validate');
   const published = await service.updateCatalogLifecycle(catalogId, 1, 'publish');

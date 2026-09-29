@@ -240,13 +240,18 @@ asset. Runtime hint cache is memory-only (256 entries, 300-second TTL,
 in-flight deduplication) and is cleared on restart. Only validated successful
 `VisualRuntimeHintV1` objects are cached; failure wrappers and error details are
 never cached, so a later request may retry after a transient failure. The
-RUNTIME-2 adds the closed dictionary revision 2 and
-`galgame.visual-asset-analysis.v2` records. The five skill codes are retained in
-addition to every revision-1 code; every analysis, catalog and runtime hint
-must carry the exact dictionary version/hash. Revision-1 records cannot enter
-a revision-2 active catalog. The exported migration planner is fail-closed.
+The service now uses RUNTIME-3, a closed dictionary that retains all revision-2
+codes and adds stable character species/role and presentation tags
+`character.masculine`, `character.feminine` and `character.androgynous`.
+Species/role tags include `character.beastkin`, `character.undead`,
+`character.cleric`, `character.merchant` and `character.noble`.
+Common English and Chinese labels normalize to these codes before matching.
+Every analysis, catalog and runtime hint must carry the exact dictionary
+version/hash. Revision-1 and revision-2 records cannot enter a revision-3
+active catalog until an explicit migration re-analyzes them. The exported
+migration planners are fail-closed and preserve source records.
 When the service uses a `FileVisualAssetStore`, its default transaction writes
-a service-owned temporary batch containing every v2 asset record, the catalog
+a service-owned temporary batch containing every migrated asset record, the catalog
 and a commit marker, reads the batch back and validates it, then renames the
 batch and atomically writes a root `active-migration.json` pointer. File writes
 sync the temporary file before rename. Startup accepts only complete batches
@@ -263,7 +268,7 @@ tests. This is a recoverable pointer-commit protocol with
 process-level failure semantics; it does not claim crash-level cross-file
 atomicity or filesystem-directory fsync guarantees on every platform.
 
-The legacy revision-1 to revision-2 migration is operator-controlled and never
+Legacy revision-1 and previous revision-2 migrations are operator-controlled and never
 runs during ordinary service startup. Use exactly one explicit mode:
 
 ```powershell
@@ -285,7 +290,9 @@ The FileVisualAssetStore migration regression uses a real published revision-1
 catalog containing all five asset types, including a transparent character
 sprite and icon assets. It verifies per-type analysis dictionary/hash, content
 hashes, catalog refs, fresh-store restart readback, and batch-write failure
-preserving the legacy active source.
+preserving the legacy active source. A previous revision-2 active source is
+upgraded through the revision-3 planner using the same CLI; the explicit
+`migrateRuntimeV3Catalog` service method is also available to operator tooling.
 
 Runtime v2 scoring uses exact overlap between the validated runtime hint codes,
 trusted visible attribute codes and candidate analysis tag/attribute codes.
