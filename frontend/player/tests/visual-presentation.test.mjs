@@ -340,6 +340,29 @@ globalThis.__GALGAME_TEST_RENDER_CHAT__({
     fileName: 'chat-visual-core.json',
     writable: true,
     messages: [{
+        role: 'character',
+        speaker: 'Dungeon Master',
+        displayText: 'Celestia整理了一下链甲，露出更多胸肉：“现在出发。”',
+        text: 'Celestia整理了一下链甲，露出更多胸肉：“现在出发。”',
+    }],
+}, { messageIndex: 0 });
+await waitForCoreDecision();
+const inferredSpeakerRequest = JSON.parse(fetchCalls.find((call) => call.url.endsWith('/v1/core/visual-decisions')).options.body);
+assert.equal(inferredSpeakerRequest.visibleContext.current.role, 'character');
+const inferredCharacterEntity = inferredSpeakerRequest.projection.entities.find((entity) => entity.entityType === 'character');
+assert.ok(inferredCharacterEntity);
+assert.equal(inferredCharacterEntity.displayLabel, 'Celestia');
+assert.equal(inferredCharacterEntity.confidenceBand, 'probable');
+assert.equal(inferredCharacterEntity.visibleAttributes.some((attribute) => (
+    attribute.code === 'character-explicit-name' && attribute.value === 'Celestia'
+)), true);
+
+fetchCalls = [];
+globalThis.__GALGAME_TEST_RENDER_CHAT__({
+    ok: true,
+    fileName: 'chat-visual-core.json',
+    writable: true,
+    messages: [{
         role: 'player',
         speaker: 'Player',
         displayText: '我退后一步。',

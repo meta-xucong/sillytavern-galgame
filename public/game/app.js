@@ -2374,6 +2374,15 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
         : null;
     const hasActiveCharacterBinding = (displayedMessage.role === 'character' || displayedMessage.role === 'narrator' || displayedMessage.role === 'player')
         && Boolean(characterBinding);
+    // A runtime paragraph may identify a new speaker before the administrator
+    // manifest has a binding for it. Keep that candidate in the visual request
+    // so the analyzer can match a stable asset or return the neutral unknown
+    // character fallback; never borrow a random character-pool portrait.
+    const hasActiveCharacterCandidate = displayedMessage.role === 'character'
+        && activeSpeakerContext.role === 'character'
+        && Boolean(String(displayedMessage.speaker || '').trim())
+        && !isManifestNarratorSpeaker(displayedMessage.speaker);
+    const hasActiveCharacterPresentation = hasActiveCharacterBinding || hasActiveCharacterCandidate;
     const entities = [];
     // Extract equipment, item, skill and scene labels from the full visible
     // message. The active paragraph is only the character/voice selection
@@ -2381,14 +2390,14 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
     const fullHints = createCoreVisualDisplayEntityHints(fullMessage || displayedMessage);
     const isExplicitCharacterHint = (hint) => hint.entityType === 'character'
         && hint.visibleAttributes?.some((attribute) => attribute.code === 'character-explicit-appearance');
-    let hints = hasActiveCharacterBinding
+    let hints = hasActiveCharacterPresentation
         ? fullHints
         : fullHints.filter((hint) => hint.entityType !== 'character' || isExplicitCharacterHint(hint));
     if (segmentMessage) {
         const segmentHints = createCoreVisualDisplayEntityHints(segmentMessage);
         const segmentCharacterHint = segmentHints.find((hint) => hint.entityType === 'character');
         const fullCharacterHint = fullHints.find((hint) => hint.entityType === 'character');
-        const activeCharacterHint = hasActiveCharacterBinding
+        const activeCharacterHint = hasActiveCharacterPresentation
             ? (segmentCharacterHint || {
                 entityKeySeed: `active-speaker:${displayedMessage.speaker}`,
                 entityType: 'character',
@@ -2396,11 +2405,19 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
                 visibleAttributes: [{
                     code: 'character-explicit-name',
                     value: (displayedMessage.speaker || '角色').slice(0, 120),
-                    confidenceBand: 'explicit',
+                    confidenceBand: hasActiveCharacterBinding ? 'explicit' : 'probable',
                 }],
-                confidenceBand: 'explicit',
+                confidenceBand: hasActiveCharacterBinding ? 'explicit' : 'probable',
             })
             : null;
+        if (activeCharacterHint && !hasActiveCharacterBinding) {
+            activeCharacterHint.confidenceBand = 'probable';
+            activeCharacterHint.visibleAttributes = (activeCharacterHint.visibleAttributes || []).map((attribute) => (
+                attribute.code === 'character-explicit-name'
+                    ? { ...attribute, confidenceBand: 'probable' }
+                    : attribute
+            ));
+        }
         if (activeCharacterHint && fullCharacterHint && activeCharacterHint !== fullCharacterHint) {
             const attributes = [...(activeCharacterHint.visibleAttributes || [])];
             const seenCodes = new Set(attributes.map((attribute) => attribute.code));
@@ -2418,7 +2435,7 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
                 ? hint.entityType !== 'character'
                 : hint.entityType !== 'character' || isExplicitCharacterHint(hint)),
         ];
-    } else if (hasActiveCharacterBinding && !hints.some((hint) => hint.entityType === 'character')) {
+    } else if (hasActiveCharacterPresentation && !hints.some((hint) => hint.entityType === 'character')) {
         hints = [{
             entityKeySeed: `active-speaker:${displayedMessage.speaker}`,
             entityType: 'character',
@@ -2426,9 +2443,9 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
             visibleAttributes: [{
                 code: 'character-explicit-name',
                 value: (displayedMessage.speaker || '旁白').slice(0, 120),
-                confidenceBand: 'explicit',
+                confidenceBand: hasActiveCharacterBinding ? 'explicit' : 'probable',
             }],
-            confidenceBand: 'explicit',
+            confidenceBand: hasActiveCharacterBinding ? 'explicit' : 'probable',
         }, ...hints];
     }
     const entityKeys = new Set();
@@ -2459,7 +2476,7 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
                             ? [{
                                 code: 'character-explicit-name',
                                 value: (bindingMessage.role === 'player' ? '你' : bindingMessage.speaker).slice(0, 120),
-                                confidenceBand: 'explicit',
+                                confidenceBand: hasActiveCharacterBinding ? 'explicit' : 'probable',
                             }]
                             : []),
                         ...(characterBinding && bindingMessage?.speaker
@@ -2477,7 +2494,7 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
     }
     const projectedTypes = new Set(entities.map((entity) => entity.entityType));
     for (const type of CORE_VISUAL_TYPES) {
-        if (type === 'character' && !hasActiveCharacterBinding && !projectedTypes.has('character')) {
+        if (type === 'character' && !hasActiveCharacterPresentation && !projectedTypes.has('character')) {
             continue;
         }
         if (projectedTypes.has(type)) {

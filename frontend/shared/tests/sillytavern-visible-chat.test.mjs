@@ -318,6 +318,16 @@ const unknownSpeakerSegment = createVisualNovelDisplaySegments('守卫立刻反�
 });
 assert.equal(unknownSpeakerSegment[0].type, 'narration');
 
+const inferredSpeakerSegment = createVisualNovelDisplaySegments('Celestia整理了一下链甲，露出更多胸肉：“现在出发。”', {
+    fallbackSpeaker: 'Dungeon Master',
+    role: 'character',
+    characterNames: ['Pippa'],
+});
+assert.equal(inferredSpeakerSegment[0].type, 'dialogue');
+assert.equal(inferredSpeakerSegment[0].speaker, 'Celestia');
+assert.equal(inferredSpeakerSegment[0].speakerConfidence, 'inferred');
+assert.equal(inferredSpeakerSegment[0].confidenceBand, 'probable');
+
 const nonDialogueVisualRows = createVisualNovelDisplaySegments([
     '场景: 庭院',
     '背景: 雨夜',

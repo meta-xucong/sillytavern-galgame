@@ -488,6 +488,54 @@ const unknownNarrativeDialogueSegments = createVisualNovelDisplaySegments('守�
 assert.equal(unknownNarrativeDialogueSegments[0].type, 'narration');
 assert.equal(unknownNarrativeDialogueSegments[0].speaker, '旁白');
 
+const inferredNewSpeakerSegments = createVisualNovelDisplaySegments('约翰立刻反对：“这里禁止通行。”', {
+    fallbackSpeaker: 'Dungeon Master',
+    knownSpeakers: ['Pippa'],
+});
+assert.equal(inferredNewSpeakerSegments[0].type, 'dialogue');
+assert.equal(inferredNewSpeakerSegments[0].speaker, '约翰');
+assert.match(inferredNewSpeakerSegments[0].text, /约翰立刻反对/);
+assert.equal(inferredNewSpeakerSegments[0].speakerConfidence, 'inferred');
+assert.equal(inferredNewSpeakerSegments[0].confidenceBand, 'probable');
+
+const inferredCelestiaSegments = createVisualNovelDisplaySegments(
+    '"Celestia整理了一下链甲,露出更多胸肉:"好了,现在我们可以去砍人了吧?我已经等不及要"释放圣光"了~"',
+    { fallbackSpeaker: 'Dungeon Master' },
+);
+assert.equal(inferredCelestiaSegments[0].type, 'dialogue');
+assert.equal(inferredCelestiaSegments[0].speaker, 'Celestia');
+assert.match(inferredCelestiaSegments[0].text, /整理了一下链甲/);
+assert.equal(inferredCelestiaSegments[0].speakerConfidence, 'inferred');
+assert.equal(inferredCelestiaSegments[0].confidenceBand, 'probable');
+
+const embeddedPlayerAction = createVisualNovelDisplaySegments('你从背包里掏出烟雾弹：“准备好。”', {
+    fallbackSpeaker: 'Dungeon Master',
+});
+assert.equal(embeddedPlayerAction[0].type, 'narration');
+
+const embeddedRoleDescription = createVisualNovelDisplaySegments('金发牧师在烟雾中大笑，随后她高举战锤：“尝尝这个！”', {
+    fallbackSpeaker: 'Dungeon Master',
+});
+assert.equal(embeddedRoleDescription[0].type, 'narration');
+
+const multiNewSpeakerAscii = createVisualNovelDisplaySegments(
+    'Pippa大笑:"好了!"Durik挥舞战斧:"冲锋!"Celestia舔了舔嘴唇:"嗯。"',
+    { knownSpeakers: [] },
+);
+assert.deepEqual(multiNewSpeakerAscii.filter((segment) => segment.type === 'dialogue').map((segment) => segment.speaker), [
+    'Pippa', 'Durik', 'Celestia',
+]);
+assert.equal(multiNewSpeakerAscii.every((segment) => segment.text.includes(':')), true);
+assert.equal(multiNewSpeakerAscii.slice(1).every((segment) => !segment.text.startsWith('"')), true);
+assert.equal(formatVisualNovelDisplayText('Pippa大笑:"好了!"Durik挥舞战斧:"冲锋!"Celestia舔了舔嘴唇:"嗯。"').includes('\n\n'), false);
+
+const connectorBeforeNewSpeaker = createVisualNovelDisplaySegments(
+    '在地牢里，约翰转身：“快走。” 然后Mary低声：“别出声。”',
+    { knownSpeakers: [] },
+);
+assert.deepEqual(connectorBeforeNewSpeaker.filter((segment) => segment.type === 'dialogue').map((segment) => segment.speaker), ['约翰', 'Mary']);
+assert.equal(connectorBeforeNewSpeaker.some((segment) => segment.text === '然后'), false);
+
 const chineseSpeakerBoundary = createVisualNovelDisplaySegments('尼布尔哆嗦着举手：“我有一个办法。”', {
     knownSpeakers: ['尼布'],
 });

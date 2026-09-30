@@ -1434,7 +1434,16 @@ export function createVisualNovelDisplaySegments(value, {
     // clauses inside one long visible paragraph. Split those clauses only for
     // presentation so the active speaker can select its verified visual
     // binding; the canonical chat message remains unchanged.
-    const segmentedDisplayText = splitKnownInlineNarrativeDialogues(displayText, knownSpeakerMap);
+    const knownSegmentedText = splitKnownInlineNarrativeDialogues(displayText, knownSpeakerMap);
+    // `addVisualNovelParagraphBreaks` may put a connective such as “然后” in
+    // its own paragraph after a closing quote. Join it back to the following
+    // strong name/action/quote clause so the connective stays with the prior
+    // visible prose instead of becoming a blank speaker row.
+    const connectorMergedText = knownSegmentedText.replace(
+        /\n{2,}(?=(?:然后|接着|随后|这时|此时)\s*(?:[A-Z][A-Za-z0-9_-]{1,39}|[\p{Script=Han}ぁ-んァ-ヶー]{2,8}).{1,64}?\s*[：:]\s*[“"「『])/gu,
+        '',
+    );
+    const segmentedDisplayText = splitInferredInlineNarrativeDialogues(connectorMergedText, knownSpeakerMap);
     let lastSpeaker = role === 'player' ? '你' : fallbackName;
     return segmentedDisplayText
         .split(/\n{2,}/)
@@ -1478,6 +1487,16 @@ function classifyVisualNovelSegment(text, { fallbackSpeaker, lastSpeaker, role, 
     const narrativeDialogue = matchKnownNarrativeDialogue(text, knownSpeakerMap);
     if (narrativeDialogue) {
         return narrativeDialogue;
+    }
+    // A new NPC is not present in the published manifest yet. Strong
+    // in-text evidence may still identify a display-only speaker: a
+    // name-shaped prefix, a bounded narrative action, and quoted speech.
+    // This does not create a canonical ST character or allocate an avatar;
+    // it only prevents an unmistakable new speaker from being flattened into
+    // the narrator channel.
+    const inferredNarrativeDialogue = matchInferredNarrativeDialogue(text, knownSpeakerMap);
+    if (inferredNarrativeDialogue) {
+        return inferredNarrativeDialogue;
     }
     if (isNarrativeDialogueParagraph(text)) {
         return {
@@ -1601,6 +1620,35 @@ function matchKnownNarrativeDialogue(text, knownSpeakerMap) {
     return null;
 }
 
+function matchInferredNarrativeDialogue(text, knownSpeakerMap) {
+    const parsed = parseNarrativeDialogueParagraph(text);
+    if (!parsed || !parsed.speaker || /[，,。！？!?；;]/u.test(parsed.speaker)
+        || isNarratorSpeaker(parsed.speaker) || isNonDialogueLabel(parsed.speaker)
+        || !isLikelyInferredSpeakerName(parsed.speaker)
+        || /^(?:你|玩家|我|他|她|他们|我们|队伍|大家|所有人|player|user|系统|system)$/iu.test(normalizeKnownSpeaker(parsed.speaker))) {
+        return null;
+    }
+    const normalized = normalizeKnownSpeaker(parsed.speaker);
+    if (knownSpeakerMap instanceof Map && (knownSpeakerMap.has(normalized) || hasKnownSpeakerPrefixConflict(normalized, knownSpeakerMap))) {
+        return null;
+    }
+    if (isGenericCharacterNoun(parsed.speaker)) {
+        return null;
+    }
+    return {
+        type: 'dialogue',
+        speaker: sanitizeText(parsed.speaker, 80),
+        // Preserve the action lead in the visible text. The segment carries
+        // the inferred speaker for the title/visual request, while no prose
+        // is discarded from the original runtime reply.
+        text: String(text || '').trim(),
+        quote: parsed.quote,
+        speakerConfidence: 'inferred',
+        confidenceBand: 'probable',
+        speakerOrigin: 'runtime-text',
+    };
+}
+
 /**
  * Add display-only paragraph boundaries before known speakers embedded in a
  * long narrative paragraph. This intentionally requires both a published
@@ -1617,9 +1665,11 @@ function splitKnownInlineNarrativeDialogues(text, knownSpeakerMap) {
     for (const normalizedName of ordered) {
         const escaped = normalizedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const asciiName = /^[A-Za-z0-9_-]+$/u.test(normalizedName);
-        const boundaryAfter = asciiName
-            ? '(?![A-Za-z0-9_-])'
-            : '(?![\\p{Script=Han}ぁ-んァ-ヶー])';
+        // CJK names are immediately followed by CJK action text in natural
+        // prose (`尼布松了口气`). The action whitelist below is the boundary
+        // check; rejecting every following Han character would hide valid
+        // known speakers.
+        const boundaryAfter = asciiName ? '(?![A-Za-z0-9_-])' : '';
         // Keep the quote tail conservative. Curly/CJK quotes are paired; an
         // ASCII quote closes at the next ASCII quote, which is sufficient for
         // presentation segmentation and avoids consuming the rest of a reply.
@@ -1658,17 +1708,87 @@ function parseNarrativeDialogueParagraph(text) {
     // avatar.
     const match = text.match(/^(.{2,80}?)\s*[：:]\s*([“"「『][\s\S]*(?:[”"」』]|$))$/u);
     if (!match) return null;
-    const prefix = match[1].trim();
-    const actionStart = prefix.search(/(?:说|道|问|答|喊|叫|反对|同意|拒绝|摇头|点头|举手|嘶声|低声|高声|大声|小声|笑|哭|怒|冷|轻|急|颤|哆嗦|结巴|打断|回应|坚持|承认|警告|威胁|提醒|解释|嘟囔|嘀咕|喃喃|立即|立刻|马上|着|地|松了口气|眼睛一亮|插话|竖起大拇指|翻了个白眼|咧嘴笑|压低声音|满意地点头|转头看向|say|said|says|ask|asked|reply|replied|object|objected|agree|agreed|shout|shouted|yell|yelled|whisper|whispered|mutter|muttered|stammer|raise|raised|interrupt|warn|warning|insist|insisted|answer|answered|immediately|quickly|softly|loudly)/iu);
+    const prefix = match[1].trim()
+        .replace(/^(?:然后|接着|随后|这时|此时)\s*/u, '')
+        .replace(/^[“"「『]+|[”"」』]+$/gu, '')
+        .trim();
+    const actionStart = prefix.search(NARRATIVE_DIALOGUE_ACTION_PATTERN);
     if (actionStart <= 0 || !hasNarrativeDialogueVerb(prefix.slice(actionStart).trim())) return null;
+    const speaker = prefix.slice(0, actionStart).replace(/^[“"「『]+|[”"」』]+$/gu, '').trim();
+    if (!speaker) return null;
     return {
-        normalizedName: normalizeKnownSpeaker(prefix.slice(0, actionStart)),
+        normalizedName: normalizeKnownSpeaker(speaker),
+        speaker,
         quote: match[2].trim(),
     };
 }
 
+const NARRATIVE_DIALOGUE_ACTION_PATTERN = /(?:哈哈大笑|咯咯笑|大笑|狂笑|冷笑|苦笑|轻笑|奸笑|咆哮|怒吼|挥舞|摸了摸|舔了舔|舔舐|笑着|喊道|说道|问道|答道|高举|猛地|说|道|问|答|喊|叫|反对|同意|拒绝|摇头|点头|举手|嘶声|低声|高声|大声|小声|笑|哭|怒|冷|轻|急|颤|哆嗦|结巴|打断|回应|坚持|承认|警告|威胁|提醒|解释|嘟囔|嘀咕|喃喃|立即|立刻|马上|整理|露出|握紧|检查|拿起|收起|接过|递给|转身|站起|走向|靠近|看向|望向|盯着|抬起|低下|扬起|举起|拍了拍|掏出|穿戴|取出|放下|推开|拉开|松了口气|眼睛一亮|插话|竖起大拇指|翻了个白眼|咧嘴笑|压低声音|满意地点头|转头看向|say|said|says|ask|asked|reply|replied|object|objected|agree|agreed|shout|shouted|yell|yelled|whisper|whispered|mutter|muttered|stammer|raise|raised|interrupt|warn|warning|insist|insisted|answer|answered|immediately|quickly|softly|loudly)/iu;
+
 function hasNarrativeDialogueVerb(value) {
-    return /^(?:说|道|问|答|喊|叫|反对|同意|拒绝|摇头|点头|举手|嘶声|低声|高声|大声|小声|笑|哭|怒|冷|轻|急|颤|哆嗦|结巴|打断|回应|坚持|承认|警告|威胁|提醒|解释|嘟囔|嘀咕|喃喃|立即|立刻|马上|着|地|松了口气|眼睛一亮|插话|竖起大拇指|翻了个白眼|咧嘴笑|压低声音|满意地点头|转头看向|say|said|says|ask|asked|reply|replied|object|objected|agree|agreed|shout|shouted|yell|yelled|whisper|whispered|mutter|muttered|stammer|raise|raised|interrupt|warn|warning|insist|insisted|answer|answered|immediately|quickly|softly|loudly)/iu.test(String(value || ''));
+    const normalized = String(value || '').trim();
+    const match = normalized.match(NARRATIVE_DIALOGUE_ACTION_PATTERN);
+    return Boolean(match && match.index === 0);
+}
+
+function isGenericCharacterNoun(value) {
+    return /^(?:守卫|士兵|店主|老板|商人|法师|战士|骑士|弓手|盗贼|地精|哥布林|侍者|老人|女人|男人|女孩|男孩|少女|少年|怪物|敌人|队长|首领|教士|牧师|guard|soldier|shopkeeper|merchant|wizard|mage|warrior|knight|archer|rogue|goblin|waiter|old man|woman|man|girl|boy|monster|enemy|captain|leader|priest)$/iu.test(String(value || '').trim());
+}
+
+function isLikelyInferredSpeakerName(value) {
+    const name = String(value || '').trim();
+    if (/^[A-Z][A-Za-z0-9_-]{1,39}$/u.test(name)) return true;
+    if (!/^[\p{Script=Han}ぁ-んァ-ヶー]{2,8}$/u.test(name)) return false;
+    return !/(?:你|我|他|她|他们|我们|队伍|大家|所有人|独眼|金发|银发|红发|黑发|白发|高大|瘦小|年轻|年迈|老人|女人|男人|少女|少年|半兽人|卫兵|守卫|士兵|牧师|法师|骑士|战士|怪物|地精|哥布林|在|里|中|后|前|旁|上|下|着|和|与|被|将|把|从|向|对|用|的|地|得|其|这|那|个|些|们|又|则|大|小|拍|手|尖|哈|嘿|呵|哼|咯|笑|声|头|脸|咧|嘴|眯眼)/u.test(name);
+}
+
+function hasKnownSpeakerPrefixConflict(normalized, knownSpeakerMap) {
+    if (!(knownSpeakerMap instanceof Map) || !normalized) return false;
+    return [...knownSpeakerMap.keys()].some((known) => known
+        && (normalized.startsWith(known) || known.startsWith(normalized)));
+}
+
+/**
+ * Split a strong, previously unknown `name + action + quoted speech` clause
+ * embedded after sentence punctuation. This is presentation-only: the
+ * canonical SillyTavern message remains one unchanged string.
+ */
+function splitInferredInlineNarrativeDialogues(text, knownSpeakerMap) {
+    const source = String(text || '');
+    if (!source) return source;
+    const matches = [];
+    const boundaryPattern = /(^|[。！？!?，,]\s*|\n|[”」』]\s*(?:然后|接着|随后|这时|此时)?\s*|"\s*)/gu;
+    const candidatePattern = /^(?:[“"「『])?(.{2,80}?)\s*[：:]\s*[“"「『]/u;
+    for (const boundary of source.matchAll(boundaryPattern)) {
+        const boundaryText = String(boundary[0] || '');
+        const candidateStart = (boundary.index ?? 0) + boundaryText.length;
+        const candidate = source.slice(candidateStart).match(candidatePattern);
+        if (!candidate) continue;
+        const prefix = String(candidate[1] || '').trim().replace(/^(?:然后|接着|随后|这时|此时)\s*/u, '').replace(/^[“"「『]+|[”"」』]+$/gu, '').trim();
+        const actionStart = prefix.search(NARRATIVE_DIALOGUE_ACTION_PATTERN);
+        if (actionStart <= 0) continue;
+        const name = prefix.slice(0, actionStart).replace(/^[“"「『]+|[”"」』]+$/gu, '').trim();
+        const action = prefix.slice(actionStart).trim();
+        const normalized = normalizeKnownSpeaker(name);
+        if (!name || !hasNarrativeDialogueVerb(action)
+            || /[，,。！？!?；;“”"「」『』]/u.test(name)
+            || !isLikelyInferredSpeakerName(name)
+            || isNarratorSpeaker(name) || isNonDialogueLabel(name) || isGenericCharacterNoun(name)
+            || (knownSpeakerMap instanceof Map
+                && (knownSpeakerMap.has(normalized) || hasKnownSpeakerPrefixConflict(normalized, knownSpeakerMap)))) {
+            continue;
+        }
+        if (candidateStart > 0) matches.push(candidateStart);
+    }
+    if (!matches.length) return source;
+    const unique = [...new Set(matches)].sort((left, right) => left - right);
+    let result = source;
+    for (let index = unique.length - 1; index >= 0; index -= 1) {
+        const offset = unique[index];
+        if (offset <= 0 || result.slice(offset - 2, offset) === '\n\n') continue;
+        result = `${result.slice(0, offset)}\n\n${result.slice(offset)}`;
+    }
+    return result;
 }
 
 function isNonDialogueLabel(value) {
@@ -1734,7 +1854,11 @@ function stripVisualNovelMarkdownEmphasis(text) {
 function addVisualNovelParagraphBreaks(text) {
     return text
         .replace(/[ \t]+/g, ' ')
-        .replace(/([。！？!?])\s*(?=[“"「『])/g, '$1\n\n')
+        // ASCII `"` is symmetric and commonly closes the previous quoted
+        // line (`!"Durik...`). Treat only directional/CJK opening quotes as
+        // paragraph starts; sentence punctuation already provides the
+        // boundary for an adjacent ASCII-named speaker.
+        .replace(/([。！？!?])\s*(?=[“「『])/g, '$1\n\n')
         .replace(/([。！？!?])\s+(?=—)/g, '$1\n\n')
         // ASCII double quotes are symmetric; treating `"` as a closing quote
         // splits normal dialogue into punctuation-only paragraphs.
