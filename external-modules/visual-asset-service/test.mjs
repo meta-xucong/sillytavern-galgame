@@ -218,6 +218,20 @@ async function testRuntimeDictionaryV2AndScorer() {
   assert.deepEqual([...normalizeVisibleValue('female human')].sort(), ['character.feminine', 'character.human']);
   assert.deepEqual([...normalizeVisibleValue('male human')].sort(), ['character.human', 'character.masculine']);
   assert.deepEqual([...normalizeVisibleValue('human')].sort(), ['character.human']);
+  assert.deepEqual([...normalizeVisibleValue('哥布林')], ['character.beastkin']);
+  assert.deepEqual([...normalizeVisibleValue('骷髅')], ['character.undead']);
+  assert.deepEqual([...normalizeVisibleValue('敌方战士')], ['character.armored']);
+  const enemyScore = scoreRuntimeCandidate({
+    entityType: 'character',
+    visibleAttributeCodes: ['character-explicit-name', 'character-explicit-species'],
+    visibleNormalizedCodes: ['character.beastkin'],
+    candidates: [],
+  }, {
+    assetId: 'asset_character_enemy_goblin', assetVersion: 1, assetType: 'character', analysisStatus: 'ready',
+    analysisTagCodes: ['character.beastkin'], analysisAttributeCodes: [], analysisConfidence: 0.95, negativeTagCodes: [],
+  }, { entityType: 'character', codes: ['character.beastkin'], confidence: 0.95, confidenceBand: 'explicit' }, { recent: [] });
+  assert.equal(enemyScore.policy.isUnknown, false);
+  assert.ok(enemyScore.policy.score >= 60);
   const feminineCharacter = makeValidatedAssetRecord({
     assetId: 'asset_character_feminine_dictionary',
     assetType: 'character',

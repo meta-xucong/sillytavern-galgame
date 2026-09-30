@@ -2,7 +2,7 @@ import {
     getActiveSillyTavernBindings,
     sanitizeText,
     summarizeSillyTavernBindings,
-} from './protocol.js?v=auto-ba5e0d1bf6db';
+} from './protocol.js?v=auto-a91c272b35f1';
 
 export const SILLYTAVERN_ENDPOINTS = Object.freeze({
     csrf: '/csrf-token',
@@ -1121,11 +1121,14 @@ function createVisibleMessageEntityHints(message, {
             entityKeySeed: speaker,
             entityType: 'character',
             displayLabel: speaker.slice(0, 80),
-            visibleAttributes: [{
-                code: 'character-explicit-name',
-                value: speaker.slice(0, 120),
-                confidenceBand: 'explicit',
-            }],
+            visibleAttributes: [
+                {
+                    code: 'character-explicit-name',
+                    value: speaker.slice(0, 120),
+                    confidenceBand: 'explicit',
+                },
+                ...inferEnemyCharacterAttributes(speaker),
+            ],
             confidenceBand: 'explicit',
         }
         : null;
@@ -1639,7 +1642,7 @@ function matchInferredNarrativeDialogue(text, knownSpeakerMap) {
     if (knownSpeakerMap instanceof Map && (knownSpeakerMap.has(normalized) || hasKnownSpeakerPrefixConflict(normalized, knownSpeakerMap))) {
         return null;
     }
-    if (isGenericCharacterNoun(parsed.speaker)) {
+    if (isGenericCharacterNoun(parsed.speaker) && !getEnemyCharacterLabelMatch(parsed.speaker)) {
         return null;
     }
     return {
@@ -1742,8 +1745,43 @@ function isGenericCharacterNoun(value) {
     return /^(?:守卫|士兵|店主|老板|商人|法师|战士|骑士|弓手|盗贼|地精|哥布林|侍者|老人|女人|男人|女孩|男孩|少女|少年|怪物|敌人|队长|首领|教士|牧师|guard|soldier|shopkeeper|merchant|wizard|mage|warrior|knight|archer|rogue|goblin|waiter|old man|woman|man|girl|boy|monster|enemy|captain|leader|priest)$/iu.test(String(value || '').trim());
 }
 
+// Enemy labels are valid runtime speakers. They used to be filtered as
+// status/narration labels, which made a turn such as `哥布林：` render with
+// the narrator/placeholder avatar. Keep this mapping conservative: it adds
+// only species/archetype evidence explicitly present in the visible label and
+// never guesses a gender.
+const ENEMY_CHARACTER_LABEL_PATTERNS = Object.freeze([
+    { pattern: /哥布林|地精|狗头人|kobold|goblin/iu, value: '哥布林' },
+    { pattern: /兽人|半兽人|兽族|兽魔人|orc|半兽人/iu, value: '兽人' },
+    { pattern: /蜥蜴人|蜥人|鱼人|鳄人|lizardfolk|lizardman/iu, value: '蜥蜴人' },
+    { pattern: /豺狼人|狼族|狼人|野狼|狼群|gnoll|werewolf|wolf/iu, value: '豺狼人' },
+    { pattern: /食人魔|巨魔|独眼巨人|ogre|troll|cyclops/iu, value: '食人魔' },
+    { pattern: /骷髅|骸骨|僵尸|尸鬼|食尸鬼|幽灵|鬼魂|亡灵|不死|skeleton|zombie|ghoul|wraith|undead/iu, value: '亡灵' },
+    { pattern: /恶魔|魔鬼|深渊|demon|devil/iu, value: '兽人' },
+    { pattern: /强盗|土匪|劫匪|山贼|盗匪|掠夺者|强盗团|bandit|brigand|raider/iu, value: '强盗' },
+    { pattern: /邪教徒|cultist|刺客|杀手|assassin/iu, value: '强盗' },
+    { pattern: /敌人|敌军|敌方|怪物|魔物|魔兽|enemy|monster|hostile/iu, value: '敌人' },
+    { pattern: /守卫|卫兵|士兵|哨兵|captain|guard|soldier|sentinel/iu, value: '敌方战士' },
+]);
+
+function getEnemyCharacterLabelMatch(value) {
+    const label = String(value || '').normalize('NFKC').trim();
+    return ENEMY_CHARACTER_LABEL_PATTERNS.find(({ pattern }) => pattern.test(label)) || null;
+}
+
+function inferEnemyCharacterAttributes(value) {
+    const match = getEnemyCharacterLabelMatch(value);
+    if (!match) return [];
+    return [{
+        code: 'character-explicit-species',
+        value: match.value,
+        confidenceBand: 'explicit',
+    }];
+}
+
 function isLikelyInferredSpeakerName(value) {
     const name = String(value || '').trim();
+    if (getEnemyCharacterLabelMatch(name)) return true;
     if (/^[A-Z][A-Za-z0-9_-]{1,39}$/u.test(name)) return true;
     if (!/^[\p{Script=Han}ぁ-んァ-ヶー]{2,8}$/u.test(name)) return false;
     return !/(?:你|我|他|她|他们|我们|队伍|大家|所有人|独眼|金发|银发|红发|黑发|白发|高大|瘦小|年轻|年迈|老人|女人|男人|少女|少年|半兽人|卫兵|守卫|士兵|牧师|法师|骑士|战士|怪物|地精|哥布林|在|里|中|后|前|旁|上|下|着|和|与|被|将|把|从|向|对|用|的|地|得|其|这|那|个|些|们|又|则|大|小|拍|手|尖|哈|嘿|呵|哼|咯|笑|声|头|脸|咧|嘴|眯眼)/u.test(name);
@@ -1780,7 +1818,8 @@ function splitInferredInlineNarrativeDialogues(text, knownSpeakerMap) {
         if (!name || !hasNarrativeDialogueVerb(action)
             || /[，,。！？!?；;“”"「」『』]/u.test(name)
             || !isLikelyInferredSpeakerName(name)
-            || isNarratorSpeaker(name) || isNonDialogueLabel(name) || isGenericCharacterNoun(name)
+            || isNarratorSpeaker(name) || isNonDialogueLabel(name)
+            || (isGenericCharacterNoun(name) && !getEnemyCharacterLabelMatch(name))
             || (knownSpeakerMap instanceof Map
                 && (knownSpeakerMap.has(normalized) || hasKnownSpeakerPrefixConflict(normalized, knownSpeakerMap)))) {
             continue;
@@ -1824,6 +1863,7 @@ function isNonCharacterVisualLabel(value) {
         .replace(/\s+/gu, ' ')
         .trim()
         .toLocaleLowerCase();
+    if (getEnemyCharacterLabelMatch(label)) return false;
     return /^(?:旁白|解说|系统|主持人|地下城主|场景|背景|背景设定|地点|当前地点|环境|战场|场景描述|角色|人物|立绘|character|person|sprite|伤害|伤害记录|死亡豁免|死亡豁免记录|豁免|豁免记录|你的回合|玩家回合|行动顺序|先攻顺序|顺序|状态|属性|战斗状态|回合|行动|(?:.+?)(?:的)?回合|(?:.+?)(?:的)?行动|background|setting|scene|location|current location|environment|battlefield|scene description|damage|damage record|death save|death saves|saving throw|save record|your turn|player turn|initiative order|turn order|action order|status|state)$/iu.test(label);
 }
 

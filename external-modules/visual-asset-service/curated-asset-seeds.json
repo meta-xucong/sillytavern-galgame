@@ -19,7 +19,7 @@
   },
   "targets": {
     "scene": 32,
-    "character": 24,
+    "character": 42,
     "equipment": 8,
     "item": 8,
     "skill": 8
@@ -1356,6 +1356,330 @@
       "seed": "galgame-skill-08-v1",
       "tags": [
         "skill"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-androgynous-goblin",
+      "assetType": "character",
+      "identityKey": "character:androgynous-goblin",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, goblin, green skin, patched leather armor, hostile fantasy enemy, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-androgynous-goblin-v1",
+      "tags": [
+        "character",
+        "enemy",
+        "goblin"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-androgynous-orc",
+      "assetType": "character",
+      "identityKey": "character:androgynous-orc",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, orc, broad shoulders, scarred green skin, rough iron armor, hostile fantasy enemy, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-androgynous-orc-v1",
+      "tags": [
+        "character",
+        "enemy",
+        "orc"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-androgynous-kobold",
+      "assetType": "character",
+      "identityKey": "character:androgynous-kobold",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, kobold, scaled skin, small horns, worn leather armor, hostile fantasy enemy, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-androgynous-kobold-v1",
+      "tags": [
+        "character",
+        "enemy",
+        "kobold"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-androgynous-lizardfolk",
+      "assetType": "character",
+      "identityKey": "character:androgynous-lizardfolk",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, lizardfolk, scaled humanoid, reptilian features, tribal armor, hostile fantasy enemy, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-androgynous-lizardfolk-v1",
+      "tags": [
+        "character",
+        "enemy",
+        "lizardfolk"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-androgynous-gnoll",
+      "assetType": "character",
+      "identityKey": "character:androgynous-gnoll",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, gnoll, hyena-like humanoid, ragged armor, hostile fantasy enemy, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-androgynous-gnoll-v1",
+      "tags": [
+        "character",
+        "enemy",
+        "gnoll"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-androgynous-ogre",
+      "assetType": "character",
+      "identityKey": "character:androgynous-ogre",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, ogre, massive humanoid, heavy hide armor, hostile fantasy enemy, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-androgynous-ogre-v1",
+      "tags": [
+        "character",
+        "enemy",
+        "ogre"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-androgynous-troll",
+      "assetType": "character",
+      "identityKey": "character:androgynous-troll",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, troll, rugged green skin, heavy silhouette, hostile fantasy enemy, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-androgynous-troll-v1",
+      "tags": [
+        "character",
+        "enemy",
+        "troll"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-androgynous-skeleton",
+      "assetType": "character",
+      "identityKey": "character:androgynous-skeleton",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, skeletal undead warrior, bone armor fragments, hostile fantasy enemy, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-androgynous-skeleton-v1",
+      "tags": [
+        "character",
+        "enemy",
+        "skeleton"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-androgynous-zombie",
+      "assetType": "character",
+      "identityKey": "character:androgynous-zombie",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, zombie, pale decayed features, tattered clothing, hostile fantasy enemy, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-androgynous-zombie-v1",
+      "tags": [
+        "character",
+        "enemy",
+        "zombie"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-androgynous-wraith",
+      "assetType": "character",
+      "identityKey": "character:androgynous-wraith",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, wraith, spectral undead figure, dark tattered cloak, hostile fantasy enemy, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-androgynous-wraith-v1",
+      "tags": [
+        "character",
+        "enemy",
+        "wraith"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-androgynous-ghoul",
+      "assetType": "character",
+      "identityKey": "character:androgynous-ghoul",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, ghoul, gaunt undead creature, clawed hands, hostile fantasy enemy, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-androgynous-ghoul-v1",
+      "tags": [
+        "character",
+        "enemy",
+        "ghoul"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-androgynous-bandit",
+      "assetType": "character",
+      "identityKey": "character:androgynous-bandit",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, masked bandit, patched leather armor, short blade, hostile fantasy enemy, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-androgynous-bandit-v1",
+      "tags": [
+        "character",
+        "enemy",
+        "bandit"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-androgynous-raider",
+      "assetType": "character",
+      "identityKey": "character:androgynous-raider",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, raider, weathered cloak, improvised armor, hostile fantasy enemy, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-androgynous-raider-v1",
+      "tags": [
+        "character",
+        "enemy",
+        "raider"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-androgynous-cultist",
+      "assetType": "character",
+      "identityKey": "character:androgynous-cultist",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, hooded cultist, dark ritual robe, hostile fantasy enemy, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-androgynous-cultist-v1",
+      "tags": [
+        "character",
+        "enemy",
+        "cultist"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-androgynous-assassin",
+      "assetType": "character",
+      "identityKey": "character:androgynous-assassin",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, masked assassin, dark fitted clothing, hostile fantasy enemy, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-androgynous-assassin-v1",
+      "tags": [
+        "character",
+        "enemy",
+        "assassin"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-androgynous-guard",
+      "assetType": "character",
+      "identityKey": "character:androgynous-guard",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, hostile guard, worn steel armor, spear, enemy unit, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-androgynous-guard-v1",
+      "tags": [
+        "character",
+        "enemy",
+        "guard"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-androgynous-soldier",
+      "assetType": "character",
+      "identityKey": "character:androgynous-soldier",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, hostile soldier, worn steel armor, sword, enemy unit, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-androgynous-soldier-v1",
+      "tags": [
+        "character",
+        "enemy",
+        "guard"
+      ],
+      "curationStatus": "planned",
+      "license": "user-owned",
+      "contentHash": null
+    },
+    {
+      "assetKey": "character-androgynous-archer",
+      "assetType": "character",
+      "identityKey": "character:androgynous-archer",
+      "promptTemplate": "fantasy visual novel transparent full-body sprite, hostile archer, light armor, bow, enemy unit, full body, neutral pose, isolated on transparent background, no text",
+      "width": 1024,
+      "height": 1536,
+      "alpha": "transparent",
+      "seed": "galgame-character-androgynous-archer-v1",
+      "tags": [
+        "character",
+        "enemy",
+        "guard"
       ],
       "curationStatus": "planned",
       "license": "user-owned",

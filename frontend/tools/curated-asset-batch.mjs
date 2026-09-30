@@ -47,6 +47,10 @@ const CHARACTER_PALETTE = {
   human: [215, 161, 124], elf: [166, 207, 174], dwarf: [185, 145, 102], rogue: [113, 132, 176],
   mage: [142, 112, 204], knight: [150, 165, 183], beastkin: [194, 136, 101], undead: [125, 145, 150],
   cleric: [224, 210, 157], merchant: [192, 145, 107], noble: [204, 146, 183], scholar: [147, 182, 204],
+  goblin: [112, 163, 93], orc: [121, 143, 83], kobold: [160, 126, 86], lizardfolk: [78, 155, 141],
+  gnoll: [176, 139, 93], ogre: [117, 128, 91], troll: [91, 127, 101], skeleton: [190, 190, 174],
+  zombie: [111, 151, 132], wraith: [109, 114, 171], ghoul: [137, 116, 128], bandit: [102, 116, 137],
+  cultist: [117, 93, 145], assassin: [73, 82, 111], guard: [126, 143, 163], raider: [143, 105, 77],
 };
 const ICON_PALETTE = {
   equipment: [155, 174, 209], item: [214, 164, 86], skill: [179, 117, 215],
@@ -184,7 +188,9 @@ function renderCharacter(seed, key) {
   const gender = parts[1] || 'woman';
   const archetype = parts.slice(2).join('-') || 'human';
   const base = CHARACTER_PALETTE[archetype] || CHARACTER_PALETTE.human;
-  const hair = gender === 'man' ? [42, 53, 74] : archetype === 'elf' ? [62, 116, 108] : [105, 58, 105];
+  const hair = ['skeleton', 'zombie', 'wraith', 'ghoul'].includes(archetype)
+    ? [45, 49, 62]
+    : gender === 'man' ? [42, 53, 74] : archetype === 'elf' ? [62, 116, 108] : [105, 58, 105];
   const wobble = hash32(seed) % 37;
   const width = 1024; const height = 1536;
   return encodePng({ width, height, bitDepth: 8, colorType: RGBA, compression: 0, filter: 0, interlace: 0 }, pixelBuffer(width, height, 4, (x, y, w, h) => {
@@ -203,7 +209,11 @@ function renderCharacter(seed, key) {
     const eye = inEllipse(x, y, cx - w * 0.052, headY + h * 0.005, w * 0.018, h * 0.009) || inEllipse(x, y, cx + w * 0.052, headY + h * 0.005, w * 0.018, h * 0.009);
     const mouth = inRect(x, y, cx - w * 0.035, headY + h * 0.045, cx + w * 0.035, headY + h * 0.05);
     const grain = pixelNoise(x, y, wobble) - 3;
-    const outfit = archetype === 'mage' ? [78, 67, 142] : archetype === 'knight' ? [112, 128, 152] : archetype === 'rogue' ? [48, 64, 86] : [base[0] * 0.55, base[1] * 0.55, base[2] * 0.7];
+    const outfit = archetype === 'mage' || archetype === 'cultist' ? [78, 67, 142]
+      : archetype === 'knight' || archetype === 'guard' ? [112, 128, 152]
+        : ['rogue', 'bandit', 'assassin', 'raider'].includes(archetype) ? [48, 64, 86]
+          : ['skeleton', 'zombie', 'wraith', 'ghoul'].includes(archetype) ? [62, 67, 78]
+            : [base[0] * 0.55, base[1] * 0.55, base[2] * 0.7];
     if (hairShape || elfEar) return [hair[0] + grain, hair[1] + grain, hair[2] + grain, 255];
     if (eye || mouth) return [34, 29, 41, 255];
     if (head) return [base[0] + grain, base[1] + grain, base[2] + grain, 255];
@@ -254,6 +264,10 @@ function metadataFor(asset) {
       human: 'character.human', elf: 'character.elf', dwarf: 'character.dwarf', beastkin: 'character.beastkin',
       undead: 'character.undead', rogue: 'character.rogue', mage: 'character.mage', cleric: 'character.cleric',
       merchant: 'character.merchant', noble: 'character.noble', knight: 'character.armored', scholar: 'character.humanoid',
+      goblin: 'character.beastkin', orc: 'character.beastkin', kobold: 'character.beastkin', lizardfolk: 'character.beastkin',
+      gnoll: 'character.beastkin', ogre: 'character.beastkin', troll: 'character.beastkin', guard: 'character.armored',
+      raider: 'character.rogue', bandit: 'character.rogue', cultist: 'character.rogue', assassin: 'character.rogue',
+      skeleton: 'character.undead', zombie: 'character.undead', wraith: 'character.undead', ghoul: 'character.undead',
     }[species];
     if (genderCode) tags.push(genderCode);
     if (speciesCode) tags.push(speciesCode);

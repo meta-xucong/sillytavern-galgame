@@ -3,8 +3,8 @@ import { readFile } from 'node:fs/promises';
 
 const manifest = JSON.parse(await readFile(new URL('../../../external-modules/visual-asset-service/curated-asset-seeds.json', import.meta.url), 'utf8'));
 assert.equal(manifest.schemaVersion, 'galgame.visual-curated-asset-seeds.v1');
-assert.deepEqual(manifest.targets, { scene: 32, character: 24, equipment: 8, item: 8, skill: 8 });
-assert.equal(manifest.assets.length, 80);
+assert.deepEqual(manifest.targets, { scene: 32, character: 42, equipment: 8, item: 8, skill: 8 });
+assert.equal(manifest.assets.length, 98);
 assert.equal(manifest.generationPolicy.providerNeutral, true);
 assert.equal(manifest.generationPolicy.dedupe, 'assetContentSha256');
 assert.equal(manifest.generationPolicy.rejectDiagnostics, true);
@@ -24,4 +24,11 @@ for (const [type, count] of Object.entries(manifest.targets)) {
         assert.equal(asset.contentHash, null);
     }
 }
+const enemyKeys = manifest.assets
+    .filter((asset) => asset.assetType === 'character' && asset.tags.includes('enemy'))
+    .map((asset) => asset.assetKey);
+assert.equal(enemyKeys.length, 18);
+assert.equal(enemyKeys.includes('character-androgynous-goblin'), true);
+assert.equal(enemyKeys.includes('character-androgynous-skeleton'), true);
+assert.equal(enemyKeys.includes('character-androgynous-bandit'), true);
 console.log('curated visual asset seed tests passed');

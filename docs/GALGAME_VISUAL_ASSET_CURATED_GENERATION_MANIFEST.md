@@ -3,15 +3,15 @@
 `external-modules/visual-asset-service/curated-asset-seeds.json` 是管理员使用的、可复现的素材生成清单，不是运行时剧情数据，也不包含 API key 或图片二进制。清单按当前视觉服务的安全 PNG 合同记录尺寸、透明度、稳定 `assetKey`、`identityKey`、提示词模板和种子：
 
 - 32 张场景图：酒馆、森林、遗迹、城市、地牢、海岸、庄园和战场各 4 个时段/天气变体，1536×1024，不透明背景。
-- 24 个角色立绘：人类、精灵、矮人、盗贼、法师、骑士、兽人、亡灵、牧师、商人、贵族和学者的男女版本，1024×1536，透明全身立绘。
+- 42 个角色立绘：原有的人类、精灵、矮人、盗贼、法师、骑士、兽人、亡灵、牧师、商人、贵族和学者男女版本，加上 18 个敌方单位原型（哥布林、兽人、狗头人、蜥蜴人、豺狼人、食人魔、巨魔、骷髅、僵尸、幽灵、食尸鬼、强盗、掠夺者、邪教徒、刺客、守卫、士兵和弓手变体），1024×1536，透明全身立绘。
 - 装备、道具、技能各 8 个透明图标，1254×1254。
 
 清单中的 `contentHash` 只在种子清单阶段保持为空；运行时已通过批处理器生成并激活 canonical PNG。管理员生成图片后必须逐张通过“上传 PNG → 清洗并计算 `assetContentSha256` → 独立分析器闭集标签 → 草稿 → 校验 → 发布 → 激活”流程；同一内容哈希只能保留一份，诊断图、探针图、provider 调试图和无授权素材不得进入发布目录。发布新目录前保留旧 catalog 版本，以便存档按原版本回滚。
 
 角色的性别、种族、外观和服装是可见投影中的显式证据。运行时 RUNTIME-3 闭集字典使用 `character.masculine`、`character.feminine`、`character.androgynous` 以及 beastkin、undead、cleric、merchant、noble 等代码；LLM 无法确认性别时必须省略该代码，不能猜测。前端只传递可见证据，不复制模型提示或自行改写角色标签。
 
-本机已完成一次真实运行时激活：`galgame_curated_batch_20260929_r2@1`，包含 80 个已发布资产，80 个内容哈希全部唯一，80 个分析回执均为 `ready`，active catalog hash 为
-`sha256:28612cc38d44dbe4523fb89a473ebcd7b73f7db7f1a47e71abdc982acc5df381`。旧的 `galgame_curated_batch_20260929@1`、`catalog_simple_79a9652d5fd4@1` 及更早 catalog 仍保留；其 v2 记录先升级到 RUNTIME-3，再追加新批次，没有删除聊天或存档。
+本机已完成一次真实运行时激活：当前 active catalog 已保留原有资源，并新增 10 个高质量敌方透明立绘（哥布林、兽人、骷髅、僵尸、强盗、守卫及其侦察、弓手、队长变体）；这些资源已通过 loopback local-admin 上传、发布和 player-safe content 读取验证。种子清单现为 98 个资产，其中 42 个为角色立绘。
+当前 active catalog hash 为 `sha256:73645ec49c73848f251158c39ff713ad3f243c3ec417e348559efdb7bbbd3153`。旧 catalog 仍保留；没有删除聊天或存档。
 
 ## 每批导入的验收证据
 
@@ -42,9 +42,8 @@ node frontend/tools/curated-asset-batch.mjs `
   --output-dir "$env:TEMP\galgame-curated-sanitized"
 ```
 
-成功结果应报告 `assetCount: 80`、三阶段状态分别为 `draft`、`validated`、`published`，且
-`contentHashes` 数量为 80 并全部唯一。程序化图仅用于验证导入和激活链路，不冒充外部图像供应商
-的最终美术；管理员可把 `renderAsset` 替换为实际生成器，保持清单中的 `assetKey`、`seed`、
+成功结果应报告 `assetCount: 98`、三阶段状态分别为 `draft`、`validated`、`published`，且
+`contentHashes` 数量为 98 并全部唯一。程序化图仅用于验证导入和激活链路，不冒充外部图像供应商；生产 catalog 可以使用经过清理、哈希和发布校验的外部生成透明立绘。管理员可把 `renderAsset` 替换为实际生成器，保持清单中的 `assetKey`、`seed`、
 PNG 尺寸、透明度和上传合同不变。
 
 向真实运行时目录写入必须显式同时提供 `--data-dir`、`--activate` 和

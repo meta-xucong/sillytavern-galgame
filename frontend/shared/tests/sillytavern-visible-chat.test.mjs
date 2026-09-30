@@ -190,6 +190,29 @@ assert.deepEqual(coreTraitCharacterHints[0].visibleAttributes.map((attribute) =>
     'character-explicit-clothing',
 ]);
 
+// Hostile archetype labels are speakers, not narration/status rows. The
+// adapter adds only the species evidence explicitly present in the label, so
+// the visual service can select an enemy sprite without inventing gender.
+for (const [speaker, expectedValue] of [
+    ['哥布林', '哥布林'],
+    ['骷髅战士', '亡灵'],
+    ['Bandit Captain', '强盗'],
+]) {
+    const enemyHints = createCoreVisualDisplayEntityHints({
+        index: 30,
+        role: 'character',
+        speaker,
+        text: '它挡住了去路。',
+    });
+    assert.equal(enemyHints[0]?.entityType, 'character', speaker);
+    assert.equal(enemyHints[0]?.visibleAttributes.find((attribute) => attribute.code === 'character-explicit-species')?.value, expectedValue, speaker);
+}
+const inferredEnemySegments = createVisualNovelDisplaySegments(
+    '哥布林整理了一下链甲，露出更多胸肉：“好了，现在我们可以去砍人了吧？”',
+    { fallbackSpeaker: '旁白', role: 'character' },
+);
+assert.equal(inferredEnemySegments.some((segment) => segment.speaker === '哥布林'), true);
+
 const naturalLanguageOnlyHints = createVisualProjectionEntityHints({
     index: 8,
     role: 'player',
@@ -316,7 +339,9 @@ const unknownSpeakerSegment = createVisualNovelDisplaySegments('守卫立刻反�
     role: 'character',
     characterNames: ['Pippa'],
 });
-assert.equal(unknownSpeakerSegment[0].type, 'narration');
+assert.equal(unknownSpeakerSegment[0].type, 'dialogue');
+assert.equal(unknownSpeakerSegment[0].speaker, '守卫');
+assert.equal(unknownSpeakerSegment[0].speakerConfidence, 'inferred');
 
 const inferredSpeakerSegment = createVisualNovelDisplaySegments('Celestia整理了一下链甲，露出更多胸肉：“现在出发。”', {
     fallbackSpeaker: 'Dungeon Master',
