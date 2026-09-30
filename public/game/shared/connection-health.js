@@ -36,6 +36,8 @@ export class ConnectionHealthMonitor {
         this.timer = null;
         this.running = false;
         this.inFlight = null;
+        this.probeController = null;
+        this.probeEpoch = 0;
         this.sequence = 0;
         this.state = createInitialState(this.now());
     }
@@ -84,17 +86,59 @@ export class ConnectionHealthMonitor {
         this.running = false;
         if (this.timer) clearInterval(this.timer);
         this.timer = null;
+        this.probeController?.abort();
         return this;
+    }
+
+    /**
+     * Clear transient browser-side health state and immediately run a fresh
+     * probe. This never touches SillyTavern chats, player saves, or scenario
+     * state. A probe that was already running is invalidated so a late result
+     * cannot overwrite the reset snapshot.
+     */
+    async reset({ reason = 'reset', preserveGenerationPending = false } = {}) {
+        const previousInFlight = this.inFlight;
+        this.probeEpoch += 1;
+        this.probeController?.abort();
+        if (previousInFlight) {
+            await previousInFlight.catch(() => {});
+        }
+        this.probeController = null;
+        this.inFlight = null;
+        const generation = preserveGenerationPending && this.state.services.generation?.status === 'pending'
+            ? this.state.services.generation
+            : createServiceState();
+        const resetState = createInitialState(this.now());
+        this.state = {
+            ...resetState,
+            sequence: this.sequence,
+            reason,
+            services: {
+                ...resetState.services,
+                generation,
+            },
+        };
+        this.#emit();
+        return this.probeNow({ reason });
     }
 
     async probeNow({ reason = 'manual', signal = null } = {}) {
         if (this.inFlight) return this.inFlight;
         const startedAt = this.now();
         const sequence = ++this.sequence;
-        this.inFlight = Promise.all(DEFAULT_SERVICE_NAMES
+        const epoch = this.probeEpoch;
+        const controller = new AbortController();
+        const abortOnParentSignal = () => controller.abort();
+        signal?.addEventListener?.('abort', abortOnParentSignal, { once: true });
+        if (signal?.aborted) controller.abort();
+        this.probeController = controller;
+        const operation = Promise.all(DEFAULT_SERVICE_NAMES
             .filter((name) => name !== 'generation')
-            .map((name) => this.#probeService(name, signal)))
+            .map((name) => this.#probeService(name, controller.signal)))
             .then((results) => {
+                if (epoch !== this.probeEpoch || controller.signal.aborted) {
+                    return this.getSnapshot();
+                }
                 const services = {
                     ...this.state.services,
                     ...Object.fromEntries(results.map(({ name, value }) => [name, value])),
@@ -113,9 +157,14 @@ export class ConnectionHealthMonitor {
                 return this.getSnapshot();
             })
             .finally(() => {
-                this.inFlight = null;
+                signal?.removeEventListener?.('abort', abortOnParentSignal);
+                if (this.inFlight === operation) {
+                    this.inFlight = null;
+                    this.probeController = null;
+                }
             });
-        return this.inFlight;
+        this.inFlight = operation;
+        return operation;
     }
 
     recordGenerationStart({ requestId = '' } = {}) {

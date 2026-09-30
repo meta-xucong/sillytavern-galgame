@@ -34,6 +34,7 @@ const [playerHtml, playerJs, adminHtml, adminJs, publicAdapter] = await Promise.
 
 for (const selectorNeedle of [
     'id="titleScreen"',
+    'id="connectionResetButton"',
     'id="startButton"',
     'id="continueButton"',
     'id="loadButtonTitle"',

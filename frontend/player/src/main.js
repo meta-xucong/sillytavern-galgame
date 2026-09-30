@@ -93,6 +93,7 @@ let immediateVisualCharacterIdentity = '';
 
 const ui = {
     connectionStatus: document.querySelector('#connectionStatus'),
+    connectionResetButton: document.querySelector('#connectionResetButton'),
     titleBackdrop: document.querySelector('#titleBackdrop'),
     titleHeroine: document.querySelector('.title-heroine'),
     gameScreen: document.querySelector('#gameScreen'),
@@ -179,6 +180,7 @@ let activeMessageIndex = -1;
 let pageIndex = 0;
 let inputPending = false;
 let generationPending = false;
+let connectionResetInFlight = false;
 let textSizeMode = 'standard';
 let motionEnabled = true;
 let releaseReadyPromise = null;
@@ -340,6 +342,41 @@ function renderConnectionHealth(snapshot) {
     ui.connectionStatus.textContent = `${overallLabel} · ${parts.join(' · ')}`;
     ui.connectionStatus.dataset.connectionState = snapshot.overall;
     ui.connectionStatus.title = parts.join('\n');
+    if (ui.connectionResetButton) {
+        const generationFailed = generation?.status === 'down';
+        const runtimeNeedsReset = Boolean(runtime?.details?.stale || runtime?.details?.stopping);
+        const abnormal = snapshot.overall === 'degraded' || snapshot.overall === 'down' || generationFailed || runtimeNeedsReset;
+        ui.connectionResetButton.hidden = !abnormal && !connectionResetInFlight;
+        ui.connectionResetButton.disabled = connectionResetInFlight;
+        ui.connectionResetButton.textContent = connectionResetInFlight ? '复位检查中…' : '复位';
+        ui.connectionResetButton.setAttribute('aria-busy', connectionResetInFlight ? 'true' : 'false');
+    }
+}
+
+async function resetConnectionState() {
+    if (!connectionHealthMonitor || connectionResetInFlight) return;
+    connectionResetInFlight = true;
+    renderConnectionHealth(connectionHealthMonitor.getSnapshot());
+    // Invalidate late visual responses while preserving the already displayed
+    // scene/portrait. The active message is re-projected below after probing.
+    const visualToken = ++visualBundleRequestToken;
+    resetCoreVisualAvailability();
+    try {
+        const snapshot = await connectionHealthMonitor.reset({
+            reason: 'user-reset',
+            preserveGenerationPending: generationPending,
+        });
+        if (activeChatSnapshot && activeMessageIndex >= 0) {
+            void renderCoreVisualPresentation(activeChatSnapshot, activeMessageIndex, visualToken);
+        }
+        showToast(snapshot.overall === 'up' ? '连接已恢复' : '仍有连接异常，请稍后再试');
+    } catch (error) {
+        console.warn('Connection health reset failed.', error);
+        showToast('连接检查未完成，请稍后再试');
+    } finally {
+        connectionResetInFlight = false;
+        renderConnectionHealth(connectionHealthMonitor.getSnapshot());
+    }
 }
 
 async function refreshRelease() {
@@ -372,6 +409,9 @@ async function ensureReleaseReady() {
 }
 
 function bindEvents() {
+    ui.connectionResetButton?.addEventListener('click', () => {
+        void resetConnectionState();
+    });
     ui.startButton.addEventListener('click', () => {
         void startNewGame();
     });

@@ -98,6 +98,36 @@ test('transport probes preserve generation state across heartbeat cycles', async
     assert.equal(snapshot.services.generation.requestId, 'req-preserved');
 });
 
+test('reset invalidates stale probe results, clears transient failures, and rechecks services', async () => {
+    let probeCalls = 0;
+    let releaseFirstProbe;
+    const monitor = createConnectionHealthMonitor({
+        timeoutMs: 100,
+        probes: {
+            sillyTavern: () => {
+                probeCalls += 1;
+                if (probeCalls === 1) {
+                    return new Promise((resolve) => { releaseFirstProbe = resolve; });
+                }
+                return Promise.resolve({ ok: true });
+            },
+            configService: async () => ({ ok: true }),
+            runtimeBridge: async () => ({ ok: true }),
+            visualService: async () => ({ ok: true }),
+        },
+    });
+    monitor.recordGeneration({ ok: false, errorCode: 'GENERATION_TIMEOUT', requestId: 'old' });
+    const firstProbe = monitor.probeNow({ reason: 'heartbeat' });
+    const resetProbe = monitor.reset({ reason: 'user-reset' });
+    releaseFirstProbe?.({ ok: false, errorCode: 'LATE_FAILURE' });
+    const snapshot = await resetProbe;
+    await firstProbe;
+    assert.equal(snapshot.services.sillyTavern.status, 'up');
+    assert.equal(snapshot.services.generation.status, 'unknown');
+    assert.equal(snapshot.overall, 'up');
+    assert.equal(monitor.getSnapshot().services.sillyTavern.errorCode, '');
+});
+
 test('listeners receive immediate and changed snapshots; stop cancels polling', async () => {
     const events = [];
     const monitor = createConnectionHealthMonitor({
