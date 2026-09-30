@@ -160,29 +160,39 @@ await withServer(unavailableService, async (baseUrl) => {
     assert.equal(uploadedAssets.some(({ asset }) => asset.tagCodes.length > 0), true);
     setManifestForCatalog(catalog, { bindCharacter: false });
 
-    await renderMessage(acceptanceMessage(), { expectedDecisionReads: 1, expectedContentReads: 1 });
+    await renderMessage(acceptanceMessage(), { expectedDecisionReads: 1, expectedContentReads: 2 });
 
     assert.equal(fetchCount('/v1/core/visual-decisions'), 1);
-    assert.equal(contentReadCount(), 1);
+    assert.equal(contentReadCount(), 2);
     assert.deepEqual(activeVisualClasses(), {
         backdrop: true,
         heroine: false,
-        icons: unavailableVisualClasses().icons,
+        icons: [
+            'visual-icon visual-icon-equipment is-unavailable is-placeholder',
+            'visual-icon visual-icon-item is-visual-active',
+            'visual-icon visual-icon-skill is-unavailable is-placeholder',
+        ],
     });
     assert.equal(stageBackdropElement.style.backgroundImage.includes(catalogContentPath('scene')), true);
     assert.equal(stageHeroineElement.style.backgroundImage, `url("${VISUAL_PLACEHOLDER_URL}")`);
     assert.deepEqual(visualIconStripElement.children.map((item) => item.children[0].src), [
         VISUAL_PLACEHOLDER_URL,
-        VISUAL_PLACEHOLDER_URL,
+        `${baseUrl}${catalogContentPath('item')}`,
         VISUAL_PLACEHOLDER_URL,
     ]);
     const decisions = latestDecisionResponse().decisions;
     const sceneDecision = decisions.find((decision) => decision.entityType === 'scene');
     assert.equal(sceneDecision.assetId, catalog.assetRefs.find((ref) => ref.assetType === 'scene').assetId);
     assert.ok(sceneDecision.score >= 60);
-    assert.equal(decisions.filter((decision) => decision.entityType !== 'scene').every((decision) => (
-        decision.score === 0 && decision.reasonCodes.includes('candidate-empty')
-    )), true);
+    const itemDecision = decisions.find((decision) => decision.entityType === 'item');
+    assert.equal(itemDecision.assetId, catalog.assetRefs.find((ref) => ref.assetType === 'item').assetId);
+    assert.ok(itemDecision.score >= 60);
+    const equipmentDecision = decisions.find((decision) => decision.entityType === 'equipment');
+    assert.equal(equipmentDecision.score, 50);
+    assert.deepEqual(equipmentDecision.reasonCodes, ['type-match', 'unknown-fallback']);
+    const skillDecision = decisions.find((decision) => decision.entityType === 'skill');
+    assert.equal(skillDecision.score, 0);
+    assert.deepEqual(skillDecision.reasonCodes, ['candidate-empty']);
 });
 
 const analyzerRequests = [];

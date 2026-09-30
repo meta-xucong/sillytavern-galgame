@@ -1150,6 +1150,21 @@ function hasExplicitVisibleSceneEvidence(entity) {
   return deriveVisibleNormalizedCodes(entity).some((code) => code.startsWith('scene.'));
 }
 
+// Equipment, item, and skill labels are also trusted projection evidence. A
+// runtime analyzer may be unavailable or rate-limited while the player still
+// has an explicit visible status block (for example "Scale mail armor" or
+// "Fire Bolt"). Keep that path deterministic and score the published icon
+// tags against the normalized label codes instead of falling back to a blank
+// placeholder.
+function hasExplicitVisibleSideIconEvidence(entity) {
+  if (!['equipment', 'item', 'skill'].includes(entity?.entityType)) return false;
+  const hasExplicitLabel = (entity.visibleAttributes || []).some((attribute) => (
+    attribute?.code === `${entity.entityType}-visible-label` && attribute?.confidenceBand === 'explicit'
+  ));
+  if (!hasExplicitLabel) return false;
+  return deriveVisibleNormalizedCodes(entity).some((code) => code.startsWith(`${entity.entityType}.`));
+}
+
 // Scene/background matching must not wait for the optional language-model
 // analyzer when the projection already contains trusted visible evidence. A
 // bound character and an explicit scene location are enough to select the
@@ -1973,11 +1988,21 @@ function createCoreVisualCandidateDecisionPlan(request, { runtimeHint = null, ru
       // deterministic scorer while the analyzer is down.
       const allowBoundCharacterWithoutRuntime = entity.entityType === 'character' && hasValidBoundAssetId;
       const allowVisibleSceneWithoutRuntime = hasExplicitVisibleSceneEvidence(entity);
+      const allowVisibleSideIconWithoutRuntime = hasExplicitVisibleSideIconEvidence(entity);
       const hintedRuntimeEntity = runtimeHint?.entities?.find((item) => item.entityType === entity.entityType) || null;
       const useDeterministicSceneFallback = allowVisibleSceneWithoutRuntime && !hintedRuntimeEntity;
+      const useDeterministicSideIconFallback = allowVisibleSideIconWithoutRuntime && !hintedRuntimeEntity;
       const runtimeEntity = runtimeMode
         ? (useDeterministicSceneFallback
           ? null
+          : useDeterministicSideIconFallback
+            ? {
+              entityType: entity.entityType,
+              codes: deriveVisibleNormalizedCodes(entity),
+              confidence: 1,
+              confidenceBand: 'explicit',
+              status: 'ready',
+            }
           : hintedRuntimeEntity || {
           entityType: entity.entityType,
           codes: [],
@@ -1986,7 +2011,7 @@ function createCoreVisualCandidateDecisionPlan(request, { runtimeHint = null, ru
           status: 'unavailable',
         })
         : null;
-      const candidates = (runtimeMode && !runtimeHintReady && !allowBoundCharacterWithoutRuntime && !allowVisibleSceneWithoutRuntime)
+      const candidates = (runtimeMode && !runtimeHintReady && !allowBoundCharacterWithoutRuntime && !allowVisibleSceneWithoutRuntime && !allowVisibleSideIconWithoutRuntime)
         ? []
         : ((runtimeMode || coreEntityAllowsConcreteCandidate(entity))
         ? entityAssetRefs.map((ref) => createCoreVisualCandidateAssetInputFromAsset(assets.get(`${ref.assetId}:${ref.assetVersion}`)))
@@ -2028,11 +2053,12 @@ function createCoreVisualCandidateDecisionPlan(request, { runtimeHint = null, ru
         unknownCompatibilityReport,
         runtimeEntity,
         visibleContext: hasValidBoundAssetId ? { ...visibleContext, boundAssetId } : visibleContext,
-        deterministicRuntimeFallback: runtimeMode && useDeterministicSceneFallback,
+        deterministicRuntimeFallback: runtimeMode && (useDeterministicSceneFallback || useDeterministicSideIconFallback),
         runtimeUnavailable: runtimeMode
           && !runtimeHintReady
           && !allowBoundCharacterWithoutRuntime
-          && !allowVisibleSceneWithoutRuntime,
+          && !allowVisibleSceneWithoutRuntime
+          && !allowVisibleSideIconWithoutRuntime,
       });
       if (!decisionResult.ok) {
         return {
@@ -2356,7 +2382,10 @@ function scoreRuntimeCandidate(input, candidate, runtimeEntity, visibleContext =
     code.startsWith(`${input.entityType}.`)
       && !RUNTIME_GENERIC_PARENT_CODES.has(code)
   )));
-  const hasDeterministicVisibleEvidence = hasExplicitVisibleLabel && deterministicVisibleCodes.size > 0;
+  const hasExplicitSideIconEvidence = ['equipment', 'item', 'skill'].includes(input.entityType)
+    && hasExplicitVisibleLabel;
+  const hasDeterministicVisibleEvidence = hasExplicitVisibleLabel
+    && (deterministicVisibleCodes.size > 0 || hasExplicitSideIconEvidence);
   // Asset manifests carry curated visible tags in addition to provider analysis.
   // When the player sees an explicit status label, those trusted tags are valid
   // deterministic evidence even if the provider analysis omitted the exact term.
@@ -2378,10 +2407,12 @@ function scoreRuntimeCandidate(input, candidate, runtimeEntity, visibleContext =
   const visibleOrRuntime = new Set([...visibleCodes, ...runtimeCodes]);
   const attributeState = Math.round(20 * Math.min(1, [...visibleOrRuntime].filter((code) => attributeCodes.has(code)).length / Math.max(1, visibleOrRuntime.size)));
   const recentContinuity = Array.isArray(visibleContext?.recent) && visibleContext.recent.length > 0 && intersection.size > 0 ? 10 : 0;
+  const hasTrustedAnalysis = candidate.analysisStatus === undefined || candidate.analysisStatus === 'ready';
   const confidence = candidate.analysisStatus === 'ready'
     ? Math.round(5 * Math.min(Number(runtimeEntity?.confidence) || 0, Number(candidate.analysisConfidence) || 0))
     : 0;
-  const rawScore = core + typeIdentity + attributeState + recentContinuity + confidence - Math.min(20, 10 * conflicts.size);
+  const explicitSideIconBonus = hasExplicitSideIconEvidence ? 25 : 0;
+  const rawScore = core + typeIdentity + attributeState + recentContinuity + confidence + explicitSideIconBonus - Math.min(20, 10 * conflicts.size);
   let score = Math.max(0, Math.min(100, rawScore));
   const hasIdentity = [...RUNTIME_CHARACTER_IDENTITY_CODES].some((code) => visibleCodes.has(code));
   const hasAppearance = [...RUNTIME_CHARACTER_APPEARANCE_CODES].some((code) => visibleCodes.has(code));
@@ -2389,17 +2420,17 @@ function scoreRuntimeCandidate(input, candidate, runtimeEntity, visibleContext =
     runtimeEntity?.confidence < 0.60
       || ['ambiguous', 'unknown'].includes(runtimeEntity?.confidenceBand)
       || specificOverlap.size === 0
-      || candidate.analysisStatus !== 'ready'
+      || !hasTrustedAnalysis
       || (input.entityType === 'character' && (!hasIdentity || !hasAppearance))
   );
   if (capped) score = Math.min(score, 59);
-  if (candidate.analysisStatus !== 'ready') score = 0;
+  if (!hasTrustedAnalysis) score = 0;
   const reasonCodes = ['type-match'];
   if (specificOverlap.size > 0 || genericOverlap.size > 0) reasonCodes.push('tag-overlap');
   if (attributeState > 0) reasonCodes.push('explicit-visible-label');
   if (conflicts.size > 0) reasonCodes.push('negative-tag-conflict');
   if (capped) reasonCodes.push('ambiguous-appearance-capped');
-  if (candidate.analysisStatus !== 'ready') reasonCodes.push('dictionary-unavailable');
+  if (!hasTrustedAnalysis) reasonCodes.push('dictionary-unavailable');
   if (score < 60) reasonCodes.push('unknown-fallback');
   return {
     candidate,
@@ -2419,6 +2450,7 @@ function scoreRuntimeCandidate(input, candidate, runtimeEntity, visibleContext =
         core,
         typeIdentity,
         attributeState,
+        explicitSideIconBonus,
         recentContinuity,
         confidence,
         rawScore,

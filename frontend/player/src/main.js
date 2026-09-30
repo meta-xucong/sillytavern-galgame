@@ -1384,7 +1384,7 @@ async function renderCoreVisualImmediateCharacter(snapshot, messageIndex, token)
             return;
         }
         const speakerContext = getActiveVisualSpeakerContext(message, messageIndex);
-        if (speakerContext.role !== 'character') {
+        if (speakerContext.role !== 'character' && speakerContext.role !== 'narrator') {
             return;
         }
         const arcId = release?.activeArcId || release?.arcId || manifest?.defaultArcId || '';
@@ -1691,12 +1691,12 @@ async function renderCoreVisualDecisions(decisions, baseUrl, token, request, res
     const invalidTypes = new Set();
     const currentRole = request?.visibleContext?.current?.role || 'character';
     for (const type of CORE_VISUAL_TYPES) {
-        // Character assets belong only to character turns. A remote or
+        // Character assets belong only to character and narrator turns. A remote or
         // stale projection must never make a narrator/player turn inherit a
         // portrait, even if the response contains a character decision.
         const typeDecisions = decisions.filter((decision) => (
             decision?.entityType === type
-            && (type !== 'character' || currentRole === 'character')
+            && (type !== 'character' || currentRole === 'character' || currentRole === 'narrator')
         ));
         const renderable = typeDecisions
             .filter((decision) => isRenderableCoreVisualDecision(decision, type, request, response)
@@ -1761,7 +1761,7 @@ async function renderCoreVisualDecisions(decisions, baseUrl, token, request, res
             ? (immediateCharacterStillValid
                 ? Promise.resolve()
                 : applyCoreVisualCharacter(byType.get('character'), baseUrl, token))
-            : (currentRole === 'character' && immediateVisualCharacterIdentity
+            : ((currentRole === 'character' || currentRole === 'narrator') && immediateVisualCharacterIdentity
                 ? Promise.resolve()
                 : Promise.resolve().then(() => applyCoreVisualPlaceholderCharacter(currentRole))),
         applyCoreVisualIcons(byType, baseUrl, token, invalidTypes),
@@ -2350,16 +2350,19 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
         : visibleContext;
     const sourceMessageHash = await sha256Digest(canonicalJson(decisionContextMessage));
     const activeArcId = release?.activeArcId || release?.arcId || manifest?.defaultArcId || '';
-    const bindingMessage = displayedMessage.role === 'character' ? displayedMessage : fullMessage;
-    const characterBinding = bindingMessage?.role === 'character'
+    const bindingMessage = displayedMessage.role === 'character' || displayedMessage.role === 'narrator'
+        ? displayedMessage
+        : fullMessage;
+    const characterBinding = (bindingMessage?.role === 'character' || bindingMessage?.role === 'narrator')
         ? resolveVisualCharacterBinding(manifest, {
             name: bindingMessage.speaker,
-            role: 'character',
+            role: activeSpeakerContext.role,
             arcId: activeArcId,
             allowCharacterPoolFallback: false,
         })
         : null;
-    const hasActiveCharacterBinding = displayedMessage.role === 'character' && Boolean(characterBinding);
+    const hasActiveCharacterBinding = (displayedMessage.role === 'character' || displayedMessage.role === 'narrator')
+        && Boolean(characterBinding);
     const entities = [];
     // Extract equipment, item, skill and scene labels from the full visible
     // message. The active paragraph is only the character/voice selection
@@ -2441,7 +2444,7 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
                 hint.entityType === 'character'
                     ? [
                         ...hint.visibleAttributes.filter((attribute) => attribute.code !== 'character-explicit-name'),
-                        ...(bindingMessage?.role === 'character' && bindingMessage.speaker
+                        ...((bindingMessage?.role === 'character' || bindingMessage?.role === 'narrator') && bindingMessage.speaker
                             ? [{
                                 code: 'character-explicit-name',
                                 value: bindingMessage.speaker.slice(0, 120),

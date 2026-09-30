@@ -1,0 +1,70 @@
+{
+  "schemaVersion": "galgame.side-art-manifest.v1",
+  "description": "Curated square side-panel illustrations for equipment, item, and skill entities.",
+  "assets": [
+    {
+      "assetId": "asset_curated_character-narrator-ink-emblem",
+      "fileName": "narrator-ink-emblem.png",
+      "assetType": "character",
+      "title": "Ink and Constellation Narrator",
+      "tagCodes": ["character.androgynous"],
+      "featureCodes": ["feature.transparent", "feature.portrait"]
+    },
+    {
+      "assetId": "asset_side_equipment_arcane_sword",
+      "fileName": "equipment-arcane-sword.png",
+      "assetType": "equipment",
+      "title": "Arcane Moonblade",
+      "tagCodes": ["equipment.weapon", "equipment.melee", "equipment.magical"],
+      "featureCodes": ["feature.icon", "feature.metal", "feature.blade"]
+    },
+    {
+      "assetId": "asset_side_equipment_teal_armor",
+      "fileName": "equipment-teal-armor.png",
+      "assetType": "equipment",
+      "title": "Teal Wayfarer Armor",
+      "tagCodes": ["equipment.armor", "equipment.common"],
+      "featureCodes": ["feature.icon", "feature.metal", "feature.leather"]
+    },
+    {
+      "assetId": "asset_side_item_healing_potion",
+      "fileName": "item-healing-potion.png",
+      "assetType": "item",
+      "title": "Moonflower Healing Tonic",
+      "tagCodes": ["item.consumable", "item.misc", "item.tool"],
+      "featureCodes": ["feature.icon", "feature.small-object", "feature.container"]
+    },
+    {
+      "assetId": "asset_side_item_treasure_map",
+      "fileName": "item-treasure-map.png",
+      "assetType": "item",
+      "title": "Compass Treasure Chart",
+      "tagCodes": ["item.quest", "item.treasure", "item.tool"],
+      "featureCodes": ["feature.icon", "feature.small-object", "feature.symbol"]
+    },
+    {
+      "assetId": "asset_side_skill_arcane_grimoire",
+      "fileName": "skill-arcane-grimoire.png",
+      "assetType": "skill",
+      "title": "Arcane Grimoire",
+      "tagCodes": ["skill.magic", "skill.fire", "skill.crafting"],
+      "featureCodes": ["feature.icon", "feature.arcane", "feature.active"]
+    },
+    {
+      "assetId": "asset_side_skill_shadow_knife",
+      "fileName": "skill-shadow-knife.png",
+      "assetType": "skill",
+      "title": "Shadow Knife Technique",
+      "tagCodes": ["skill.stealth", "skill.shadow", "skill.combat"],
+      "featureCodes": ["feature.icon", "feature.physical", "feature.active"]
+    },
+    {
+      "assetId": "asset_side_skill_shield_strike",
+      "fileName": "skill-shield-strike.png",
+      "assetType": "skill",
+      "title": "Shield Strike Stance",
+      "tagCodes": ["skill.combat", "skill.protective-ward", "skill.ward"],
+      "featureCodes": ["feature.icon", "feature.physical", "feature.active"]
+    }
+  ]
+}
