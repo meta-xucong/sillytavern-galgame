@@ -987,6 +987,13 @@ const VISUAL_PROJECTION_LABEL_ATTRIBUTE_CODES = Object.freeze({
 // source of truth, and hidden reasoning/status blocks have already been
 // removed by formatVisualNovelDisplayText before this table is consulted.
 const NATURAL_SCENE_HINT_PATTERNS = Object.freeze([
+    // Specific place names are checked before the broader place families so a
+    // visible paragraph can move the stage away from a previously mentioned
+    // tavern or city. The category deliberately reuses the published scene
+    // vocabulary; it is a visual hint, not a new story/location schema.
+    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:绿瓶药房|药房|药店|诊所)/gu, category: '室内' },
+    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:旧钟楼|钟楼|礼拜堂|灰境前厅|前厅|地下遗迹|石室|洞窟|山洞|祭坛|墓室|塔楼内部)/gu, category: '地牢' },
+    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:营地|村庄|战场|海岸|海边|海滩|山谷|荒地|桥头|城门外)/gu, category: '室外' },
     // Tavern-like places in the curated catalog are city interiors. Include
     // both normalized labels so the matcher gets a specific scene.city
     // overlap instead of stopping at generic scene.interior.
@@ -1827,8 +1834,8 @@ function isPunctuationOnlyVisualNovelSegment(value) {
 function stripHiddenVisualNovelDisplayBlocks(text) {
     return text
         .replace(/<!--[\s\S]*?-->/g, '')
-        .replace(/<\s*(?:think|thinking|thought|reasoning)\b[^>]*>[\s\S]*?<\s*\/\s*(?:think|thinking|thought|reasoning)\s*>/gi, '')
-        .replace(/\[(?:think|thinking|thought|reasoning)\][\s\S]*?\[\/(?:think|thinking|thought|reasoning)\]/gi, '')
+        .replace(/<\s*(?:think|thinking|thought|reasoning|analysis)\b[^>]*>[\s\S]*?<\s*\/\s*(?:think|thinking|thought|reasoning|analysis)\s*>/gi, '')
+        .replace(/\[(?:think|thinking|thought|reasoning|analysis)\][\s\S]*?\[\/(?:think|thinking|thought|reasoning|analysis)\]/gi, '')
         .replace(/```[ \t]*\r?\n[ \t]*\[(?:think|thinking|thought|reasoning|analysis)\][ \t]*\r?\n[\s\S]*?\r?\n[ \t]*```/gi, '')
         .replace(/```\s*\[?\s*(?:think|thinking|thought|reasoning|analysis)\s*\]?\s*[\r\n]+[\s\S]*?```/gi, '')
         .replace(/```(?:think|thinking|thought|reasoning|analysis)[\s\S]*?```/gi, '')

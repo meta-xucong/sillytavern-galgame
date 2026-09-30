@@ -1,4 +1,4 @@
-import { createReleaseStore } from './shared/config-service.js?v=auto-2817f48812be';
+import { createReleaseStore } from './shared/config-service.js?v=auto-ba5e0d1bf6db';
 import {
     getAssetUrl,
     getVisualCharacterBindings,
@@ -7,13 +7,13 @@ import {
     getActiveSillyTavernBindings,
     materializeManifestForArc,
     resolveAdaptivePresentationProfileBinding,
-} from './shared/protocol.js?v=auto-2817f48812be';
+} from './shared/protocol.js?v=auto-ba5e0d1bf6db';
 import {
     AUTO_SAVE_ID,
     createCanonicalPlayerSaveRelease,
     createPlayerSaveStore,
     manualSaveIds,
-} from './shared/player-save.js?v=auto-2817f48812be';
+} from './shared/player-save.js?v=auto-ba5e0d1bf6db';
 import {
     createCoreVisualDisplayEntityHints,
     createCoreVisualDisplayEntityKey,
@@ -21,11 +21,11 @@ import {
     createVisualNovelDisplaySegments,
     OriginalRuntimeBridgeClient,
     SillyTavernOriginalChatBridge,
-} from './shared/sillytavern-adapter.js?v=auto-2817f48812be';
-import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-2817f48812be';
-import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-2817f48812be';
-import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-2817f48812be';
-import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-2817f48812be';
+} from './shared/sillytavern-adapter.js?v=auto-ba5e0d1bf6db';
+import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-ba5e0d1bf6db';
+import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-ba5e0d1bf6db';
+import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-ba5e0d1bf6db';
+import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-ba5e0d1bf6db';
 
 const releaseStore = createReleaseStore(null, { fallbackToLocal: false });
 const playerSaveStore = createPlayerSaveStore();
@@ -1451,7 +1451,12 @@ function renderCoreVisualFallback({ preserveVerified = false, preserveVerifiedBa
         restoreDefaultBackgroundLayer();
     }
     applyCoreVisualPlaceholderCharacter(role);
-    renderCoreVisualIconStrip();
+    const hasVerifiedIconLayer = Array.from(ui.visualIconStrip?.children || [])
+        .some((icon) => icon?.classList?.contains?.('is-visual-active')
+            || String(icon?.className || '').split(/\s+/u).includes('is-visual-active'));
+    if (!(preserveVerifiedBackground && hasVerifiedIconLayer)) {
+        renderCoreVisualIconStrip();
+    }
     coreVisualHasVerifiedPresentation = false;
     setVisualStatus('');
 }
@@ -1473,17 +1478,17 @@ async function renderCoreVisualPresentation(snapshot, messageIndex, token) {
     try {
         const baseUrl = getCoreVisualServiceUrl();
         if (!baseUrl) {
-            renderCoreVisualFallback({ preserveVerified: false, role: visualRole });
+            renderCoreVisualFallback({ preserveVerified: false, preserveVerifiedBackground: true, role: visualRole });
             return;
         }
         const context = await readCoreVisualContext(baseUrl);
         if (!context?.enabled || !context.visualProfile) {
-            renderCoreVisualFallback({ preserveVerified: false, role: visualRole });
+            renderCoreVisualFallback({ preserveVerified: false, preserveVerifiedBackground: true, role: visualRole });
             return;
         }
         const message = snapshot?.messages?.[messageIndex];
         if (!message) {
-            renderCoreVisualFallback({ preserveVerified: false, role: visualRole });
+            renderCoreVisualFallback({ preserveVerified: false, preserveVerifiedBackground: true, role: visualRole });
             return;
         }
         const request = await createCoreVisualDecisionRequest({
@@ -1503,26 +1508,26 @@ async function renderCoreVisualPresentation(snapshot, messageIndex, token) {
         }
         if (!response.ok) {
             markCoreVisualUnavailable('VISUAL_CORE_SERVICE_REJECTED');
-            renderCoreVisualFallback({ preserveVerified: false, role: visualRole });
+            renderCoreVisualFallback({ preserveVerified: false, preserveVerifiedBackground: true, role: visualRole });
             setVisualStatus('');
             return;
         }
         const body = await response.json();
         if (body?.schemaVersion !== CORE_VISUAL_DECISION_RESPONSE_VERSION) {
             markCoreVisualUnavailable('VISUAL_CORE_SERVICE_INVALID_RESPONSE');
-            renderCoreVisualFallback({ preserveVerified: false, role: visualRole });
+            renderCoreVisualFallback({ preserveVerified: false, preserveVerifiedBackground: true, role: visualRole });
             setVisualStatus('');
             return;
         }
         if (body.ok !== true) {
             markCoreVisualUnavailable(body?.error?.code || 'VISUAL_CORE_SERVICE_INVALID_RESPONSE');
-            renderCoreVisualFallback({ preserveVerified: false, role: visualRole });
+            renderCoreVisualFallback({ preserveVerified: false, preserveVerifiedBackground: true, role: visualRole });
             setVisualStatus('');
             return;
         }
         if (!Array.isArray(body.decisions)) {
             markCoreVisualUnavailable('VISUAL_CORE_SERVICE_INVALID_RESPONSE');
-            renderCoreVisualFallback({ preserveVerified: false, role: visualRole });
+            renderCoreVisualFallback({ preserveVerified: false, preserveVerifiedBackground: true, role: visualRole });
             setVisualStatus('');
             return;
         }
@@ -1530,7 +1535,7 @@ async function renderCoreVisualPresentation(snapshot, messageIndex, token) {
     } catch (_error) {
         if (token === visualBundleRequestToken) {
             markCoreVisualUnavailable('VISUAL_CORE_SERVICE_UNAVAILABLE');
-            renderCoreVisualFallback({ preserveVerified: false, role: visualRole });
+            renderCoreVisualFallback({ preserveVerified: false, preserveVerifiedBackground: true, role: visualRole });
             setVisualStatus('');
         }
     }
@@ -1762,10 +1767,8 @@ async function renderCoreVisualDecisions(decisions, baseUrl, token, request, res
     await Promise.all([
         byType.has('scene')
             ? applyCoreVisualBackground(byType.get('scene'), baseUrl, token)
-            : (decisions.some((decision) => decision?.entityType === 'scene'
-                && String(decision.assetId || '').startsWith('unknown_')
-                && coreVisualHasVerifiedBackground
-                && ui.stageBackdrop?.dataset.visualAssetIdentity)
+            : (coreVisualHasVerifiedBackground
+                && ui.stageBackdrop?.dataset.visualAssetIdentity
                 ? Promise.resolve()
                 : Promise.resolve().then(() => restoreDefaultBackgroundLayer())),
         byType.has('character')
@@ -2384,9 +2387,11 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
         && !isManifestNarratorSpeaker(displayedMessage.speaker);
     const hasActiveCharacterPresentation = hasActiveCharacterBinding || hasActiveCharacterCandidate;
     const entities = [];
-    // Extract equipment, item, skill and scene labels from the full visible
-    // message. The active paragraph is only the character/voice selection
-    // input; using it as the whole projection drops status lines that follow.
+    // Keep status/equipment/item/skill evidence from the full visible message,
+    // but never let the last location in a long reply overwrite the location
+    // of the paragraph currently shown. Scene evidence is timeline-sensitive:
+    // a paragraph with a place wins; a paragraph without one emits no new
+    // scene and lets the renderer preserve the last verified background.
     const fullHints = createCoreVisualDisplayEntityHints(fullMessage || displayedMessage);
     const isExplicitCharacterHint = (hint) => hint.entityType === 'character'
         && hint.visibleAttributes?.some((attribute) => attribute.code === 'character-explicit-appearance');
@@ -2395,6 +2400,7 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
         : fullHints.filter((hint) => hint.entityType !== 'character' || isExplicitCharacterHint(hint));
     if (segmentMessage) {
         const segmentHints = createCoreVisualDisplayEntityHints(segmentMessage);
+        const segmentSceneHint = segmentHints.find((hint) => hint.entityType === 'scene');
         const segmentCharacterHint = segmentHints.find((hint) => hint.entityType === 'character');
         const fullCharacterHint = fullHints.find((hint) => hint.entityType === 'character');
         const activeCharacterHint = hasActiveCharacterPresentation
@@ -2431,9 +2437,10 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
         }
         hints = [
             ...(activeCharacterHint ? [activeCharacterHint] : []),
+            ...(segmentSceneHint ? [segmentSceneHint] : []),
             ...fullHints.filter((hint) => activeCharacterHint
-                ? hint.entityType !== 'character'
-                : hint.entityType !== 'character' || isExplicitCharacterHint(hint)),
+                ? hint.entityType !== 'character' && hint.entityType !== 'scene'
+                : (hint.entityType !== 'character' && hint.entityType !== 'scene') || isExplicitCharacterHint(hint)),
         ];
     } else if (hasActiveCharacterPresentation && !hints.some((hint) => hint.entityType === 'character')) {
         hints = [{

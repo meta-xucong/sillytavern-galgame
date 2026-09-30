@@ -233,8 +233,8 @@ async function testRuntimeDictionaryV2AndScorer() {
     assetId: 'asset_scene_runtime_plan',
     assetType: 'scene',
     role: 'background',
-    tagCodes: [],
-    featureCodes: [],
+    tagCodes: ['scene.forest'],
+    featureCodes: ['feature.dark'],
     analysis: makeAnalysis('scene', ['scene.forest'], ['feature.dark']),
     assetContentSha256: BUILTIN_UNKNOWN_ASSETS.scene.assetContentSha256,
   });
@@ -4461,6 +4461,43 @@ async function testCoreDeterministicMatcherHelpers() {
   });
   assert.equal(offlineTavernWithUnrelatedRuntimeHint.ok, true, JSON.stringify(offlineTavernWithUnrelatedRuntimeHint));
   assert.equal(offlineTavernWithUnrelatedRuntimeHint.decisions[0].assetId, 'asset_scene_offline_tavern');
+
+  const offlineSceneAssets = [
+    makeValidatedAssetRecord({
+      assetId: 'asset_scene_offline_forest',
+      assetType: 'scene',
+      role: 'background',
+      tagCodes: ['scene.forest', 'scene.exterior', 'scene.day'],
+      featureCodes: [],
+    }),
+    makeValidatedAssetRecord({
+      assetId: 'asset_scene_offline_city',
+      assetType: 'scene',
+      role: 'background',
+      tagCodes: ['scene.city', 'scene.exterior', 'scene.day'],
+      featureCodes: [],
+    }),
+  ];
+  const offlineSceneCatalog = createCorePublishedCatalog(offlineSceneAssets);
+  const offlineForestProjection = coreProjection({
+    entities: [coreEntity('scene', {
+      entityKey: 'entity_scene_offline_forest01',
+      displayLabel: '森林',
+      visibleAttributes: [{ code: 'scene-location-kind', value: '森林（森林）', confidenceBand: 'explicit' }],
+    })],
+  });
+  const offlineForestPlan = createCoreVisualCandidateDecisionPlan(coreDecisionPlanRequest({
+    assets: offlineSceneAssets,
+    catalog: offlineSceneCatalog,
+    projection: offlineForestProjection,
+  }), {
+    runtimeMode: true,
+    runtimeHint: { status: 'unavailable', entities: [] },
+    visibleContext: { current: { index: 8, role: 'character', speaker: 'Guide', text: '森林深处' }, recent: [] },
+  });
+  assert.equal(offlineForestPlan.ok, true, JSON.stringify(offlineForestPlan));
+  assert.equal(offlineForestPlan.decisions[0].assetId, 'asset_scene_offline_forest');
+  assert.ok(offlineForestPlan.decisions[0].score > 60, JSON.stringify(offlineForestPlan));
 
   const characterNoAppearance = createCoreVisualCandidateDecisionPlan(coreDecisionPlanRequest({
     assets,

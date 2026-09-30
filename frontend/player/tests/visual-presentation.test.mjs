@@ -85,6 +85,26 @@ globalThis.fetch = async (url, options = {}) => {
                 decisions: [],
             }), { status: 200, headers: { 'content-type': 'application/json' } });
         }
+        if (coreDecisionMode === 'none') {
+            return new Response(JSON.stringify({
+                ok: true,
+                schemaVersion: 'galgame.visual-core-visual-decisions-response.v2',
+                requestId: body.requestId,
+                projectionId: body.projection.projectionId,
+                projectionHash: body.projection.projectionHash,
+                sourceMessageIndex: body.projection.sourceMessageIndex,
+                sourceMessageHash: body.projection.sourceMessageHash,
+                catalogId: body.visualProfile.catalogId,
+                catalogRevision: body.visualProfile.catalogRevision,
+                catalogHash: body.visualProfile.catalogHash,
+                matcherVersion: 'vs-runtime-matcher-v2',
+                scorerVersion: 'vs-runtime-scorer-v2',
+                usesLlm: false,
+                understandingStatus: 'unavailable',
+                errorCode: null,
+                decisions: [],
+            }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
         return new Response(JSON.stringify({
             ok: true,
             schemaVersion: 'galgame.visual-core-visual-decisions-response.v2',
@@ -267,6 +287,39 @@ assert.deepEqual(visualIconStripElement.children.map((item) => item.children[0].
     'http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_skill_player_route/1/content',
 ]);
 assert.equal(fetchCalls.some((call) => call.url.includes('/v1/player/visual-bundle')), false);
+
+fetchCalls = [];
+globalThis.__GALGAME_TEST_RENDER_CHAT__({
+    ok: true,
+    fileName: 'chat-visual-core-segments.json',
+    writable: true,
+    messages: [{
+        role: 'character',
+        speaker: 'Test Heroine',
+        displayText: '你们进入光辉神殿酒馆。\n\n队伍随后来到旧钟楼。',
+        text: '你们进入光辉神殿酒馆。\n\n队伍随后来到旧钟楼。',
+    }],
+}, { messageIndex: 0, instant: true });
+await waitForCoreDecision();
+const firstSegmentRequest = JSON.parse(fetchCalls.find((call) => call.url.endsWith('/v1/core/visual-decisions')).options.body);
+assert.equal(firstSegmentRequest.projection.entities.find((entity) => entity.entityType === 'scene')?.displayLabel, '光辉神殿酒馆');
+fetchCalls = [];
+globalThis.__GALGAME_TEST_RENDER_CHAT__({
+    ok: true,
+    fileName: 'chat-visual-core-segments.json',
+    writable: true,
+    messages: [{
+        role: 'character',
+        speaker: 'Test Heroine',
+        displayText: '你们进入光辉神殿酒馆。\n\n队伍随后来到旧钟楼。',
+        text: '你们进入光辉神殿酒馆。\n\n队伍随后来到旧钟楼。',
+    }],
+}, { messageIndex: 0, pageIndex: 1, instant: true });
+await waitForCoreDecision();
+const segmentRequests = fetchCalls
+    .filter((call) => call.url.endsWith('/v1/core/visual-decisions'))
+    .map((call) => JSON.parse(call.options.body));
+assert.equal(segmentRequests.at(-1).projection.entities.find((entity) => entity.entityType === 'scene')?.displayLabel, '旧钟楼');
 
 fetchCalls = [];
 globalThis.__GALGAME_TEST_RENDER_CHAT__({
@@ -461,8 +514,32 @@ globalThis.__GALGAME_TEST_RENDER_CHAT__({
 }, { messageIndex: 0 });
 await waitForCoreDecision();
 assert.equal(fetchCalls.filter((call) => call.url.endsWith('/v1/core/visual-decisions')).length, 1);
-assert.equal(stageBackdropElement.style.backgroundImage, 'url("/assets/default-background.png")');
+assert.equal(stageBackdropElement.style.backgroundImage, 'url("http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_scene_player_route/1/content")');
+assert.equal(stageBackdropElement.classList.contains('is-visual-active'), true);
 assert.equal(stageHeroineElement.style.backgroundImage, `url(\"${VISUAL_PLACEHOLDER_URL}\")`);
+
+// An empty scene decision for a line without a new location must keep the
+// last verified background instead of restoring the default layer.
+visualCoreServiceMeta = 'http://visual-core-recovery.test';
+coreDecisionMode = 'none';
+fetchCalls = [];
+globalThis.__GALGAME_TEST_RENDER_CHAT__({
+    ok: true,
+    fileName: 'chat-visual-core-no-scene.json',
+    writable: true,
+    messages: [{
+        role: 'character',
+        speaker: 'Test Heroine',
+        displayText: '她在钟楼门口停下，暂时没有继续行动。',
+        text: '她在钟楼门口停下，暂时没有继续行动。',
+    }],
+}, { messageIndex: 0, instant: true });
+await waitForCoreDecision();
+assert.equal(stageBackdropElement.style.backgroundImage, 'url("http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_scene_player_route/1/content")');
+assert.equal(stageBackdropElement.classList.contains('is-visual-active'), true);
+coreDecisionMode = 'ok';
+visualCoreServiceMeta = 'http://visual-core.test';
+fetchCalls = [];
 
 globalThis.__GALGAME_TEST_RENDER_CHAT__({
     ok: true,
@@ -518,7 +595,7 @@ globalThis.__GALGAME_TEST_RENDER_CHAT__({
     }],
 }, { messageIndex: 0 });
 await waitForCoreDecision();
-assert.equal(stageBackdropElement.style.backgroundImage, 'url("/assets/default-background.png")');
+assert.equal(stageBackdropElement.style.backgroundImage, 'url("http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_scene_player_route/1/content")');
 assert.equal(stageHeroineElement.style.backgroundImage, 'url(\"http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_character_1b4268f70a37/1/content\")');
 assert.deepEqual(visualIconStripElement.children.map((item) => item.className), [
     'visual-icon visual-icon-equipment is-unavailable is-placeholder',

@@ -1994,7 +1994,17 @@ function createCoreVisualCandidateDecisionPlan(request, { runtimeHint = null, ru
       const useDeterministicSideIconFallback = allowVisibleSideIconWithoutRuntime && !hintedRuntimeEntity;
       const runtimeEntity = runtimeMode
         ? (useDeterministicSceneFallback
-          ? null
+          ? {
+            // A visible scene label is trusted projection evidence. Feed its
+            // normalized scene codes through the runtime scorer so curated
+            // city/forest/dungeon assets do not tie and fall back to the
+            // first catalog entry when the optional analyzer is unavailable.
+            entityType: entity.entityType,
+            codes: deriveVisibleNormalizedCodes(entity),
+            confidence: 1,
+            confidenceBand: 'explicit',
+            status: 'ready',
+          }
           : useDeterministicSideIconFallback
             ? {
               entityType: entity.entityType,

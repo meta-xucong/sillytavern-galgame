@@ -8,6 +8,7 @@ import {
     SillyTavernHttpClient,
     SillyTavernOriginalChatBridge,
     createVisualNovelDisplaySegments,
+    createCoreVisualDisplayEntityHints,
     extractSuggestedActionsFromOriginalText,
     formatVisualNovelDisplayText,
 } from '../src/sillytavern-adapter.js';
@@ -363,6 +364,49 @@ assert.equal(hiddenInstructionDisplayText.includes('secret die'), false);
 assert.equal(hiddenInstructionDisplayText.includes('scratchpad'), false);
 assert.equal(hiddenInstructionDisplayText.includes('树丛忽然晃动。'), true);
 assert.equal(hiddenInstructionDisplayText.includes('“把剑握稳。”'), true);
+
+const multiSceneVisibleText = '你们离开光辉神殿酒馆，穿过城市废墟，回到旧钟楼外的荒地。随后进入灰境前厅，战斗在石柱间爆发。';
+const multiSceneHints = createCoreVisualDisplayEntityHints({
+    index: 17,
+    role: 'character',
+    speaker: 'Dungeon Master',
+    text: multiSceneVisibleText,
+});
+assert.equal(multiSceneHints.find((entity) => entity.entityType === 'scene')?.displayLabel, '灰境前厅');
+assert.match(
+    multiSceneHints.find((entity) => entity.entityType === 'scene')?.visibleAttributes?.[0]?.value || '',
+    /灰境前厅（地牢）/u,
+);
+const bellTowerHints = createCoreVisualDisplayEntityHints({
+    index: 18,
+    role: 'character',
+    speaker: 'Dungeon Master',
+    text: '队伍来到旧钟楼，雨幕下停步。',
+});
+assert.equal(bellTowerHints.find((entity) => entity.entityType === 'scene')?.displayLabel, '旧钟楼');
+const hiddenOnlySceneHints = createCoreVisualDisplayEntityHints({
+    index: 19,
+    role: 'character',
+    speaker: 'Dungeon Master',
+    text: '[thinking]进入灰境前厅[/thinking]\n“我们继续前进。”',
+});
+assert.equal(hiddenOnlySceneHints.some((entity) => entity.entityType === 'scene'), false);
+const xmlAnalysisOnlySceneHints = createCoreVisualDisplayEntityHints({
+    index: 20,
+    role: 'character',
+    speaker: 'Dungeon Master',
+    text: '<analysis>进入旧钟楼</analysis>\n\n你继续前进。',
+});
+assert.equal(xmlAnalysisOnlySceneHints.some((entity) => entity.entityType === 'scene'), false);
+assert.equal(formatVisualNovelDisplayText('<analysis>进入旧钟楼</analysis>\n\n你继续前进。').includes('进入旧钟楼'), false);
+const bracketAnalysisOnlySceneHints = createCoreVisualDisplayEntityHints({
+    index: 21,
+    role: 'character',
+    speaker: 'Dungeon Master',
+    text: '[analysis]进入旧钟楼[/analysis]\n\n你继续前进。',
+});
+assert.equal(bracketAnalysisOnlySceneHints.some((entity) => entity.entityType === 'scene'), false);
+assert.equal(formatVisualNovelDisplayText('[analysis]进入旧钟楼[/analysis]\n\n你继续前进。').includes('进入旧钟楼'), false);
 
 const fencedThinkingDisplayText = formatVisualNovelDisplayText([
     '```',

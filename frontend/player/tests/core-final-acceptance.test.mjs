@@ -308,7 +308,7 @@ await withServer(analyzerService, async (baseUrl) => {
         text: '场景: 雨中的旧庭院',
     }, { expectedDecisionReads: 0, expectedContentReads: 0 });
     await new Promise((resolve) => setTimeout(resolve, 25));
-    assert.equal(stageBackdropElement.style.backgroundImage, 'url("/assets/default-background.png")');
+    assert.equal(stageBackdropElement.style.backgroundImage.includes('/v1/core/catalogs/'), true);
     assert.equal(stageHeroineElement.style.backgroundImage, `url(\"${NARRATOR_PLACEHOLDER_URL}\")`);
     assert.equal(visualStatusElement.hidden, true);
 });
@@ -316,7 +316,7 @@ await withServer(analyzerService, async (baseUrl) => {
 const playerSource = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
 assert.equal(/playerVisualSessionReader|visual-bundle|visual-assets|projection-proof|restore-proof|\/v1\/visual-match|binding writer|provider|\bLLM\b/i.test(playerSource), false);
 assert.match(playerSource, /runtimeBridge\.generateReply/);
-    assert.equal(stageBackdropElement.style.backgroundImage, 'url("/assets/default-background.png")');
+    assert.equal(stageBackdropElement.style.backgroundImage.includes('/v1/core/catalogs/'), true);
     assert.equal(stageHeroineElement.style.backgroundImage, `url(\"${NARRATOR_PLACEHOLDER_URL}\")`);
 
 console.log('CORE-5 focused final acceptance tests passed: unavailable fallback and test-only analyzer overlap paths');
