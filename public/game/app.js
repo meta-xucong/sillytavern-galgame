@@ -606,7 +606,7 @@ async function continueFromSaveOrLatest() {
     await ensureReleaseReady().catch(() => {});
     const autoSlot = await playerSaveStore.loadSlot(AUTO_SAVE_ID).catch(() => null);
     if (autoSlot && saveSlotMatchesCurrentRelease(autoSlot)) {
-        const latestRecovery = await tryRecoverLatestBoundChatForSeedAutoSlot({
+        const latestRecovery = await tryRecoverLatestBoundChatForAutoSlot({
             autoSlot,
             seedChatId: getCurrentBoundChatSeedId(),
             loadLatestBoundChat: () => chatBridge.loadLatestBoundChat(manifest),
@@ -652,14 +652,18 @@ function normalizeBoundChatId(value) {
         .trim();
 }
 
-async function tryRecoverLatestBoundChatForSeedAutoSlot({
+// Continue is a recovery operation, not a blind replay of the browser's last
+// pointer. A stale auto slot can point at a short branch while SillyTavern
+// already contains the longer current arc, making history appear missing.
+// Manual slots still load their exact chat below.
+async function tryRecoverLatestBoundChatForAutoSlot({
     autoSlot,
     seedChatId,
     loadLatestBoundChat,
 }) {
     const normalizedAutoChatId = normalizeBoundChatId(autoSlot?.chatId);
     const normalizedSeedChatId = normalizeBoundChatId(seedChatId);
-    if (!normalizedAutoChatId || !normalizedSeedChatId || normalizedAutoChatId !== normalizedSeedChatId) {
+    if (!normalizedAutoChatId) {
         return {
             attempted: false,
             snapshot: null,
@@ -669,11 +673,18 @@ async function tryRecoverLatestBoundChatForSeedAutoSlot({
     try {
         const snapshot = await loadLatestBoundChat();
         const normalizedSnapshotChatId = normalizeBoundChatId(snapshot?.fileName);
-        if (
-            snapshot?.ok
+        const savedMessageCount = Math.max(0, Number(autoSlot?.lastMessageIndex || 0) + 1);
+        const latestMessageCount = Array.isArray(snapshot?.messages) ? snapshot.messages.length : 0;
+        const latestIsArcChat = snapshot?.ok
             && snapshot.isSeed === false
             && normalizedSnapshotChatId
-            && normalizedSnapshotChatId !== normalizedSeedChatId
+            && normalizedSnapshotChatId !== normalizedSeedChatId;
+        if (
+            latestIsArcChat
+            && (
+                normalizedAutoChatId === normalizedSeedChatId
+                || (normalizedSnapshotChatId !== normalizedAutoChatId && latestMessageCount > savedMessageCount)
+            )
         ) {
             return {
                 attempted: true,

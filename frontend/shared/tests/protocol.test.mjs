@@ -72,6 +72,17 @@ const curatedVisualBindingManifest = {
 };
 const curatedVisualBindingStatus = validateVisualCharacterBindings(curatedVisualBindingManifest);
 assert.equal(curatedVisualBindingStatus.valid, true, curatedVisualBindingStatus.errors.join('\\n'));
+const curatedPlayerBindingStatus = validateVisualCharacterBindings({
+    ...curatedVisualBindingManifest,
+    visualBindings: {
+        ...curatedVisualBindingManifest.visualBindings,
+        defaults: {
+            ...curatedVisualBindingManifest.visualBindings.defaults,
+            playerAssetId: 'asset_curated_player-neutral-compass',
+        },
+    },
+});
+assert.equal(curatedPlayerBindingStatus.valid, true, curatedPlayerBindingStatus.errors.join('\\n'));
 assert.equal(
     resolveVisualCharacterBinding(visualBindingManifest, { name: '皮帕', role: 'character' }).assetId,
     'asset_character_1b4268f70a37',

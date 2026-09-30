@@ -48,6 +48,7 @@ const noop = () => {};
 const elements = new Map();
 const chatSeedId = DEMO_SCENARIO.sillyTavernBindings.chatSeedId;
 const historicalChatId = 'galgame-galgame-imported-dungeon-master-entry-dungeon-master-fighter-campaign-Dungeon_Master-20260726092140';
+const staleBranchChatId = 'galgame-galgame-imported-dungeon-master-entry-dungeon-master-fighter-campaign-Dungeon_Master-20260929122410';
 let chatMode = 'with-history';
 const chatCalls = [];
 
@@ -110,6 +111,12 @@ globalThis.fetch = async (url, options = {}) => {
                     chat_items: 184,
                     last_mes: '2026-07-26T09:21:40.000Z',
                 },
+                {
+                    file_id: staleBranchChatId,
+                    file_name: `${staleBranchChatId}.jsonl`,
+                    chat_items: 2,
+                    last_mes: '2026-07-26T09:21:00.000Z',
+                },
             ]
             : [{
                 file_id: chatSeedId,
@@ -155,6 +162,22 @@ assert.equal(chatCalls.filter((call) => call.type === 'list').length, 1);
 assert.equal(chatCalls.filter((call) => call.type === 'get' && call.fileName === historicalChatId).length, 1);
 assert.equal(globalThis.__GALGAME_TEST_GET_ACTIVE_CHAT__().fileName, historicalChatId);
 assert.equal(globalThis.__GALGAME_TEST_GET_ACTIVE_CHAT__().messages.length, historicalSnapshot.messages.length);
+assert.equal(JSON.parse(localStorage.getItem(playerSaveKey('auto'))).chatId, historicalChatId);
+
+localStorage.setItem(playerSaveKey('auto'), JSON.stringify(createPlayerSaveSlot({
+    saveId: 'auto',
+    release: DEMO_ACTIVE_RELEASE,
+    manifest: DEMO_SCENARIO,
+    snapshot: {
+        ...seedSnapshot,
+        fileName: staleBranchChatId,
+        messages: seedSnapshot.messages.slice(0, 1),
+    },
+})));
+chatCalls.length = 0;
+await globalThis.__GALGAME_TEST_CONTINUE__();
+assert.equal(chatCalls.filter((call) => call.type === 'get' && call.fileName === historicalChatId).length, 1);
+assert.equal(globalThis.__GALGAME_TEST_GET_ACTIVE_CHAT__().fileName, historicalChatId);
 assert.equal(JSON.parse(localStorage.getItem(playerSaveKey('auto'))).chatId, historicalChatId);
 
 chatMode = 'seed-only';
