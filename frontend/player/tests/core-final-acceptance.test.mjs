@@ -160,27 +160,29 @@ await withServer(unavailableService, async (baseUrl) => {
     assert.equal(uploadedAssets.some(({ asset }) => asset.tagCodes.length > 0), true);
     setManifestForCatalog(catalog, { bindCharacter: false });
 
-    await renderMessage(acceptanceMessage(), { expectedDecisionReads: 1, expectedContentReads: 0 });
+    await renderMessage(acceptanceMessage(), { expectedDecisionReads: 1, expectedContentReads: 1 });
 
     assert.equal(fetchCount('/v1/core/visual-decisions'), 1);
-    assert.equal(contentReadCount(), 0);
-    assert.deepEqual(activeVisualClasses(), unavailableVisualClasses());
-    assert.equal(stageBackdropElement.style.backgroundImage, 'url("/assets/default-background.png")');
+    assert.equal(contentReadCount(), 1);
+    assert.deepEqual(activeVisualClasses(), {
+        backdrop: true,
+        heroine: false,
+        icons: unavailableVisualClasses().icons,
+    });
+    assert.equal(stageBackdropElement.style.backgroundImage.includes(catalogContentPath('scene')), true);
     assert.equal(stageHeroineElement.style.backgroundImage, `url("${VISUAL_PLACEHOLDER_URL}")`);
     assert.deepEqual(visualIconStripElement.children.map((item) => item.children[0].src), [
         VISUAL_PLACEHOLDER_URL,
         VISUAL_PLACEHOLDER_URL,
         VISUAL_PLACEHOLDER_URL,
     ]);
-    const unknownDecisions = latestDecisionResponse().decisions;
-    assert.deepEqual(unknownDecisions.map((decision) => decision.assetId).sort(), [
-        'unknown_character',
-        'unknown_equipment',
-        'unknown_item',
-        'unknown_scene',
-        'unknown_skill',
-    ]);
-    assert.equal(unknownDecisions.every((decision) => decision.score === 0 && decision.reasonCodes.includes('candidate-empty')), true);
+    const decisions = latestDecisionResponse().decisions;
+    const sceneDecision = decisions.find((decision) => decision.entityType === 'scene');
+    assert.equal(sceneDecision.assetId, catalog.assetRefs.find((ref) => ref.assetType === 'scene').assetId);
+    assert.ok(sceneDecision.score >= 60);
+    assert.equal(decisions.filter((decision) => decision.entityType !== 'scene').every((decision) => (
+        decision.score === 0 && decision.reasonCodes.includes('candidate-empty')
+    )), true);
 });
 
 const analyzerRequests = [];

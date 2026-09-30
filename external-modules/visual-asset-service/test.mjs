@@ -261,8 +261,8 @@ async function testRuntimeDictionaryV2AndScorer() {
     runtimeHint: { schemaVersion: VISUAL_RUNTIME_HINTS_VERSION, status: 'unavailable', dictionaryVersion: DICTIONARY_VERSION, dictionaryHash: DICTIONARY_HASH, entities: [] },
   });
   assert.equal(unavailablePlan.ok, true, JSON.stringify(unavailablePlan));
-  assert.equal(unavailablePlan.decisions[0].assetId, 'unknown_scene');
-  assert.equal(unavailablePlan.decisions[0].score, 0);
+  assert.equal(unavailablePlan.decisions[0].assetId, asset.assetId);
+  assert.ok(unavailablePlan.decisions[0].score >= 60);
 
   const routeControlStore = new MemoryVisualControlStore();
   const routeAssetStore = new MemoryVisualAssetStore();
@@ -2930,12 +2930,23 @@ async function testCoreVisualContextRoute() {
 
 async function testRuntimeVisualDecisionV2() {
   const visualControlStore = new MemoryVisualControlStore();
-  const uploadService = createVisualAssetService({ adminToken: ADMIN_TOKEN, adminOrigins: [ORIGIN], visualControlStore });
+  const uploadService = createVisualAssetService({
+    adminToken: ADMIN_TOKEN,
+    adminOrigins: [ORIGIN],
+    visualControlStore,
+    visualAnalyzer: async () => ({
+      description: 'forest runtime fixture',
+      tagCodes: ['scene.forest'],
+      attributeCodes: ['feature.dark'],
+      confidence: 0.95,
+      analyzerVersion: 'runtime-v2-fallback-fixture-v1',
+    }),
+  });
   const { assetStore, contentStore } = uploadService.stores;
   let catalog;
   let asset;
   await withServer(uploadService, async (baseUrl) => {
-    const uploaded = await upload(baseUrl, metadata({ assetId: 'asset_scene_runtime_v2', tagCodes: [], featureCodes: [] }), makePng({ colorType: 2 }));
+    const uploaded = await upload(baseUrl, metadata({ assetId: 'asset_scene_runtime_v2', tagCodes: ['scene.forest'], featureCodes: [] }), makePng({ colorType: 2 }));
     assert.equal(uploaded.status, 200, JSON.stringify(uploaded.body));
     asset = uploaded.body.asset;
     catalog = await publishCatalog(baseUrl, 'catalog_runtime_v2', 1, [{ assetId: asset.assetId, assetVersion: asset.assetVersion }]);
@@ -3017,6 +3028,35 @@ async function testRuntimeVisualDecisionV2() {
     assert.equal(fallback.body.decisions[0].score, 0);
     assert.equal(fallback.body.decisions[0].scoreBand, 'unknown');
     assert.ok(fallback.body.decisions[0].reasonCodes.includes('candidate-empty'));
+
+    const fastProjection = coreProjection({
+      sourceMessageIndex: current.index,
+      sourceMessageHash: currentHash,
+      entities: [coreEntity('scene', {
+        entityKey: 'entity_scene_runtime_fast001',
+        displayLabel: 'forest',
+        visibleAttributes: [{ code: 'scene-location-kind', value: 'forest (outdoor)', confidenceBand: 'explicit' }],
+        confidenceBand: 'explicit',
+      })],
+    });
+    const fastStartedAt = Date.now();
+    const fast = await request(baseUrl, 'POST', '/v1/core/visual-decisions', {
+      token: null,
+      origin: CORE_DEFAULT_ORIGIN,
+      body: {
+        ...body,
+        requestId: 'req_RUNTIME_V2_FAST_0001',
+        projection: fastProjection,
+        expectedProjectionHash: fastProjection.projectionHash,
+      },
+    });
+    assert.equal(fast.status, 200, JSON.stringify(fast.body));
+    assert.ok(Date.now() - fastStartedAt < 1_000, `trusted scene fast path took ${Date.now() - fastStartedAt}ms`);
+    assert.equal(fast.body.understandingStatus, 'unavailable');
+    assert.equal(fast.body.usesLlm, false);
+    assert.ok(fast.body.decisions?.[0], JSON.stringify(fast.body));
+    assert.equal(fast.body.decisions[0].assetId, asset.assetId);
+    assert.ok(fast.body.decisions[0].score >= 60);
   });
 
   let analyzerCalls = 0;
@@ -3351,7 +3391,10 @@ async function testAnthropicMessagesTextAdapter() {
   const projection = coreProjection({
     sourceMessageIndex: current.index,
     sourceMessageHash: currentHash,
-    entities: [coreEntity('scene')],
+    // Keep the provider adapter tests on the normal runtime path. The
+    // deterministic fast path is covered by testRuntimeVisualDecisionV2;
+    // this fixture deliberately has no explicit scene-location-kind evidence.
+    entities: [coreEntity('scene', { visibleAttributes: [] })],
   });
   const body = {
     schemaVersion: VISUAL_RUNTIME_DECISION_REQUEST_VERSION,
@@ -3451,7 +3494,24 @@ async function testAnthropicMessagesTextAdapter() {
         runtimeRequestStyle: 'anthropic_messages_text',
       });
       await withServer(service, async (baseUrl) => {
-        const response = await request(baseUrl, 'POST', '/v1/core/visual-decisions', { token: null, origin: CORE_DEFAULT_ORIGIN, body: { ...body, requestId: id } });
+        // Keep transport/error assertions independent from the deterministic
+        // visible-scene fallback: this fixture deliberately has no trusted
+        // scene-location-kind evidence, so it must remain unknown on runtime
+        // analyzer failure.
+        const failureProjection = coreProjection({
+          sourceMessageHash: currentHash,
+          entities: [coreEntity('scene', { visibleAttributes: [] })],
+        });
+        const response = await request(baseUrl, 'POST', '/v1/core/visual-decisions', {
+          token: null,
+          origin: CORE_DEFAULT_ORIGIN,
+          body: {
+            ...body,
+            requestId: id,
+            projection: failureProjection,
+            expectedProjectionHash: failureProjection.projectionHash,
+          },
+        });
         assert.equal(response.status, 200, JSON.stringify(response.body));
         assert.equal(response.body.understandingStatus, expectedCode === 'RUNTIME_NOT_CONFIGURED' ? 'unavailable' : 'failed');
         assert.equal(response.body.errorCode, expectedCode);
@@ -3516,6 +3576,7 @@ async function testAnthropicMessagesTextAdapter() {
     assert.equal(response.body.errorCode, 'RUNTIME_NOT_CONFIGURED');
     assert.equal(response.body.usesLlm, false);
     assert.equal(response.body.decisions.length, 1);
+    assert.equal(response.body.decisions[0].assetId, 'unknown_scene');
     assert.equal(response.body.decisions[0].score, 0);
   });
 }
@@ -4338,6 +4399,68 @@ async function testCoreDeterministicMatcherHelpers() {
   assert.equal(noOverlapPlan.ok, true, JSON.stringify(noOverlapPlan));
   assert.equal(noOverlapPlan.decisions[0].assetId, 'unknown_scene');
   assert.equal(noOverlapPlan.decisions[0].score, 0);
+
+  // An explicit visible location must keep backgrounds usable when the
+  // optional runtime analyzer is temporarily unavailable. The analyzer
+  // failure is still reported by the HTTP envelope, but a trusted
+  // scene-location-kind projection must not collapse the player stage to
+  // unknown_scene.
+  const offlineTavernAsset = makeValidatedAssetRecord({
+    assetId: 'asset_scene_offline_tavern',
+    assetType: 'scene',
+    role: 'background',
+    tagCodes: ['scene.interior', 'scene.city', 'scene.day'],
+    featureCodes: ['feature.wooden'],
+    analysis: {
+      schemaVersion: 'galgame.visual-asset-analysis.v2',
+      status: 'ready',
+      description: 'warm tavern interior',
+      tagCodes: ['scene.interior', 'scene.city', 'scene.day'],
+      attributeCodes: ['feature.wooden'],
+      confidence: 0.98,
+      analyzerVersion: 'test-offline-fallback-v1',
+      errorCode: null,
+      dictionaryVersion: DICTIONARY_VERSION,
+      dictionaryHash: DICTIONARY_HASH,
+    },
+  });
+  const offlineTavernCatalog = createCorePublishedCatalog([offlineTavernAsset]);
+  const offlineTavernProjection = coreProjection({
+    entities: [coreEntity('scene', {
+      entityKey: 'entity_scene_offline_tavern01',
+      displayLabel: '铁砧酒馆',
+      visibleAttributes: [{ code: 'scene-location-kind', value: '铁砧酒馆（室内 城市）', confidenceBand: 'explicit' }],
+    })],
+  });
+  const offlineTavernPlan = createCoreVisualCandidateDecisionPlan(coreDecisionPlanRequest({
+    assets: [offlineTavernAsset],
+    catalog: offlineTavernCatalog,
+    projection: offlineTavernProjection,
+  }), {
+    runtimeMode: true,
+    runtimeHint: {
+      status: 'ambiguous',
+      entities: [],
+    },
+    visibleContext: { current: { index: 7, role: 'character', speaker: 'Guide', text: '铁砧酒馆' }, recent: [] },
+  });
+  assert.equal(offlineTavernPlan.ok, true, JSON.stringify(offlineTavernPlan));
+  assert.equal(offlineTavernPlan.decisions[0].assetId, 'asset_scene_offline_tavern');
+  assert.ok(offlineTavernPlan.decisions[0].score >= 60, JSON.stringify(offlineTavernPlan));
+  const offlineTavernWithUnrelatedRuntimeHint = createCoreVisualCandidateDecisionPlan(coreDecisionPlanRequest({
+    assets: [offlineTavernAsset],
+    catalog: offlineTavernCatalog,
+    projection: offlineTavernProjection,
+  }), {
+    runtimeMode: true,
+    runtimeHint: {
+      status: 'ready',
+      entities: [{ entityType: 'character', codes: ['character.human'], confidence: 0.9, confidenceBand: 'probable' }],
+    },
+    visibleContext: { current: { index: 7, role: 'character', speaker: 'Guide', text: '铁砧酒馆' }, recent: [] },
+  });
+  assert.equal(offlineTavernWithUnrelatedRuntimeHint.ok, true, JSON.stringify(offlineTavernWithUnrelatedRuntimeHint));
+  assert.equal(offlineTavernWithUnrelatedRuntimeHint.decisions[0].assetId, 'asset_scene_offline_tavern');
 
   const characterNoAppearance = createCoreVisualCandidateDecisionPlan(coreDecisionPlanRequest({
     assets,
@@ -6304,7 +6427,7 @@ async function testOpenAiChatCompletionsTextAdapter() {
   });
   const current = { index: 7, role: 'character', speaker: 'Guide', text: 'The forest is quiet.' };
   const currentHash = hashDigest(canonicalJson(current));
-  const projection = coreProjection({ sourceMessageIndex: current.index, sourceMessageHash: currentHash, entities: [coreEntity('scene')] });
+  const projection = coreProjection({ sourceMessageIndex: current.index, sourceMessageHash: currentHash, entities: [coreEntity('scene', { visibleAttributes: [] })] });
   const body = {
     schemaVersion: VISUAL_RUNTIME_DECISION_REQUEST_VERSION,
     requestId: 'req_RUNTIME_OPENAI_0001',

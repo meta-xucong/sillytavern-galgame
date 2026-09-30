@@ -364,6 +364,7 @@ const VISUAL_RUNTIME_REQUEST_STYLE_SET = new Set([
   VISUAL_RUNTIME_OPENAI_REQUEST_STYLE,
 ]);
 const VISUAL_RUNTIME_MAX_TOKENS = 512;
+const VISUAL_RUNTIME_FAST_PATH_GRACE_MS = 1_500;
 const VISUAL_RUNTIME_HINT_STATUS_SET = new Set(['ready', 'unavailable', 'ambiguous']);
 const VISUAL_RUNTIME_UNDERSTANDING_STATUS_SET = new Set(['ready', 'unavailable', 'ambiguous', 'failed']);
 const VISUAL_RUNTIME_ERROR_CODES = new Set([
@@ -801,7 +802,7 @@ function runtimeErrorCode(error) {
 function runtimeUnderstandingStatus(result) {
   if (!result) return 'ready';
   if (result.hint.status === 'ready') return 'ready';
-  if (result.errorCode === 'RUNTIME_NOT_CONFIGURED') return 'unavailable';
+  if (result.hint.status === 'unavailable' || result.errorCode === 'RUNTIME_NOT_CONFIGURED') return 'unavailable';
   if (result.errorCode) return 'failed';
   if (result.hint.status === 'ambiguous') return 'ambiguous';
   return 'failed';
@@ -1132,6 +1133,48 @@ function deriveVisibleNormalizedCodes(entity) {
     normalizeVisibleValue(attribute.value).forEach((code) => codes.add(code));
   }
   return [...codes].filter((code) => code.startsWith(`${entity.entityType}.`) || code.startsWith('feature.'));
+}
+
+// A scene-location-kind attribute is already part of the trusted projection
+// produced from the visible chat. It is safe deterministic evidence for a
+// background match even when the optional runtime analyzer is unavailable.
+// Keep this narrower than the character binding exception: a scene must have
+// an explicit location attribute and at least one normalized scene code, so a
+// missing or vague location still fails closed to unknown_scene.
+function hasExplicitVisibleSceneEvidence(entity) {
+  if (entity?.entityType !== 'scene') return false;
+  const hasExplicitLocation = (entity.visibleAttributes || []).some((attribute) => (
+    attribute?.code === 'scene-location-kind' && attribute?.confidenceBand === 'explicit'
+  ));
+  if (!hasExplicitLocation) return false;
+  return deriveVisibleNormalizedCodes(entity).some((code) => code.startsWith('scene.'));
+}
+
+// Scene/background matching must not wait for the optional language-model
+// analyzer when the projection already contains trusted visible evidence. A
+// bound character and an explicit scene location are enough to select the
+// published assets deterministically; any other character still requires the
+// analyzer and therefore keeps the normal runtime path.
+function canUseTrustedVisibleFastPath(projection) {
+  let hasExplicitScene = false;
+  let hasBoundCharacter = false;
+  for (const entity of projection?.entities || []) {
+    if (entity.entityType === 'unknown') continue;
+    if (entity.entityType === 'scene') {
+      if (!hasExplicitVisibleSceneEvidence(entity)) return false;
+      hasExplicitScene = true;
+      continue;
+    }
+    if (entity.entityType === 'character') {
+      const boundAssetId = entity.visibleAttributes?.find((attribute) => attribute.code === 'character-visual-binding')?.value || '';
+      if (CHARACTER_CATALOG_ASSET_ID_PATTERN.test(String(boundAssetId))) {
+        hasBoundCharacter = true;
+        continue;
+      }
+      return false;
+    }
+  }
+  return hasExplicitScene && hasBoundCharacter;
 }
 
 function validateUploadMetadata(metadata) {
@@ -1823,6 +1866,7 @@ function createCoreVisualCandidateDecision(input, {
   runtimeEntity = null,
   visibleContext = null,
   runtimeUnavailable = false,
+  deterministicRuntimeFallback = false,
 } = {}) {
   const inputStatus = validateCoreVisualCandidateDecisionInput(input);
   if (!inputStatus.valid) {
@@ -1845,7 +1889,17 @@ function createCoreVisualCandidateDecision(input, {
 
   let candidates;
   try {
-    candidates = input.candidates.map((candidate) => normalizeCandidateForDecision(input, candidate, { allowAnalysis: true }));
+    candidates = input.candidates.map((candidate) => {
+      if (!deterministicRuntimeFallback) {
+        return normalizeCandidateForDecision(input, candidate, { allowAnalysis: true });
+      }
+      // A trusted visible scene fallback must use the curated catalog tags even
+      // when a previous provider analysis is unavailable. Remove optional
+      // analysis fields before normalizing so scoreCandidate cannot treat that
+      // unavailable analysis as a hard conflict.
+      const { analysisStatus, analysisTagCodes, analysisAttributeCodes, analysisConfidence, ...curatedCandidate } = candidate;
+      return normalizeCandidateForDecision(input, curatedCandidate, { allowAnalysis: false });
+    });
   } catch (error) {
     return createDecisionFailure(error.code || 'VISUAL_CANDIDATE_ASSET_INVALID', [error.message]);
   }
@@ -1914,18 +1968,25 @@ function createCoreVisualCandidateDecisionPlan(request, { runtimeHint = null, ru
       const runtimeHintReady = !runtimeMode || runtimeHint?.status === 'ready';
       // A published explicit character binding is already a trusted identity
       // decision. It must remain usable when the optional runtime analyzer is
-      // unavailable; scene and unbound character matching still fail closed.
+      // unavailable. An explicit scene-location-kind projection is the same
+      // kind of trusted, visible evidence for a background and can use the
+      // deterministic scorer while the analyzer is down.
       const allowBoundCharacterWithoutRuntime = entity.entityType === 'character' && hasValidBoundAssetId;
+      const allowVisibleSceneWithoutRuntime = hasExplicitVisibleSceneEvidence(entity);
+      const hintedRuntimeEntity = runtimeHint?.entities?.find((item) => item.entityType === entity.entityType) || null;
+      const useDeterministicSceneFallback = allowVisibleSceneWithoutRuntime && !hintedRuntimeEntity;
       const runtimeEntity = runtimeMode
-        ? runtimeHint?.entities?.find((item) => item.entityType === entity.entityType) || {
+        ? (useDeterministicSceneFallback
+          ? null
+          : hintedRuntimeEntity || {
           entityType: entity.entityType,
           codes: [],
           confidence: 0,
           confidenceBand: 'unknown',
           status: 'unavailable',
-        }
+        })
         : null;
-      const candidates = (runtimeMode && !runtimeHintReady && !allowBoundCharacterWithoutRuntime)
+      const candidates = (runtimeMode && !runtimeHintReady && !allowBoundCharacterWithoutRuntime && !allowVisibleSceneWithoutRuntime)
         ? []
         : ((runtimeMode || coreEntityAllowsConcreteCandidate(entity))
         ? entityAssetRefs.map((ref) => createCoreVisualCandidateAssetInputFromAsset(assets.get(`${ref.assetId}:${ref.assetVersion}`)))
@@ -1967,7 +2028,11 @@ function createCoreVisualCandidateDecisionPlan(request, { runtimeHint = null, ru
         unknownCompatibilityReport,
         runtimeEntity,
         visibleContext: hasValidBoundAssetId ? { ...visibleContext, boundAssetId } : visibleContext,
-        runtimeUnavailable: runtimeMode && !runtimeHintReady && !allowBoundCharacterWithoutRuntime,
+        deterministicRuntimeFallback: runtimeMode && useDeterministicSceneFallback,
+        runtimeUnavailable: runtimeMode
+          && !runtimeHintReady
+          && !allowBoundCharacterWithoutRuntime
+          && !allowVisibleSceneWithoutRuntime,
       });
       if (!decisionResult.ok) {
         return {
@@ -7967,8 +8032,22 @@ export function createVisualAssetService({
     for (const ref of catalog.assetRefs) {
       assets.push(await requireCatalogPublishedAsset(catalog, ref.assetId, ref.assetVersion));
     }
+    const trustedVisibleFastPath = runtimeRequest && canUseTrustedVisibleFastPath(body.projection);
     const runtimeResult = runtimeRequest
-      ? await resolveRuntimeHints(body.visibleContext, catalog.catalogHash)
+      ? trustedVisibleFastPath
+        ? await (async () => {
+          // Give a warm analyzer a short chance to enrich equipment/item/skill
+          // decisions. A cold provider must not block the trusted scene and
+          // bound-character render beyond this bounded grace period.
+          const pending = resolveRuntimeHints(body.visibleContext, catalog.catalogHash);
+          const fastFallback = new Promise((resolve) => setTimeout(() => resolve({
+            hint: createRuntimePlaceholderHint('unavailable'),
+            errorCode: null,
+            attempted: false,
+          }), VISUAL_RUNTIME_FAST_PATH_GRACE_MS));
+          return await Promise.race([pending, fastFallback]);
+        })()
+        : await resolveRuntimeHints(body.visibleContext, catalog.catalogHash)
       : null;
     const plan = createCoreVisualCandidateDecisionPlan({
       schemaVersion: VISUAL_CORE_CANDIDATE_DECISION_REQUEST_VERSION,
