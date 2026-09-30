@@ -1467,7 +1467,7 @@ function classifyVisualNovelSegment(text, { fallbackSpeaker, lastSpeaker, role, 
     }
 
     const stageCue = text.match(/^[—-]{1,2}\s*([A-Za-z][\w-]{0,39}|[\p{Script=Han}ぁ-んァ-ヶー]{1,12})(?:\s+|[：:，,。！？!?]|$)/u);
-    if (stageCue) {
+    if (stageCue && isTrustedVisualDialogueSpeaker(stageCue[1], knownSpeakerMap, fallbackSpeaker)) {
         return {
             type: 'stage',
             speaker: sanitizeText(stageCue[1], 80),
@@ -1488,10 +1488,21 @@ function classifyVisualNovelSegment(text, { fallbackSpeaker, lastSpeaker, role, 
     }
 
     const namedDialogue = text.match(/^([A-Za-z][\w-]{0,39}(?:[ \t]+[A-Za-z][\w-]{0,39}){0,3}|[\p{Script=Han}ぁ-んァ-ヶー]{1,12})[：:]\s*(.+)$/u);
-    if (namedDialogue && namedDialogue[2]?.trim() && !isNonDialogueLabel(namedDialogue[1])) {
+    // A colon is not enough evidence that the prefix is a speaker. Generated
+    // prose frequently uses the same shape for headings such as
+    // "所以战术很简单：优先攻击…". Only a published/known speaker (or the
+    // current original message speaker) may claim an unquoted direct line;
+    // otherwise keep the complete paragraph as narration and preserve the
+    // original text. Unknown names remain narration even when they use a
+    // colon, so they cannot create a new character identity.
+    const namedDialogueSpeaker = namedDialogue?.[1]?.trim() || '';
+    const namedDialogueIsTrusted = namedDialogueSpeaker
+        && !isNonDialogueLabel(namedDialogueSpeaker)
+        && isTrustedVisualDialogueSpeaker(namedDialogueSpeaker, knownSpeakerMap, fallbackSpeaker);
+    if (namedDialogue && namedDialogue[2]?.trim() && namedDialogueIsTrusted) {
         return {
             type: 'dialogue',
-            speaker: sanitizeText(namedDialogue[1], 80),
+            speaker: sanitizeText(knownSpeakerMap.get(normalizeKnownSpeaker(namedDialogueSpeaker)) || fallbackSpeaker || namedDialogueSpeaker, 80),
             text: namedDialogue[2].trim(),
         };
     }
@@ -1528,6 +1539,17 @@ function classifyVisualNovelSegment(text, { fallbackSpeaker, lastSpeaker, role, 
         speaker: '旁白',
         text,
     };
+}
+
+function isTrustedVisualDialogueSpeaker(value, knownSpeakerMap, fallbackSpeaker) {
+    const normalized = normalizeKnownSpeaker(value);
+    if (!normalized || isNarratorSpeaker(normalized) || /^(?:你|玩家|player|user|系统|system)$/iu.test(normalized)) {
+        return false;
+    }
+    if (knownSpeakerMap instanceof Map && knownSpeakerMap.has(normalized)) {
+        return true;
+    }
+    return normalized === normalizeKnownSpeaker(fallbackSpeaker);
 }
 
 function createKnownSpeakerMap(values) {

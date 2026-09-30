@@ -293,11 +293,11 @@ assert.equal(maliciousTextHints[0].visibleAttributes[0].value.includes('<script>
 assert.equal(maliciousTextHints.some((entity) => entity.entityType === 'skill'), false);
 
 const segmented = createVisualNovelDisplaySegments('森林里传来脚步声。“喂，你这蠢货！”它举起短刀。\n\nDungeon Master：准备受死吧！', { fallbackSpeaker: 'Dungeon Master', role: 'character' });
-assert.deepEqual(segmented.map((segment) => segment.speaker), ['旁白', '旁白', '旁白', 'Dungeon Master']);
+assert.deepEqual(segmented.map((segment) => segment.speaker), ['旁白', '旁白', '旁白', '旁白']);
 assert.equal(segmented[1].type, 'narration');
 assert.equal(segmented[1].text, '“喂，你这蠢货！”');
-assert.equal(segmented[3].type, 'dialogue');
-assert.equal(segmented[3].text, '准备受死吧！');
+assert.equal(segmented[3].type, 'narration');
+assert.equal(segmented[3].text, 'Dungeon Master：准备受死吧！');
 
 const knownSpeakerSegment = createVisualNovelDisplaySegments('Pippa立刻反对：“不要打开那扇门。”', {
     fallbackSpeaker: 'Dungeon Master',

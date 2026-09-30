@@ -406,6 +406,7 @@ assert.equal(visibleStatusBlockText.includes('📃 Status: Healthy'), true);
 const displaySegments = createVisualNovelDisplaySegments(roleplayMarkdownText, {
     fallbackSpeaker: 'WorldDirector',
     role: 'character',
+    knownSpeakers: ['Andrei'],
 });
 assert.deepEqual(
     displaySegments.map((segment) => segment.type),
@@ -424,10 +425,24 @@ assert.equal(thinkingMarkerSegments[0].text.includes('[thinking]'), false);
 
 const namedDialogueSegments = createVisualNovelDisplaySegments('Anna: 我会留下。', {
     fallbackSpeaker: 'WorldDirector',
+    knownSpeakers: ['Anna'],
 });
 assert.equal(namedDialogueSegments[0].type, 'dialogue');
 assert.equal(namedDialogueSegments[0].speaker, 'Anna');
 assert.equal(namedDialogueSegments[0].text, '我会留下。');
+
+const proseHeadingWithColon = createVisualNovelDisplaySegments('所以战术很简单：优先攻击克罗恩，打碎他的面具。', {
+    fallbackSpeaker: 'WorldDirector',
+});
+assert.equal(proseHeadingWithColon[0].type, 'narration');
+assert.equal(proseHeadingWithColon[0].speaker, '旁白');
+assert.equal(proseHeadingWithColon[0].text, '所以战术很简单：优先攻击克罗恩，打碎他的面具。');
+
+const unknownChineseColonLabel = createVisualNovelDisplaySegments('守卫：前方禁止通行。', {
+    fallbackSpeaker: 'WorldDirector',
+});
+assert.equal(unknownChineseColonLabel[0].type, 'narration');
+assert.equal(unknownChineseColonLabel[0].speaker, '旁白');
 
 const knownNarrativeDialogueSegments = createVisualNovelDisplaySegments([
     'Pippa立刻反对：“我们不能现在进去。”',

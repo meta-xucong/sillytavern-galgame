@@ -11,6 +11,14 @@
       "featureCodes": ["feature.transparent", "feature.portrait"]
     },
     {
+      "assetId": "asset_curated_player-neutral-compass",
+      "fileName": "player-neutral-compass.png",
+      "assetType": "character",
+      "title": "Neutral Compass Player",
+      "tagCodes": ["character.androgynous"],
+      "featureCodes": ["feature.transparent", "feature.portrait"]
+    },
+    {
       "assetId": "asset_side_equipment_arcane_sword",
       "fileName": "equipment-arcane-sword.png",
       "assetType": "equipment",

@@ -353,8 +353,8 @@ assert.equal(playerRequest.projection.entities.some((entity) => entity.entityTyp
 
 for (const [text, expectedRole] of [
     ['系统：当前无法继续。', 'system'],
-    ['—Unknown NPC 站在门口。', 'character'],
-    ['Unknown NPC：我不认识你。', 'character'],
+    ['—Unknown NPC 站在门口。', 'narrator'],
+    ['Unknown NPC：我不认识你。', 'narrator'],
 ]) {
     fetchCalls = [];
     globalThis.__GALGAME_TEST_RENDER_CHAT__({
@@ -503,6 +503,36 @@ assert.deepEqual(visualIconStripElement.children.map((item) => item.className), 
     'visual-icon visual-icon-skill is-unavailable is-placeholder',
 ]);
 
+setCoreVisualManifest({ includePlayer: true });
+coreDecisionPaths = {
+    scene: '/v1/core/catalogs/catalog_core_player/1/assets/asset_scene_player_route/1/content',
+    character: '/v1/core/catalogs/catalog_core_player/1/assets/asset_character_player_route/1/content',
+    equipment: '/v1/core/catalogs/catalog_core_player/1/assets/asset_equipment_player_route/1/content',
+    item: '/v1/core/catalogs/catalog_core_player/1/assets/asset_item_player_route/1/content',
+    skill: '/v1/core/catalogs/catalog_core_player/1/assets/asset_skill_player_route/1/content',
+};
+fetchCalls = [];
+globalThis.__GALGAME_TEST_RENDER_CHAT__({
+    ok: true,
+    fileName: 'chat-visual-core-player.json',
+    writable: true,
+    messages: [{
+        role: 'player',
+        speaker: 'Player',
+        displayText: '我退后一步。',
+        text: '我退后一步。',
+    }],
+}, { messageIndex: 0 });
+await waitForCoreDecision();
+const boundPlayerRequest = JSON.parse(fetchCalls.find((call) => call.url.endsWith('/v1/core/visual-decisions')).options.body);
+assert.equal(boundPlayerRequest.visibleContext.current.role, 'player');
+assert.equal(boundPlayerRequest.projection.entities.some((entity) => entity.entityType === 'character'), true);
+assert.equal(boundPlayerRequest.projection.entities.find((entity) => entity.entityType === 'character').visibleAttributes.some((attribute) => (
+    attribute.code === 'character-visual-binding' && attribute.value === 'asset_character_player_route'
+)), true);
+assert.equal(stageHeroineElement.style.backgroundImage, 'url("http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_character_player_route/1/content")');
+assert.equal(stageHeroineElement.classList.contains('is-visual-active'), true);
+
 playerModule.restoreDefaultVisualLayers();
 assert.equal(stageBackdropElement.style.backgroundImage, 'url("/assets/default-background.png")');
 assert.equal(stageHeroineElement.style.backgroundImage, 'url("/assets/default-character.png")');
@@ -570,7 +600,7 @@ async function waitForCoreDecision() {
     }
 }
 
-function setCoreVisualManifest({ catalogHash = 'sha256:2222222222222222222222222222222222222222222222222222222222222222', render = true } = {}) {
+function setCoreVisualManifest({ catalogHash = 'sha256:2222222222222222222222222222222222222222222222222222222222222222', render = true, includePlayer = false } = {}) {
     globalThis.__GALGAME_TEST_SET_MANIFEST__({
         title: 'Visual Test',
         version: '1.0.0',
@@ -607,6 +637,7 @@ function setCoreVisualManifest({ catalogHash = 'sha256:2222222222222222222222222
                 assetVersion: 1,
                 channel: 'character',
             }],
+            ...(includePlayer ? { defaults: { playerAssetId: 'asset_character_player_route' } } : {}),
         },
     }, {
         release: {

@@ -1384,7 +1384,7 @@ async function renderCoreVisualImmediateCharacter(snapshot, messageIndex, token)
             return;
         }
         const speakerContext = getActiveVisualSpeakerContext(message, messageIndex);
-        if (speakerContext.role !== 'character' && speakerContext.role !== 'narrator') {
+        if (speakerContext.role !== 'character' && speakerContext.role !== 'narrator' && speakerContext.role !== 'player') {
             return;
         }
         const arcId = release?.activeArcId || release?.arcId || manifest?.defaultArcId || '';
@@ -1696,7 +1696,7 @@ async function renderCoreVisualDecisions(decisions, baseUrl, token, request, res
         // portrait, even if the response contains a character decision.
         const typeDecisions = decisions.filter((decision) => (
             decision?.entityType === type
-            && (type !== 'character' || currentRole === 'character' || currentRole === 'narrator')
+            && (type !== 'character' || currentRole === 'character' || currentRole === 'narrator' || currentRole === 'player')
         ));
         const renderable = typeDecisions
             .filter((decision) => isRenderableCoreVisualDecision(decision, type, request, response)
@@ -1761,7 +1761,7 @@ async function renderCoreVisualDecisions(decisions, baseUrl, token, request, res
             ? (immediateCharacterStillValid
                 ? Promise.resolve()
                 : applyCoreVisualCharacter(byType.get('character'), baseUrl, token))
-            : ((currentRole === 'character' || currentRole === 'narrator') && immediateVisualCharacterIdentity
+            : ((currentRole === 'character' || currentRole === 'narrator' || currentRole === 'player') && immediateVisualCharacterIdentity
                 ? Promise.resolve()
                 : Promise.resolve().then(() => applyCoreVisualPlaceholderCharacter(currentRole))),
         applyCoreVisualIcons(byType, baseUrl, token, invalidTypes),
@@ -2350,18 +2350,18 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
         : visibleContext;
     const sourceMessageHash = await sha256Digest(canonicalJson(decisionContextMessage));
     const activeArcId = release?.activeArcId || release?.arcId || manifest?.defaultArcId || '';
-    const bindingMessage = displayedMessage.role === 'character' || displayedMessage.role === 'narrator'
+    const bindingMessage = displayedMessage.role === 'character' || displayedMessage.role === 'narrator' || displayedMessage.role === 'player'
         ? displayedMessage
         : fullMessage;
-    const characterBinding = (bindingMessage?.role === 'character' || bindingMessage?.role === 'narrator')
+    const characterBinding = (bindingMessage?.role === 'character' || bindingMessage?.role === 'narrator' || bindingMessage?.role === 'player')
         ? resolveVisualCharacterBinding(manifest, {
-            name: bindingMessage.speaker,
+            name: bindingMessage.role === 'player' ? '你' : bindingMessage.speaker,
             role: activeSpeakerContext.role,
             arcId: activeArcId,
             allowCharacterPoolFallback: false,
         })
         : null;
-    const hasActiveCharacterBinding = (displayedMessage.role === 'character' || displayedMessage.role === 'narrator')
+    const hasActiveCharacterBinding = (displayedMessage.role === 'character' || displayedMessage.role === 'narrator' || displayedMessage.role === 'player')
         && Boolean(characterBinding);
     const entities = [];
     // Extract equipment, item, skill and scene labels from the full visible
@@ -2444,10 +2444,10 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
                 hint.entityType === 'character'
                     ? [
                         ...hint.visibleAttributes.filter((attribute) => attribute.code !== 'character-explicit-name'),
-                        ...((bindingMessage?.role === 'character' || bindingMessage?.role === 'narrator') && bindingMessage.speaker
+                        ...((bindingMessage?.role === 'character' || bindingMessage?.role === 'narrator' || bindingMessage?.role === 'player') && bindingMessage.speaker
                             ? [{
                                 code: 'character-explicit-name',
-                                value: bindingMessage.speaker.slice(0, 120),
+                                value: (bindingMessage.role === 'player' ? '你' : bindingMessage.speaker).slice(0, 120),
                                 confidenceBand: 'explicit',
                             }]
                             : []),
