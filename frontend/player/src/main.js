@@ -229,6 +229,10 @@ if (globalThis.__GALGAME_PLAYER_TEMPLATE_MATRIX_SMOKE__) {
     globalThis.__GALGAME_TEST_CONTINUE__ = () => continueFromSaveOrLatest();
     globalThis.__GALGAME_TEST_LOAD_SAVE__ = (saveId = AUTO_SAVE_ID) => loadPlayerSave(saveId);
     globalThis.__GALGAME_TEST_GET_ACTIVE_CHAT__ = () => activeChatSnapshot;
+    globalThis.__GALGAME_TEST_SET_ACTIVE_CHAT__ = (snapshot) => {
+        activeChatSnapshot = snapshot;
+    };
+    globalThis.__GALGAME_TEST_RECOVER_CONTENT_AFTER_RESET__ = () => recoverPlayerContentAfterReset();
 }
 
 async function bootstrap() {
@@ -366,10 +370,31 @@ async function resetConnectionState() {
             reason: 'user-reset',
             preserveGenerationPending: generationPending,
         });
+        let contentRecovered = null;
+        const contentServicesReady = snapshot.services?.sillyTavern?.status === 'up'
+            && snapshot.services?.configService?.status === 'up';
+        if (contentServicesReady && !generationPending) {
+            try {
+                contentRecovered = await recoverPlayerContentAfterReset();
+            } catch (error) {
+                console.warn('Player content recovery after reset failed.', error);
+                contentRecovered = false;
+            }
+        }
         if (activeChatSnapshot && activeMessageIndex >= 0) {
             void renderCoreVisualPresentation(activeChatSnapshot, activeMessageIndex, visualToken);
         }
-        showToast(snapshot.overall === 'up' ? '连接已恢复' : '仍有连接异常，请稍后再试');
+        if (snapshot.overall !== 'up') {
+            showToast('仍有连接异常，请稍后再试');
+        } else if (generationPending) {
+            showToast('连接正常，当前回应仍在处理中');
+        } else if (contentRecovered === false) {
+            showToast('连接已恢复，但当前内容还没读到；请稍后再试');
+        } else if (contentRecovered === true) {
+            showToast('连接已恢复，当前内容已重新同步');
+        } else {
+            showToast('连接已恢复');
+        }
     } catch (error) {
         console.warn('Connection health reset failed.', error);
         showToast('连接检查未完成，请稍后再试');
@@ -377,6 +402,46 @@ async function resetConnectionState() {
         connectionResetInFlight = false;
         renderConnectionHealth(connectionHealthMonitor.getSnapshot());
     }
+}
+
+async function recoverPlayerContentAfterReset() {
+    if (ui.gameScreen?.hidden) {
+        if (!release || !manifest) {
+            await refreshRelease();
+        }
+        await refreshPlayableStories();
+        renderTitle();
+        await refreshTitleSaveState();
+        return Boolean(release && manifest);
+    }
+
+    if (activeChatSnapshot?.fileName && manifest) {
+        const latestSnapshot = await loadLatestSnapshotForActiveChat(activeChatSnapshot);
+        if (latestSnapshot?.ok) {
+            activeChatSnapshot = latestSnapshot;
+            renderChatSnapshot(latestSnapshot, getLatestSnapshotRenderOptions(latestSnapshot));
+            void persistAutoSave(latestSnapshot);
+            return true;
+        }
+        return false;
+    }
+
+    // Restore the exact chat/scenario version already recorded in the local
+    // save, but do not automatically start an LLM request during recovery.
+    const autoSlot = await playerSaveStore.loadSlot(AUTO_SAVE_ID).catch(() => null);
+    if (autoSlot && await loadPlayerSave(autoSlot.saveId, {
+        silentFailure: true,
+        requestReply: false,
+        persistSyncedProgress: false,
+    })) {
+        return true;
+    }
+
+    if (!release || !manifest) {
+        await refreshRelease();
+    }
+    await loadOriginalChat('continue', { requestReply: false, persistSnapshot: false });
+    return Boolean(activeChatSnapshot?.ok);
 }
 
 async function refreshRelease() {
@@ -875,7 +940,11 @@ async function saveCurrentSlot(saveId = AUTO_SAVE_ID) {
     }
 }
 
-async function loadPlayerSave(saveId = AUTO_SAVE_ID, { silentFailure = false } = {}) {
+async function loadPlayerSave(saveId = AUTO_SAVE_ID, {
+    silentFailure = false,
+    requestReply = true,
+    persistSyncedProgress = true,
+} = {}) {
     const slot = await playerSaveStore.loadSlot(saveId).catch(() => null);
     if (!slot) {
         if (!silentFailure) {
@@ -901,12 +970,12 @@ async function loadPlayerSave(saveId = AUTO_SAVE_ID, { silentFailure = false } =
         activeChatSnapshot = snapshot;
         const restoreOptions = getSaveRestoreRenderOptions(snapshot, slot, saveId);
         renderChatSnapshot(snapshot, restoreOptions);
-        if (restoreOptions.syncedToLatest) {
+        if (restoreOptions.syncedToLatest && persistSyncedProgress) {
             void persistAutoSave(snapshot);
             showToast('已同步到最新回应');
         }
         closeDrawers();
-        if (snapshotAwaitsReply(snapshot)) {
+        if (requestReply && snapshotAwaitsReply(snapshot)) {
             void requestOriginalReply(snapshot);
         }
         return true;
@@ -1090,7 +1159,7 @@ async function submitPlayerMessage(message) {
     }
 }
 
-async function loadOriginalChat(mode = 'continue') {
+async function loadOriginalChat(mode = 'continue', { requestReply = true, persistSnapshot = true } = {}) {
     try {
         const snapshot = mode === 'start'
             ? await chatBridge.loadOpeningChat(manifest)
@@ -1101,8 +1170,10 @@ async function loadOriginalChat(mode = 'continue') {
         }
         activeChatSnapshot = snapshot;
         renderChatSnapshot(snapshot);
-        void persistAutoSave(snapshot);
-        if (snapshotAwaitsReply(snapshot)) {
+        if (persistSnapshot) {
+            void persistAutoSave(snapshot);
+        }
+        if (requestReply && snapshotAwaitsReply(snapshot)) {
             void requestOriginalReply(snapshot);
         }
     } catch (error) {

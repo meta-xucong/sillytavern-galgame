@@ -208,6 +208,22 @@ assert.equal(chatCalls.filter((call) => call.type === 'get').length, getCountBef
 assert.equal(chatCalls.at(-1).fileName, historicalChatId);
 assert.equal(globalThis.__GALGAME_TEST_GET_ACTIVE_CHAT__().fileName, historicalChatId);
 
+const staleRecoverySave = JSON.stringify(createPlayerSaveSlot({
+    saveId: 'auto',
+    release: DEMO_ACTIVE_RELEASE,
+    manifest: DEMO_SCENARIO,
+    snapshot: { ...historicalSnapshot, messages: historicalSnapshot.messages.slice(0, 1) },
+}));
+localStorage.setItem(playerSaveKey('auto'), staleRecoverySave);
+globalThis.__GALGAME_TEST_SET_ACTIVE_CHAT__(null);
+chatCalls.length = 0;
+assert.equal(await globalThis.__GALGAME_TEST_RECOVER_CONTENT_AFTER_RESET__(), true);
+assert.equal(globalThis.__GALGAME_TEST_GET_ACTIVE_CHAT__().fileName, historicalChatId);
+assert.equal(globalThis.__GALGAME_TEST_GET_ACTIVE_CHAT__().messages.length, historicalSnapshot.messages.length);
+assert.equal(chatCalls.filter((call) => call.type === 'get' && call.fileName === historicalChatId).length, 1);
+assert.equal(chatCalls.some((call) => call.type === 'generate'), false);
+assert.equal(localStorage.getItem(playerSaveKey('auto')), staleRecoverySave);
+
 console.log('chat history recovery player tests passed');
 
 function jsonResponse(data, status = 200) {
