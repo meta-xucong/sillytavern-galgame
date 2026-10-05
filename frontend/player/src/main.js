@@ -429,22 +429,10 @@ async function recoverPlayerContentAfterReset() {
         return false;
     }
 
-    // Restore the exact chat/scenario version already recorded in the local
-    // save, but do not automatically start an LLM request during recovery.
-    const autoSlot = await playerSaveStore.loadSlot(AUTO_SAVE_ID).catch(() => null);
-    if (autoSlot && await loadPlayerSave(autoSlot.saveId, {
-        silentFailure: true,
-        requestReply: false,
-        persistSyncedProgress: false,
-    })) {
-        return true;
-    }
-
-    if (!release || !manifest) {
-        await refreshRelease();
-    }
-    await loadOriginalChat('continue', { requestReply: false, persistSnapshot: false });
-    return Boolean(activeChatSnapshot?.ok);
+    // Without an active chat anchor, selecting an auto-save or latest chat can
+    // silently switch the player's current branch. Preserve the stage and save
+    // until the player explicitly chooses a saved chat.
+    return false;
 }
 
 async function refreshRelease() {
