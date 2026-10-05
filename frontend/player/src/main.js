@@ -233,6 +233,7 @@ if (globalThis.__GALGAME_PLAYER_TEMPLATE_MATRIX_SMOKE__) {
         activeChatSnapshot = snapshot;
     };
     globalThis.__GALGAME_TEST_RECOVER_CONTENT_AFTER_RESET__ = () => recoverPlayerContentAfterReset();
+    globalThis.__GALGAME_TEST_RENDER_CONNECTION_HEALTH__ = (snapshot) => renderConnectionHealth(snapshot);
 }
 
 async function bootstrap() {
@@ -348,7 +349,10 @@ function renderConnectionHealth(snapshot) {
     ui.connectionStatus.title = parts.join('\n');
     if (ui.connectionResetButton) {
         const generationFailed = generation?.status === 'down';
-        const runtimeNeedsReset = Boolean(runtime?.details?.stale || runtime?.details?.stopping);
+        const runtimeNeedsReset = Boolean(runtime?.status === 'pending'
+            || runtime?.details?.connectionState === 'generating'
+            || runtime?.details?.stale
+            || runtime?.details?.stopping);
         const abnormal = snapshot.overall === 'degraded' || snapshot.overall === 'down' || generationFailed || runtimeNeedsReset;
         ui.connectionResetButton.hidden = !abnormal && !connectionResetInFlight;
         ui.connectionResetButton.disabled = connectionResetInFlight;
@@ -417,10 +421,9 @@ async function recoverPlayerContentAfterReset() {
 
     if (activeChatSnapshot?.fileName && manifest) {
         const latestSnapshot = await loadLatestSnapshotForActiveChat(activeChatSnapshot);
-        if (latestSnapshot?.ok) {
+        if (latestSnapshot?.ok && latestSnapshot.fileName === activeChatSnapshot.fileName) {
             activeChatSnapshot = latestSnapshot;
             renderChatSnapshot(latestSnapshot, getLatestSnapshotRenderOptions(latestSnapshot));
-            void persistAutoSave(latestSnapshot);
             return true;
         }
         return false;

@@ -224,6 +224,35 @@ assert.equal(chatCalls.filter((call) => call.type === 'get' && call.fileName ===
 assert.equal(chatCalls.some((call) => call.type === 'generate'), false);
 assert.equal(localStorage.getItem(playerSaveKey('auto')), staleRecoverySave);
 
+// An already-bound chat is re-read in place and reset leaves its auto-save untouched.
+globalThis.__GALGAME_TEST_SET_ACTIVE_CHAT__({ ...historicalSnapshot, messages: historicalSnapshot.messages.slice(0, 1) });
+chatCalls.length = 0;
+assert.equal(await globalThis.__GALGAME_TEST_RECOVER_CONTENT_AFTER_RESET__(), true);
+assert.equal(globalThis.__GALGAME_TEST_GET_ACTIVE_CHAT__().fileName, historicalChatId);
+assert.equal(globalThis.__GALGAME_TEST_GET_ACTIVE_CHAT__().messages.length, historicalSnapshot.messages.length);
+assert.equal(chatCalls.filter((call) => call.type === 'get' && call.fileName === historicalChatId).length, 1);
+assert.equal(chatCalls.some((call) => call.type === 'generate'), false);
+assert.equal(localStorage.getItem(playerSaveKey('auto')), staleRecoverySave);
+
+const connectionResetButton = document.querySelector('#connectionResetButton');
+connectionResetButton.hidden = true;
+globalThis.__GALGAME_TEST_RENDER_CONNECTION_HEALTH__({
+    overall: 'up',
+    services: {
+        sillyTavern: { status: 'up', checkedAt: Date.now(), stale: false },
+        configService: { status: 'up', checkedAt: Date.now(), stale: false },
+        runtimeBridge: {
+            status: 'pending', checkedAt: Date.now(), stale: false,
+            details: { connectionState: 'generating', pending: true, stopping: false },
+        },
+        visualService: { status: 'up', checkedAt: Date.now(), stale: false },
+        llm: { status: 'up', checkedAt: Date.now(), stale: false },
+        generation: { status: 'pending', checkedAt: Date.now(), stale: false },
+    },
+});
+assert.equal(connectionResetButton.hidden, false);
+assert.match(document.querySelector('#connectionStatus').textContent, /运行桥 生成中/u);
+
 console.log('chat history recovery player tests passed');
 
 function jsonResponse(data, status = 200) {
