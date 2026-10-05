@@ -1,8 +1,8 @@
 import http from 'node:http';
 import path from 'node:path';
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { lstatSync, mkdirSync, realpathSync, readdirSync, readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs';
-import { link, mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { lstatSync, mkdirSync, realpathSync, readdirSync, readFileSync, existsSync, writeFileSync, rmSync, unlinkSync } from 'node:fs';
+import { link, mkdir, open, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { deflateSync, inflateSync } from 'node:zlib';
 import {
@@ -19,6 +19,10 @@ import {
   validateVisualProjectionProofShape,
   validateVisualProjectionStub,
 } from '../../frontend/shared/src/visual-system-schema.js';
+import {
+  handlePresentationAnalysisProxyRequest,
+  resolvePresentationAnalysisProxyRoute,
+} from './presentation-analysis-proxy.mjs';
 
 const SERVICE_NAME = 'galgame-visual-asset-service';
 const HEALTH_SCHEMA_VERSION = 'galgame.visual-asset-health.v1';
@@ -31,7 +35,8 @@ const LEGACY_VISUAL_ANALYSIS_SCHEMA_VERSION = 'galgame.visual-asset-analysis.v1'
 const CATALOG_DRAFT_SCHEMA_VERSION = 'galgame.visual-catalog-draft-request.v1';
 const ASSET_SCHEMA_VERSION = 'galgame.visual-asset.v1';
 const CATALOG_SCHEMA_VERSION = 'galgame.visual-asset-catalog.v1';
-const CANDIDATE_DECISION_INPUT_SCHEMA_VERSION = 'galgame.visual-candidate-decision-input.v1';
+const CATALOG_V2_SCHEMA_VERSION = 'galgame.visual-asset-catalog.v2';
+const CANDIDATE_DECISION_INPUT_SCHEMA_VERSION = 'galgame.visual-candidate-decision-input.v2';
 const CANDIDATE_DECISION_SCHEMA_VERSION = 'galgame.visual-candidate-decision.v1';
 const VISUAL_MATCH_REQUEST_SCHEMA_VERSION = 'galgame.visual-match-request.v1';
 const VISUAL_BINDING_STORE_RECORD_SCHEMA_VERSION = 'galgame.visual-binding-store-record.v1';
@@ -81,8 +86,52 @@ const LOCAL_ADMIN_CSRF_HEADER = 'x-galgame-csrf-token';
 const LOCAL_ADMIN_STATIC_PREFIX = '/game-admin';
 const LOCAL_ADMIN_API_PREFIX = '/v1/local-admin/visual';
 
+// Every HTTP dispatch branch is covered by this route/access registry. The
+// dispatcher applies the same service-wide fence before any handler can touch
+// a store. Prefix entries represent the explicit family router below them.
+const VISUAL_HTTP_ROUTE_ACCESS_MANIFEST = Object.freeze([
+  { method: 'GET', pathPattern: '/v1/health', access: 'READ', route: 'health' },
+  { method: 'GET', pathPattern: '/v1/presentation/health', access: 'READ', route: 'presentation-analysis' },
+  // These POSTs are fixed, validated proxy calls only. They do not mutate the
+  // visual catalog or control stores, so keep them in the shared read lane;
+  // otherwise a slow upstream analysis blocks visual-context and asset reads.
+  { method: 'POST', pathPattern: '/v1/presentation/annotations', access: 'READ', route: 'presentation-analysis' },
+  { method: 'POST', pathPattern: '/v1/presentation/scene-continuity', access: 'READ', route: 'presentation-analysis' },
+  { method: 'GET', pathPattern: '/game-admin*', access: 'READ', route: 'local-admin-static' },
+  { method: 'HEAD', pathPattern: '/game-admin*', access: 'READ', route: 'local-admin-static' },
+  { method: 'GET', pathPattern: '/v1/local-admin/visual/*', access: 'WRITE', route: 'local-admin-api' },
+  { method: 'POST', pathPattern: '/v1/local-admin/visual/*', access: 'WRITE', route: 'local-admin-api' },
+  { method: 'OPTIONS', pathPattern: '*', access: 'READ', route: 'cors-preflight' },
+  { method: 'POST', pathPattern: '/v1/visual-match', access: 'WRITE', route: 'visual-match' },
+  { method: 'POST', pathPattern: '/v1/internal/visual-match', access: 'WRITE', route: 'internal-visual-match' },
+  { method: 'POST', pathPattern: '/v1/internal/assets/metadata-resolve', access: 'WRITE', route: 'internal-asset-metadata' },
+  { method: 'POST', pathPattern: '/v1/internal/assets/content-read', access: 'WRITE', route: 'internal-asset-content' },
+  { method: 'POST', pathPattern: '/v1/visual/restore-bindings/*', access: 'WRITE', route: 'restore-binding' },
+  { method: 'GET', pathPattern: '/v1/core/*', access: 'READ', route: 'core-read' },
+  { method: 'POST', pathPattern: '/v1/core/*', access: 'WRITE', route: 'core-write' },
+  { method: 'GET', pathPattern: '/v1/admin/*', access: 'READ', route: 'admin-read' },
+  { method: 'POST', pathPattern: '/v1/admin/*', access: 'WRITE', route: 'admin-write' },
+]);
+
+const VISUAL_CATALOG_MIGRATION_JOURNAL_SCHEMA_VERSION = 'galgame.visual-catalog-migration-journal.v1';
+const VISUAL_SERVICE_LEASE_FILE = '.visual-asset-service.lease.json';
+
+function routePatternMatches(pattern, pathname) {
+  if (pattern === '*') return true;
+  if (pattern.endsWith('*')) return pathname.startsWith(pattern.slice(0, -1));
+  return pathname === pattern;
+}
+
+function resolveVisualRouteAccess(method, pathname) {
+  return VISUAL_HTTP_ROUTE_ACCESS_MANIFEST.find((entry) => (
+    entry.method === method && routePatternMatches(entry.pathPattern, pathname)
+  )) || null;
+}
+
 const ENTITY_TYPES = Object.freeze(['scene', 'character', 'equipment', 'item', 'skill']);
 const ENTITY_TYPE_SET = new Set(ENTITY_TYPES);
+const CHARACTER_CHANNELS = Object.freeze(['character', 'player', 'narrator', 'system']);
+const CHARACTER_CHANNEL_SET = new Set(CHARACTER_CHANNELS);
 const SHARED_BINDABLE_TYPE_SET = new Set(VISUAL_BINDABLE_TYPES);
 const SHARED_CONFIDENCE_BAND_SET = new Set(VISUAL_CONFIDENCE_BANDS);
 const SHARED_REASON_CODE_SET = new Set(VISUAL_REASON_CODES);
@@ -215,7 +264,9 @@ const CANDIDATE_DECISION_INPUT_KEYS = Object.freeze([
   'catalogId',
   'catalogRevision',
   'catalogHash',
+  'catalogSchemaVersion',
   'catalogAssetRefs',
+  'catalogAssetChannels',
   'dictionaryVersion',
   'dictionaryHash',
   'candidates',
@@ -333,13 +384,13 @@ const UNKNOWN_COMPATIBILITY_REPORT_MAX_BYTES = 16 * 1024;
 const VISUAL_ASSET_SERVICE_VERSION = 'galgame.visual-asset-service.vs-code-2a';
 const VISUAL_MATCHER_VERSION = 'vs-code-2b-r';
 const VISUAL_SCORER_VERSION = 'vs-code-2a';
-const VISUAL_RUNTIME_MATCHER_VERSION = 'vs-runtime-2';
-const VISUAL_RUNTIME_SCORER_VERSION = 'vs-runtime-scorer-v2';
+const VISUAL_RUNTIME_MATCHER_VERSION = 'vs-runtime-3';
+const VISUAL_RUNTIME_SCORER_VERSION = 'vs-runtime-scorer-v3';
 const VISUAL_MATCH_INTERNAL_PATH = '/v1/internal/visual-match';
 const VISUAL_ASSET_INTERNAL_METADATA_RESOLVE_PATH = '/v1/internal/assets/metadata-resolve';
 const VISUAL_ASSET_INTERNAL_CONTENT_READ_PATH = '/v1/internal/assets/content-read';
 const VISUAL_CORE_CATALOG_RESPONSE_VERSION = 'galgame.visual-core-published-catalog-response.v1';
-const VISUAL_CORE_CONTEXT_RESPONSE_VERSION = 'galgame.visual-core-context.v1';
+const VISUAL_CORE_CONTEXT_RESPONSE_VERSION = 'galgame.visual-core-context.v2';
 const VISUAL_CORE_CANDIDATE_DECISION_PLAN_VERSION = 'galgame.visual-core-candidate-decision-plan.v1';
 const VISUAL_CORE_CANDIDATE_DECISION_REQUEST_VERSION = 'galgame.visual-core-candidate-decision-request.v1';
 const VISUAL_CORE_DECISION_RESPONSE_VERSION = 'galgame.visual-core-decision-response.v1';
@@ -385,6 +436,13 @@ const VISUAL_RUNTIME_ERROR_CODES = new Set([
 ]);
 const VISUAL_RUNTIME_REQUEST_ERROR_CODES = new Set([
   'VISUAL_REQUEST_INVALID',
+  'VISUAL_REQUEST_INVALID_SCHEMA',
+  'VISUAL_REQUEST_INVALID_FIELD',
+  'VISUAL_REQUEST_UNKNOWN_FIELD',
+  'VISUAL_REQUEST_MISSING_FIELD',
+  'VISUAL_REQUEST_SIZE_LIMIT',
+  'VISUAL_REQUEST_DUPLICATE_KEYS',
+  'VISUAL_REQUEST_BOM_REJECTED',
   'VISUAL_CONTEXT_INVALID',
   'VISUAL_PROJECTION_HASH_MISMATCH',
   'VISUAL_SOURCE_HASH_MISMATCH',
@@ -816,13 +874,20 @@ function runtimeDecisionErrorCode(code) {
   return VISUAL_RUNTIME_ERROR_CODES.has(code) ? code : 'VISUAL_CATALOG_INVALID';
 }
 
+function runtimeRequestValidationErrorCode(code) {
+  if (code === 'VISUAL_ASSET_UNKNOWN_FIELD') return 'VISUAL_REQUEST_UNKNOWN_FIELD';
+  if (code === 'VISUAL_ASSET_MISSING_FIELD') return 'VISUAL_REQUEST_MISSING_FIELD';
+  if (code === 'VISUAL_ASSET_SIZE_LIMIT') return 'VISUAL_REQUEST_SIZE_LIMIT';
+  if (code === 'VISUAL_ASSET_INVALID_FIELD' || code === 'VISUAL_ASSET_INVALID_NUMBER') return 'VISUAL_REQUEST_INVALID_FIELD';
+  return 'VISUAL_REQUEST_INVALID_SCHEMA';
+}
+
 function createRuntimeDecisionErrorResponse(requestId, errorCode = 'VISUAL_REQUEST_INVALID') {
   const safeRequestId = typeof requestId === 'string' && CANDIDATE_REQUEST_ID_PATTERN.test(requestId) ? requestId : null;
   return {
     schemaVersion: VISUAL_RUNTIME_DECISION_ERROR_VERSION,
     ok: false,
     requestId: safeRequestId,
-    errorCode: VISUAL_RUNTIME_REQUEST_ERROR_CODES.has(errorCode) ? errorCode : 'VISUAL_REQUEST_INVALID',
     errorCode: VISUAL_RUNTIME_REQUEST_ERROR_CODES.has(errorCode) ? errorCode : 'VISUAL_REQUEST_INVALID',
   };
 }
@@ -1207,19 +1272,36 @@ function hasExplicitVisibleSideIconEvidence(entity) {
   return deriveVisibleNormalizedCodes(entity).some((code) => code.startsWith(`${entity.entityType}.`));
 }
 
+function hasExplicitVisibleCharacterEvidence(entity) {
+  if (entity?.entityType !== 'character') return false;
+  const attributes = Array.isArray(entity.visibleAttributes) ? entity.visibleAttributes : [];
+  const hasIdentity = attributes.some((attribute) => (
+    attribute?.code === 'character-explicit-name' && attribute?.confidenceBand === 'explicit'
+  ));
+  const hasAppearance = attributes.some((attribute) => (
+    RUNTIME_CHARACTER_APPEARANCE_CODES.has(attribute?.code) && attribute?.confidenceBand === 'explicit'
+  ));
+  const hasSpecificTaxonomy = deriveVisibleNormalizedCodes(entity).some((code) => (
+    code.startsWith('character.') && !RUNTIME_GENERIC_PARENT_CODES.has(code)
+  ));
+  return hasIdentity && hasAppearance && hasSpecificTaxonomy;
+}
+
 // Scene/background matching must not wait for the optional language-model
 // analyzer when the projection already contains trusted visible evidence. A
 // bound character and an explicit scene location are enough to select the
-// published assets deterministically; any other character still requires the
-// analyzer and therefore keeps the normal runtime path.
+// published assets deterministically. An unbound character may also use this
+// path only when its visible projection explicitly contains identity and
+// appearance evidence with at least one specific closed taxonomy code.
 function canUseTrustedVisibleFastPath(projection) {
   let hasExplicitScene = false;
   let hasBoundCharacter = false;
+  let hasExplicitCharacter = false;
+  let hasExplicitSideIcon = false;
   for (const entity of projection?.entities || []) {
     if (entity.entityType === 'unknown') continue;
     if (entity.entityType === 'scene') {
-      if (!hasExplicitVisibleSceneEvidence(entity)) return false;
-      hasExplicitScene = true;
+      hasExplicitScene ||= hasExplicitVisibleSceneEvidence(entity);
       continue;
     }
     if (entity.entityType === 'character') {
@@ -1228,10 +1310,19 @@ function canUseTrustedVisibleFastPath(projection) {
         hasBoundCharacter = true;
         continue;
       }
-      return false;
+      if (hasExplicitVisibleCharacterEvidence(entity)) {
+        hasExplicitCharacter = true;
+      }
+      // An unbound or weakly described character is not eligible for a
+      // deterministic match, but it must not block safe matches for unrelated
+      // explicit scene evidence in the same projection.
+      continue;
+    }
+    if (['equipment', 'item', 'skill'].includes(entity.entityType)) {
+      hasExplicitSideIcon ||= hasExplicitVisibleSideIconEvidence(entity);
     }
   }
-  return hasExplicitScene && hasBoundCharacter;
+  return hasExplicitScene || hasBoundCharacter || hasExplicitCharacter || hasExplicitSideIcon;
 }
 
 function validateUploadMetadata(metadata) {
@@ -1320,6 +1411,84 @@ function computeCatalogHash(catalog) {
   return sha256Json(clone);
 }
 
+function characterAssetKey(assetId, assetVersion) {
+  return `${assetId}:${assetVersion}`;
+}
+
+function assertCharacterChannelEntries(assetRefs, channels, label = 'characterChannels') {
+  if (!Array.isArray(channels) || channels.length > 512) {
+    throw visualError('VISUAL_CATALOG_CHANNELS_INVALID', `${label} invalid`, 400);
+  }
+  const expected = new Map(assetRefs
+    .filter((ref) => ref.assetType === 'character' && !ref.assetId.startsWith('unknown_'))
+    .map((ref) => [characterAssetKey(ref.assetId, ref.assetVersion), ref]));
+  const seen = new Set();
+  const channelByContentHash = new Map();
+  for (const [index, entry] of channels.entries()) {
+    const entryLabel = `${label}[${index}]`;
+    requireExactKeys(entry, ['assetId', 'assetVersion', 'channel'], entryLabel);
+    assertSafeString(entry.assetId, `${entryLabel}.assetId`, 3, 80, /^[a-z][a-z0-9_-]{2,79}$/);
+    assertPositiveInteger(entry.assetVersion, `${entryLabel}.assetVersion`, Number.MAX_SAFE_INTEGER);
+    if (!CHARACTER_CHANNEL_SET.has(entry.channel)) {
+      throw visualError('VISUAL_CATALOG_CHANNEL_INVALID', `${entryLabel}.channel invalid`, 400);
+    }
+    const key = characterAssetKey(entry.assetId, entry.assetVersion);
+    if (seen.has(key)) throw visualError('VISUAL_CATALOG_CHANNEL_DUPLICATE', `${entryLabel} duplicated`, 400);
+    seen.add(key);
+    const ref = expected.get(key);
+    if (!ref || ref.assetType !== 'character') {
+      throw visualError('VISUAL_CATALOG_CHANNEL_ORPHAN', `${entryLabel} does not refer to a character asset`, 400);
+    }
+    const previousChannel = channelByContentHash.get(ref.assetContentSha256);
+    if (previousChannel && previousChannel !== entry.channel) {
+      throw visualError('VISUAL_CATALOG_CHANNEL_CONTENT_CONFLICT', `${entryLabel} reuses image content assigned to the ${previousChannel} channel`, 400);
+    }
+    channelByContentHash.set(ref.assetContentSha256, entry.channel);
+  }
+  for (const key of expected.keys()) {
+    if (!seen.has(key)) throw visualError('VISUAL_CATALOG_CHANNEL_MISSING', `${label} is missing a character asset`, 400);
+  }
+}
+
+function catalogChannelFor(catalog, ref) {
+  if (catalog?.schemaVersion !== CATALOG_V2_SCHEMA_VERSION || ref?.assetType !== 'character') return null;
+  return catalog.characterChannels.find((entry) => (
+    entry.assetId === ref.assetId && entry.assetVersion === ref.assetVersion
+  ))?.channel || null;
+}
+
+function isCatalogCandidateEligible(catalog, ref, entityType) {
+  if (ref?.assetType !== entityType) return false;
+  if (entityType !== 'character') return true;
+  return catalogChannelFor(catalog, ref) === 'character';
+}
+
+function assertCandidateChannelBindings(input) {
+  const catalogSchemaVersion = input.catalogSchemaVersion;
+  if (![CATALOG_SCHEMA_VERSION, CATALOG_V2_SCHEMA_VERSION].includes(catalogSchemaVersion)) {
+    throw visualError('VISUAL_CANDIDATE_CATALOG_INVALID', 'candidate catalog schema invalid', 400);
+  }
+  if (!Array.isArray(input.catalogAssetChannels)) {
+    throw visualError('VISUAL_CANDIDATE_CHANNELS_INVALID', 'candidate catalog channels invalid', 400);
+  }
+  if (catalogSchemaVersion === CATALOG_SCHEMA_VERSION) {
+    if (input.catalogAssetChannels.length !== 0 || input.candidates.some((candidate) => candidate.assetType === 'character')) {
+      throw visualError('VISUAL_CANDIDATE_CHANNEL_UNVERIFIED', 'legacy character candidates are not eligible', 400);
+    }
+    return;
+  }
+  assertCharacterChannelEntries(input.catalogAssetRefs, input.catalogAssetChannels, 'catalogAssetChannels');
+  for (const candidate of input.candidates) {
+    if (candidate.assetType !== 'character') continue;
+    const channel = input.catalogAssetChannels.find((entry) => (
+      entry.assetId === candidate.assetId && entry.assetVersion === candidate.assetVersion
+    ))?.channel;
+    if (channel !== 'character') {
+      throw visualError('VISUAL_CANDIDATE_CHANNEL_INELIGIBLE', 'special-channel asset cannot be a character candidate', 400);
+    }
+  }
+}
+
 function assertLegacyAnalysisCodeArray(value, label, assetType) {
   if (!Array.isArray(value) || value.length > MAX_ANALYZER_CODES) throw visualError('VISUAL_RUNTIME_MIGRATION_INVALID', `${label} must be an array`, 400);
   const allowed = new Set([...(LEGACY_TAG_DICTIONARY[assetType] || []), ...(FEATURE_DICTIONARY[assetType] || [])]);
@@ -1384,11 +1553,17 @@ function assertPreviousVisualAsset(asset) {
 }
 
 function assertPreviousVisualCatalog(catalog) {
-  requireExactKeys(catalog, [
+  const keys = [
     'schemaVersion', 'catalogId', 'catalogRevision', 'status', 'assetRefs', 'unknownAssetRefs',
     'dictionaryVersion', 'dictionaryHash', 'createdAt', 'updatedAt', 'publishedAt', 'archivedAt', 'catalogHash',
-  ], 'previousCatalog');
-  if (catalog.schemaVersion !== CATALOG_SCHEMA_VERSION || catalog.dictionaryVersion !== PREVIOUS_DICTIONARY_VERSION || catalog.dictionaryHash !== PREVIOUS_DICTIONARY_HASH) {
+  ];
+  if (catalog?.schemaVersion === CATALOG_V2_SCHEMA_VERSION) {
+    requireExactKeys(catalog, [...keys.slice(0, 5), 'characterChannels', ...keys.slice(5)], 'previousCatalog');
+    assertCharacterChannelEntries(catalog.assetRefs, catalog.characterChannels, 'previousCatalog.characterChannels');
+  } else {
+    requireExactKeys(catalog, keys, 'previousCatalog');
+  }
+  if (![CATALOG_SCHEMA_VERSION, CATALOG_V2_SCHEMA_VERSION].includes(catalog.schemaVersion) || catalog.dictionaryVersion !== PREVIOUS_DICTIONARY_VERSION || catalog.dictionaryHash !== PREVIOUS_DICTIONARY_HASH) {
     throw visualError('VISUAL_RUNTIME_MIGRATION_DICTIONARY_MISMATCH', 'catalog is not an exact revision-2 record', 409);
   }
   if (catalog.status !== 'published') throw visualError('VISUAL_RUNTIME_MIGRATION_INVALID', 'previous catalog is not published', 409);
@@ -1411,11 +1586,17 @@ function assertLegacyVisualAsset(asset) {
 }
 
 function assertLegacyVisualCatalog(catalog) {
-  requireExactKeys(catalog, [
+  const keys = [
     'schemaVersion', 'catalogId', 'catalogRevision', 'status', 'assetRefs', 'unknownAssetRefs',
     'dictionaryVersion', 'dictionaryHash', 'createdAt', 'updatedAt', 'publishedAt', 'archivedAt', 'catalogHash',
-  ], 'legacyCatalog');
-  if (catalog.schemaVersion !== CATALOG_SCHEMA_VERSION || catalog.dictionaryVersion !== LEGACY_DICTIONARY_VERSION || catalog.dictionaryHash !== LEGACY_DICTIONARY_HASH) {
+  ];
+  if (catalog?.schemaVersion === CATALOG_V2_SCHEMA_VERSION) {
+    requireExactKeys(catalog, [...keys.slice(0, 5), 'characterChannels', ...keys.slice(5)], 'legacyCatalog');
+    assertCharacterChannelEntries(catalog.assetRefs, catalog.characterChannels, 'legacyCatalog.characterChannels');
+  } else {
+    requireExactKeys(catalog, keys, 'legacyCatalog');
+  }
+  if (![CATALOG_SCHEMA_VERSION, CATALOG_V2_SCHEMA_VERSION].includes(catalog.schemaVersion) || catalog.dictionaryVersion !== LEGACY_DICTIONARY_VERSION || catalog.dictionaryHash !== LEGACY_DICTIONARY_HASH) {
     throw visualError('VISUAL_RUNTIME_MIGRATION_DICTIONARY_MISMATCH', 'catalog is not an exact revision-1 record', 409);
   }
   assertSafeString(catalog.catalogId, 'legacyCatalog.catalogId', 3, 80, /^[a-z][a-z0-9_-]{2,79}$/);
@@ -1975,6 +2156,19 @@ function createCoreVisualCandidateDecision(input, {
     : ranked;
   const best = safeRanked[0];
   const threshold = runtimeEntity ? 60 : 20;
+  const curatedCharacterTie = input.entityType === 'character'
+    && ['failed', 'unavailable'].includes(best?.candidate.analysisStatus)
+    && safeRanked.slice(1).some((item) => item.policy.score >= best.policy.score - 5);
+  if (curatedCharacterTie) {
+    return createCoreUnknownOrBlockedDecision(
+      input,
+      unknownCompatibilityReport,
+      ['ambiguous-appearance-capped', 'unknown-fallback'],
+      expiresAt,
+      best.policy.score,
+      maxTtlMs,
+    );
+  }
   if (!best || best.policy.isUnknown || best.policy.score < threshold) {
     return createCoreUnknownOrBlockedDecision(input, unknownCompatibilityReport, best?.policy.reasonCodes || ['unknown-fallback'], expiresAt, best?.policy.score || 0, maxTtlMs);
   }
@@ -2020,19 +2214,33 @@ function createCoreVisualCandidateDecisionPlan(request, { runtimeHint = null, ru
         ? entity.visibleAttributes.find((attribute) => attribute.code === 'character-visual-binding')?.value || ''
         : '';
       const hasValidBoundAssetId = CHARACTER_CATALOG_ASSET_ID_PATTERN.test(String(boundAssetId));
-      const entityAssetRefs = catalog.assetRefs.filter((ref) => ref.assetType === entity.entityType
-        && (!hasValidBoundAssetId || ref.assetId === boundAssetId));
+      const entityAssetRefs = catalog.assetRefs.filter((ref) => {
+        if (!isCatalogCandidateEligible(catalog, ref, entity.entityType) || (hasValidBoundAssetId && ref.assetId !== boundAssetId)) {
+          return false;
+        }
+        if (!runtimeMode) return true;
+        // Catalogs can contain legacy thumbnails and test pixels that are valid
+        // PNGs but cannot serve as a player-stage image. Preserve explicitly
+        // bound character assets for compatibility; inferred matches must be
+        // large enough for their actual presentation layer.
+        if (entity.entityType === 'character' && hasValidBoundAssetId) return true;
+        return isRuntimeVisualAssetRenderable(assets.get(`${ref.assetId}:${ref.assetVersion}`), entity.entityType);
+      });
       const runtimeHintReady = !runtimeMode || runtimeHint?.status === 'ready';
       // A published explicit character binding is already a trusted identity
       // decision. It must remain usable when the optional runtime analyzer is
       // unavailable. An explicit scene-location-kind projection is the same
       // kind of trusted, visible evidence for a background and can use the
-      // deterministic scorer while the analyzer is down.
+      // deterministic scorer while the analyzer is down. A dynamic character
+      // can use it only with an explicit name, explicit appearance evidence,
+      // and a specific normalized taxonomy code in the visible projection.
       const allowBoundCharacterWithoutRuntime = entity.entityType === 'character' && hasValidBoundAssetId;
       const allowVisibleSceneWithoutRuntime = hasExplicitVisibleSceneEvidence(entity);
+      const allowVisibleCharacterWithoutRuntime = hasExplicitVisibleCharacterEvidence(entity);
       const allowVisibleSideIconWithoutRuntime = hasExplicitVisibleSideIconEvidence(entity);
       const hintedRuntimeEntity = runtimeHint?.entities?.find((item) => item.entityType === entity.entityType) || null;
       const useDeterministicSceneFallback = allowVisibleSceneWithoutRuntime && !hintedRuntimeEntity;
+      const useDeterministicCharacterFallback = allowVisibleCharacterWithoutRuntime && !hintedRuntimeEntity;
       const useDeterministicSideIconFallback = allowVisibleSideIconWithoutRuntime && !hintedRuntimeEntity;
       const runtimeEntity = runtimeMode
         ? (useDeterministicSceneFallback
@@ -2047,6 +2255,14 @@ function createCoreVisualCandidateDecisionPlan(request, { runtimeHint = null, ru
             confidenceBand: 'explicit',
             status: 'ready',
           }
+          : useDeterministicCharacterFallback
+            ? {
+              entityType: entity.entityType,
+              codes: deriveVisibleNormalizedCodes(entity),
+              confidence: 1,
+              confidenceBand: 'explicit',
+              status: 'ready',
+            }
           : useDeterministicSideIconFallback
             ? {
               entityType: entity.entityType,
@@ -2063,7 +2279,7 @@ function createCoreVisualCandidateDecisionPlan(request, { runtimeHint = null, ru
           status: 'unavailable',
         })
         : null;
-      const candidates = (runtimeMode && !runtimeHintReady && !allowBoundCharacterWithoutRuntime && !allowVisibleSceneWithoutRuntime && !allowVisibleSideIconWithoutRuntime)
+      const candidates = (runtimeMode && !runtimeHintReady && !allowBoundCharacterWithoutRuntime && !allowVisibleSceneWithoutRuntime && !allowVisibleCharacterWithoutRuntime && !allowVisibleSideIconWithoutRuntime)
         ? []
         : ((runtimeMode || coreEntityAllowsConcreteCandidate(entity))
         ? entityAssetRefs.map((ref) => createCoreVisualCandidateAssetInputFromAsset(assets.get(`${ref.assetId}:${ref.assetVersion}`)))
@@ -2093,7 +2309,11 @@ function createCoreVisualCandidateDecisionPlan(request, { runtimeHint = null, ru
         catalogId: catalog.catalogId,
         catalogRevision: catalog.catalogRevision,
         catalogHash: catalog.catalogHash,
+        catalogSchemaVersion: catalog.schemaVersion,
         catalogAssetRefs,
+        catalogAssetChannels: catalog.schemaVersion === CATALOG_V2_SCHEMA_VERSION
+          ? structuredClone(catalog.characterChannels)
+          : [],
         dictionaryVersion: String(DICTIONARY_VERSION),
         dictionaryHash: DICTIONARY_HASH,
         candidates,
@@ -2110,6 +2330,7 @@ function createCoreVisualCandidateDecisionPlan(request, { runtimeHint = null, ru
           && !runtimeHintReady
           && !allowBoundCharacterWithoutRuntime
           && !allowVisibleSceneWithoutRuntime
+          && !allowVisibleCharacterWithoutRuntime
           && !allowVisibleSideIconWithoutRuntime,
       });
       if (!decisionResult.ok) {
@@ -2261,6 +2482,14 @@ function normalizeCandidateForDecision(input, candidate, { allowAnalysis = false
     || expectedRefHash !== candidate.catalogRefHash
   ) {
     throw visualError('VISUAL_CANDIDATE_CATALOG_REF_MISMATCH', 'candidate does not match trusted catalog ref', 400);
+  }
+  if (candidate.assetType === 'character') {
+    const channel = input.catalogAssetChannels.find((entry) => (
+      entry.assetId === candidate.assetId && entry.assetVersion === candidate.assetVersion
+    ))?.channel;
+    if (input.catalogSchemaVersion !== CATALOG_V2_SCHEMA_VERSION || channel !== 'character') {
+      throw visualError('VISUAL_CANDIDATE_CHANNEL_INELIGIBLE', 'character candidate is not assigned to the character channel', 400);
+    }
   }
   return {
     ...candidate,
@@ -2425,6 +2654,9 @@ function scoreRuntimeCandidate(input, candidate, runtimeEntity, visibleContext =
     ? normalizedVisibleCodes
     : new Set(runtimeEntity?.codes || []);
   const analysisCodes = new Set([...(candidate.analysisTagCodes || []), ...(candidate.analysisAttributeCodes || [])]);
+  const curatedSemanticCodes = new Set((candidate.tagCodes || []).filter((code) => (
+    code.startsWith(`${input.entityType}.`) && !RUNTIME_GENERIC_PARENT_CODES.has(code)
+  )));
   const visibleCodes = new Set(input.visibleAttributeCodes || []);
   const explicitLabelCode = `${input.entityType}-visible-label`;
   const hasExplicitVisibleLabel = input.entityType === 'scene'
@@ -2438,14 +2670,11 @@ function scoreRuntimeCandidate(input, candidate, runtimeEntity, visibleContext =
     && hasExplicitVisibleLabel;
   const hasDeterministicVisibleEvidence = hasExplicitVisibleLabel
     && (deterministicVisibleCodes.size > 0 || hasExplicitSideIconEvidence);
-  // Asset manifests carry curated visible tags in addition to provider analysis.
-  // When the player sees an explicit status label, those trusted tags are valid
-  // deterministic evidence even if the provider analysis omitted the exact term.
-  if (hasExplicitVisibleLabel) {
-    for (const code of candidate.tagCodes || []) {
-      analysisCodes.add(code);
-    }
-  }
+  // Published taxonomy tags are part of the hash-bound catalog and remain
+  // usable when the optional image analyzer failed. Use only type-specific
+  // semantic tags (not generic feature tags); they still need exact overlap
+  // with the current visible projection to contribute to a match.
+  for (const code of curatedSemanticCodes) analysisCodes.add(code);
   const negativeCodes = new Set(candidate.negativeTagCodes || []);
   const intersection = new Set([...runtimeCodes].filter((code) => analysisCodes.has(code)));
   const genericOverlap = new Set([...intersection].filter((code) => RUNTIME_GENERIC_PARENT_CODES.has(code)));
@@ -2459,7 +2688,9 @@ function scoreRuntimeCandidate(input, candidate, runtimeEntity, visibleContext =
   const visibleOrRuntime = new Set([...visibleCodes, ...runtimeCodes]);
   const attributeState = Math.round(20 * Math.min(1, [...visibleOrRuntime].filter((code) => attributeCodes.has(code)).length / Math.max(1, visibleOrRuntime.size)));
   const recentContinuity = Array.isArray(visibleContext?.recent) && visibleContext.recent.length > 0 && intersection.size > 0 ? 10 : 0;
-  const hasTrustedAnalysis = candidate.analysisStatus === undefined || candidate.analysisStatus === 'ready';
+  const hasTrustedAnalysis = candidate.analysisStatus === undefined
+    || candidate.analysisStatus === 'ready'
+    || curatedSemanticCodes.size > 0;
   const confidence = candidate.analysisStatus === 'ready'
     ? Math.round(5 * Math.min(Number(runtimeEntity?.confidence) || 0, Number(candidate.analysisConfidence) || 0))
     : 0;
@@ -2510,6 +2741,18 @@ function scoreRuntimeCandidate(input, candidate, runtimeEntity, visibleContext =
       },
     },
   };
+}
+
+function isRuntimeVisualAssetRenderable(asset, entityType) {
+  if (!asset || asset.assetType !== entityType) return false;
+  if (entityType === 'scene') {
+    const aspectRatio = asset.width / asset.height;
+    return asset.width >= 640 && asset.height >= 360 && aspectRatio >= 1.2;
+  }
+  if (entityType === 'character') {
+    return asset.width >= 320 && asset.height >= 320;
+  }
+  return true;
 }
 
 function compareCandidateScores(left, right) {
@@ -2575,11 +2818,12 @@ function createDecisionFromAsset(input, candidate, policy, expiresAt) {
 
 function createUnknownCompatibilityCatalog(serviceUnknownAssets = BUILTIN_UNKNOWN_ASSETS) {
   const catalog = {
-    schemaVersion: CATALOG_SCHEMA_VERSION,
+    schemaVersion: CATALOG_V2_SCHEMA_VERSION,
     catalogId: UNKNOWN_CATALOG_ID,
     catalogRevision: UNKNOWN_CATALOG_REVISION,
     status: 'published',
     assetRefs: [],
+    characterChannels: [],
     unknownAssetRefs: ENTITY_TYPES
       .map((type) => serviceUnknownAssets?.[type])
       .filter(Boolean)
@@ -2712,14 +2956,14 @@ function assertCoreProjectedEntity(entity, label) {
   if (![...ENTITY_TYPES, 'unknown'].includes(entity.entityType)) throw visualError('VISUAL_CORE_ENTITY_TYPE_INVALID', `${label}.entityType invalid`, 400);
   assertSafeString(entity.entityKey, `${label}.entityKey`, 15, 96, /^entity_(scene|character|equipment|item|skill|unknown)_[a-z0-9._:-]{8,72}$/);
   if (!entity.entityKey.startsWith(`entity_${entity.entityType}_`)) throw visualError('VISUAL_CORE_ENTITY_SCOPE_MISMATCH', `${label}.entityKey/entityType mismatch`, 400);
-  assertSafeString(entity.displayLabel, `${label}.displayLabel`, 1, 80, /^[\p{L}\p{N}\p{P}\p{Zs}]+$/u);
+  assertSafeString(entity.displayLabel, `${label}.displayLabel`, 1, 80, /^[\p{L}\p{N}\p{P}\p{S}\p{Zs}]+$/u);
   if (!SHARED_CONFIDENCE_BAND_SET.has(entity.confidenceBand)) throw visualError('VISUAL_CORE_ENTITY_CONFIDENCE_INVALID', `${label}.confidenceBand invalid`, 400);
   if (!Array.isArray(entity.visibleAttributes) || entity.visibleAttributes.length > 32) throw visualError('VISUAL_CORE_ENTITY_ATTRIBUTES_INVALID', `${label}.visibleAttributes invalid`, 400);
   const seen = new Set();
   for (const [index, attribute] of entity.visibleAttributes.entries()) {
     requireExactKeys(attribute, ['code', 'value', 'confidenceBand'], `${label}.visibleAttributes[${index}]`);
     assertSharedCodeArray([attribute.code], SHARED_ATTRIBUTE_CODE_SET, `${label}.visibleAttributes[${index}].code`, 1, 1);
-    assertSafeString(attribute.value, `${label}.visibleAttributes[${index}].value`, 1, 120, /^[\p{L}\p{N}\p{P}\p{Zs}]+$/u);
+    assertSafeString(attribute.value, `${label}.visibleAttributes[${index}].value`, 1, 120, /^[\p{L}\p{N}\p{P}\p{S}\p{Zs}]+$/u);
     if (!SHARED_CONFIDENCE_BAND_SET.has(attribute.confidenceBand)) throw visualError('VISUAL_CORE_ENTITY_ATTRIBUTES_INVALID', `${label}.visibleAttributes[${index}].confidenceBand invalid`, 400);
     if (seen.has(attribute.code)) throw visualError('VISUAL_CORE_ENTITY_ATTRIBUTES_INVALID', `${label}.visibleAttributes duplicate code`, 400);
     seen.add(attribute.code);
@@ -2807,6 +3051,7 @@ function assertCoreVisualCandidateDecisionInput(input) {
     if (seen.has(key)) throw visualError('VISUAL_CANDIDATE_DUPLICATE', 'candidate asset duplicated', 400);
     seen.add(key);
   }
+  assertCandidateChannelBindings(input);
   assertVersionId(input.matcherVersion, 'matcherVersion');
   assertVersionId(input.scorerVersion, 'scorerVersion');
   assertIsoTimestamp(input.createdAt, 'createdAt');
@@ -2922,6 +3167,7 @@ function assertVisualCandidateDecisionInput(input) {
     if (seen.has(key)) throw visualError('VISUAL_CANDIDATE_DUPLICATE', 'candidate asset duplicated', 400);
     seen.add(key);
   }
+  assertCandidateChannelBindings(input);
   assertVersionId(input.matcherVersion, 'matcherVersion');
   assertVersionId(input.scorerVersion, 'scorerVersion');
   assertIsoTimestamp(input.createdAt, 'createdAt');
@@ -3815,7 +4061,7 @@ function serializeAdminAsset(asset) {
 
 function serializePlayerSafeCatalog(catalog) {
   validateCatalog(catalog);
-  return {
+  const serialized = {
     schemaVersion: catalog.schemaVersion,
     catalogId: catalog.catalogId,
     catalogRevision: catalog.catalogRevision,
@@ -3830,10 +4076,14 @@ function serializePlayerSafeCatalog(catalog) {
     publishedAt: catalog.publishedAt,
     archivedAt: catalog.archivedAt,
   };
+  if (catalog.schemaVersion === CATALOG_V2_SCHEMA_VERSION) {
+    serialized.characterChannels = catalog.characterChannels;
+  }
+  return serialized;
 }
 
 function validateCatalog(catalog) {
-  requireExactKeys(catalog, [
+  const baseKeys = [
     'schemaVersion',
     'catalogId',
     'catalogRevision',
@@ -3847,13 +4097,21 @@ function validateCatalog(catalog) {
     'publishedAt',
     'archivedAt',
     'catalogHash',
-  ], 'catalog');
-  if (catalog.schemaVersion !== CATALOG_SCHEMA_VERSION) throw visualError('VISUAL_CATALOG_INVALID_SCHEMA', 'catalog schema invalid', 500);
+  ];
+  if (catalog?.schemaVersion === CATALOG_V2_SCHEMA_VERSION) {
+    requireExactKeys(catalog, [...baseKeys.slice(0, 5), 'characterChannels', ...baseKeys.slice(5)], 'catalog');
+  } else {
+    requireExactKeys(catalog, baseKeys, 'catalog');
+  }
+  if (![CATALOG_SCHEMA_VERSION, CATALOG_V2_SCHEMA_VERSION].includes(catalog.schemaVersion)) throw visualError('VISUAL_CATALOG_INVALID_SCHEMA', 'catalog schema invalid', 500);
   assertSafeString(catalog.catalogId, 'catalogId', 3, 80, /^[a-z][a-z0-9_-]{2,79}$/);
   assertPositiveInteger(catalog.catalogRevision, 'catalogRevision');
   if (!['draft', 'validated', 'published', 'archived'].includes(catalog.status)) throw visualError('VISUAL_CATALOG_INVALID_STATUS', 'catalog status invalid', 500);
   validateAssetRefs(catalog.assetRefs, 'assetRefs', 512);
   validateAssetRefs(catalog.unknownAssetRefs, 'unknownAssetRefs', 5);
+  if (catalog.schemaVersion === CATALOG_V2_SCHEMA_VERSION) {
+    assertCharacterChannelEntries(catalog.assetRefs, catalog.characterChannels);
+  }
   if (catalog.unknownAssetRefs.length !== 5) throw visualError('VISUAL_CATALOG_UNKNOWN_ASSETS_MISSING', 'unknown asset refs missing', 500);
   if (catalog.dictionaryVersion !== DICTIONARY_VERSION || catalog.dictionaryHash !== DICTIONARY_HASH) throw visualError('VISUAL_CATALOG_DICTIONARY_MISMATCH', 'dictionary mismatch', 500);
   assertSafeString(catalog.createdAt, 'createdAt', 20, 40, /^[0-9TZ:.-]+$/);
@@ -4081,6 +4339,102 @@ class FileVisualControlStore extends MemoryVisualControlStore {
   }
 }
 
+function migrationJournalHash(record) {
+  const { recordHash: _recordHash, ...payload } = record;
+  return `sha256:${sha256Hex(Buffer.from(canonicalJson(payload), 'utf8'))}`;
+}
+
+function validateMigrationJournalRecord(record) {
+  requireExactKeys(record, [
+    'schemaVersion', 'action', 'state', 'operationId',
+    'sourceAssetStorePointer', 'sourceControlPointer', 'targetPointer',
+    'oldControl', 'newControl', 'sourceCatalogHash', 'targetCatalogHash',
+    'createdAt', 'updatedAt', 'recordHash',
+  ], 'catalogMigrationJournal');
+  if (record.schemaVersion !== VISUAL_CATALOG_MIGRATION_JOURNAL_SCHEMA_VERSION
+      || !['activate', 'rollback'].includes(record.action)
+      || !['PREPARED', 'COMMITTED'].includes(record.state)) {
+    throw visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', 'catalog migration journal state is invalid', 503);
+  }
+  assertSafeString(record.operationId, 'catalogMigrationJournal.operationId', 12, 80, /^migration_[a-f0-9-]{8,72}$/);
+  for (const field of ['sourceAssetStorePointer', 'sourceControlPointer', 'targetPointer']) {
+    const pointer = record[field];
+    if (pointer === null && field !== 'targetPointer') continue;
+    if (!pointer || typeof pointer !== 'object' || Array.isArray(pointer)) {
+      throw visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', `catalog migration ${field} is invalid`, 503);
+    }
+    requireExactKeys(pointer, ['catalogId', 'catalogRevision', 'catalogHash'], `catalogMigrationJournal.${field}`);
+    assertSafeString(pointer.catalogId, `${field}.catalogId`, 3, 80, /^[a-z][a-z0-9_-]{2,79}$/);
+    assertPositiveInteger(pointer.catalogRevision, `${field}.catalogRevision`);
+    assertSafeString(pointer.catalogHash, `${field}.catalogHash`, 71, 71, /^sha256:[a-f0-9]{64}$/);
+  }
+  validateVisualControl(record.oldControl);
+  validateVisualControl(record.newControl);
+  for (const field of ['sourceCatalogHash', 'targetCatalogHash']) {
+    if (record[field] === null && field === 'sourceCatalogHash') continue;
+    assertSafeString(record[field], `catalogMigrationJournal.${field}`, 71, 71, /^sha256:[a-f0-9]{64}$/);
+  }
+  assertIsoTimestamp(record.createdAt, 'catalogMigrationJournal.createdAt');
+  assertIsoTimestamp(record.updatedAt, 'catalogMigrationJournal.updatedAt');
+  assertSafeString(record.recordHash, 'catalogMigrationJournal.recordHash', 71, 71, /^sha256:[a-f0-9]{64}$/);
+  if (record.recordHash !== migrationJournalHash(record)) {
+    throw visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', 'catalog migration journal hash is invalid', 503);
+  }
+  return record;
+}
+
+class MemoryVisualCatalogMigrationJournalStore {
+  constructor() {
+    this.record = null;
+  }
+
+  async initialize() {
+    if (this.record) validateMigrationJournalRecord(this.record);
+  }
+
+  async getRecord() {
+    if (!this.record) return null;
+    return structuredClone(validateMigrationJournalRecord(this.record));
+  }
+
+  async setRecord(record) {
+    validateMigrationJournalRecord(record);
+    this.record = structuredClone(record);
+    return this.getRecord();
+  }
+}
+
+class FileVisualCatalogMigrationJournalStore extends MemoryVisualCatalogMigrationJournalStore {
+  constructor(rootDir) {
+    super();
+    this.rootDir = path.resolve(rootDir);
+    mkdirSync(this.rootDir, { recursive: true });
+    this.filePath = path.join(this.rootDir, 'visual-catalog-migration-journal.json');
+    if (existsSync(this.filePath)) {
+      let parsed;
+      try {
+        parsed = parseJsonNoBom(readFileSync(this.filePath));
+        validateMigrationJournalRecord(parsed);
+      } catch {
+        throw visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', 'catalog migration journal cannot be read', 503);
+      }
+      this.record = structuredClone(parsed);
+    }
+  }
+
+  async setRecord(record) {
+    validateMigrationJournalRecord(record);
+    await atomicWriteJson(this.filePath, record);
+    const readBack = parseJsonNoBom(readFileSync(this.filePath));
+    validateMigrationJournalRecord(readBack);
+    if (canonicalJson(readBack) !== canonicalJson(record)) {
+      throw visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', 'catalog migration journal readback mismatch', 503);
+    }
+    this.record = structuredClone(readBack);
+    return this.getRecord();
+  }
+}
+
 class MemoryVisualAssetStore {
   constructor() {
     this.assets = new Map();
@@ -4176,7 +4530,18 @@ class MemoryVisualAssetStore {
   }
 
   async getActiveCatalog(catalogId) {
-    return this.activeCatalogs.get(catalogId) || null;
+    return this.activeCatalogs.get(catalogId)
+      || this.previousActiveCatalogs?.get(catalogId)
+      || this.legacyActiveCatalogs?.get(catalogId)
+      || null;
+  }
+
+  async listActiveCatalogs() {
+    const pointers = new Map();
+    for (const source of [this.activeCatalogs, this.previousActiveCatalogs, this.legacyActiveCatalogs]) {
+      for (const [catalogId, pointer] of source || []) pointers.set(catalogId, pointer);
+    }
+    return [...pointers.values()].map((pointer) => structuredClone(pointer));
   }
 
   async deleteCatalog(catalogId, catalogRevision) {
@@ -6462,6 +6827,8 @@ export function createVisualAssetService({
   bindingStore = null,
   proofReplayStore = null,
   restoreReplayStore = null,
+  catalogMigrationJournalStore = new MemoryVisualCatalogMigrationJournalStore(),
+  serviceRuntimeInfo = null,
   assetStore = new MemoryVisualAssetStore(),
   contentStore = new MemoryContentStore(),
   visualControlStore = null,
@@ -6487,10 +6854,17 @@ export function createVisualAssetService({
   maxRequestBytes = MAX_REQUEST_BYTES,
 } = {}) {
   let initialized = false;
+  let catalogRecoveryReady = false;
+  let catalogRecoveryError = null;
+  let catalogRecoveryInFlight = null;
+  let activeRequestReaders = 0;
+  let activeRequestWriter = false;
+  const serviceRequestQueue = [];
   const normalizedAdminToken = String(adminToken || '');
   const effectiveProofReplayStore = proofReplayStore || new MemoryProofReplayStore(now);
   const effectiveRestoreReplayStore = restoreReplayStore || new MemoryRestoreReplayStore(now);
   const effectiveVisualControlStore = visualControlStore || new MemoryVisualControlStore({ now });
+  const effectiveCatalogMigrationJournalStore = catalogMigrationJournalStore || new MemoryVisualCatalogMigrationJournalStore();
   const localAdminSessions = new Map();
   const normalizedAdminAppDir = path.resolve(String(adminAppDir || ''));
   const adminOriginSet = new Set(adminOrigins.filter(Boolean));
@@ -6573,6 +6947,59 @@ export function createVisualAssetService({
   const analysisInFlight = new Map();
   const runtimeHintCache = new Map();
   const runtimeHintInFlight = new Map();
+
+  function drainServiceRequestQueue() {
+    if (activeRequestWriter || serviceRequestQueue.length === 0) return;
+    const first = serviceRequestQueue[0];
+    if (first.access === 'WRITE') {
+      if (activeRequestReaders > 0) return;
+      serviceRequestQueue.shift();
+      activeRequestWriter = true;
+      Promise.resolve().then(first.work).then(first.resolve, first.reject).finally(() => {
+        activeRequestWriter = false;
+        drainServiceRequestQueue();
+      });
+      return;
+    }
+    while (!activeRequestWriter && serviceRequestQueue[0]?.access === 'READ') {
+      const task = serviceRequestQueue.shift();
+      activeRequestReaders += 1;
+      Promise.resolve().then(task.work).then(task.resolve, task.reject).finally(() => {
+        activeRequestReaders -= 1;
+        drainServiceRequestQueue();
+      });
+    }
+  }
+
+  function withServiceRequestFence(access, work) {
+    return new Promise((resolve, reject) => {
+      serviceRequestQueue.push({ access, work, resolve, reject });
+      drainServiceRequestQueue();
+    });
+  }
+
+  async function ensureCatalogRecoveryReady() {
+    if (catalogRecoveryReady) return true;
+    if (!catalogRecoveryInFlight) {
+      catalogRecoveryInFlight = (async () => {
+        try {
+          await recoverCatalogMigrationJournal();
+          catalogRecoveryReady = true;
+          catalogRecoveryError = null;
+          return true;
+        } catch (error) {
+          catalogRecoveryReady = false;
+          catalogRecoveryError = visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', 'catalog migration recovery is required', 503, {
+            causeCode: error?.code || 'UNKNOWN',
+          });
+          return false;
+        } finally {
+          catalogRecoveryInFlight = null;
+        }
+      })();
+    }
+    return catalogRecoveryInFlight;
+  }
 
   function analyzerCacheKey(assetType, contentHash) {
     return sha256Json({
@@ -7446,22 +7873,70 @@ export function createVisualAssetService({
     await bindingStore?.initialize?.();
     await effectiveVisualControlStore.initialize?.();
     await analysisCacheStore.initialize?.();
+    await effectiveCatalogMigrationJournalStore.initialize?.();
+    try {
+      await recoverCatalogMigrationJournal();
+    } catch (error) {
+      catalogRecoveryReady = false;
+      catalogRecoveryError = visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', 'catalog migration recovery is required', 503, {
+        causeCode: error?.code || 'UNKNOWN',
+      });
+      throw catalogRecoveryError;
+    }
     for (const asset of Object.values(BUILTIN_UNKNOWN_ASSETS)) {
       const content = await contentStore.put(TRANSPARENT_PNG_BYTES, PNG_MIME);
       if (content.hash !== asset.assetContentSha256) throw visualError('VISUAL_ASSET_UNKNOWN_TAMPERED', 'unknown content hash mismatch', 500);
       await assetStore.saveAsset(asset, { allowExactReplay: true });
     }
     initialized = true;
+    catalogRecoveryReady = true;
+    catalogRecoveryError = null;
   }
 
   async function handleRequest(req, res) {
+    let pathname = '';
+    try {
+      pathname = new URL(req.url, 'http://localhost').pathname;
+    } catch {
+      return sendJson(res, 400, { ok: false, error: { code: 'VISUAL_ASSET_BAD_REQUEST' } });
+    }
+    const route = resolveVisualRouteAccess(String(req.method || '').toUpperCase(), pathname);
+    if (!route) {
+      return sendJson(res, 404, { ok: false, error: { code: 'VISUAL_HTTP_ROUTE_UNREGISTERED' } });
+    }
+    const access = initialized && catalogRecoveryReady ? route.access : 'WRITE';
+    return withServiceRequestFence(access, async () => {
+      if (!initialized) {
+        try {
+          await initialize();
+        } catch {
+          const isHealth = String(req.method || '').toUpperCase() === 'GET' && pathname === '/v1/health';
+          return sendJson(res, 503, isHealth
+            ? { ok: false, service: SERVICE_NAME, schema: HEALTH_SCHEMA_VERSION, readiness: { catalogRecovery: 'required' } }
+            : { ok: false, error: { code: 'VISUAL_CATALOG_RECOVERY_REQUIRED' } });
+        }
+      }
+      if (!catalogRecoveryReady && !await ensureCatalogRecoveryReady()) {
+        const isHealth = String(req.method || '').toUpperCase() === 'GET' && pathname === '/v1/health';
+        return sendJson(res, 503, isHealth
+          ? { ok: false, service: SERVICE_NAME, schema: HEALTH_SCHEMA_VERSION, readiness: { catalogRecovery: 'required' } }
+          : { ok: false, error: { code: 'VISUAL_CATALOG_RECOVERY_REQUIRED' } });
+      }
+      return dispatchRequest(req, res);
+    });
+  }
+
+  async function dispatchRequest(req, res) {
     let url;
     try {
       url = new URL(req.url, 'http://localhost');
       applyCors(req, res);
       await initialize();
-      if (url.pathname === '/v1/core/visual-context' && req.method === 'OPTIONS') {
-        throw visualError('VISUAL_CORE_CONTEXT_METHOD_NOT_ALLOWED', 'visual context only supports GET', 405);
+      if (req.method === 'OPTIONS' && (url.pathname === '/v1/core/visual-context' || isCoreVisualAssetContentPath(url.pathname))) {
+        return sendCoreReadOptions(req, res);
+      }
+      if (req.method === 'OPTIONS' && resolvePresentationAnalysisProxyRoute(req.method, url.pathname)) {
+        return await handlePresentationAnalysisProxyRequest(req, res, { allowedOrigins: corePlayerOriginSet });
       }
       if (req.method === 'OPTIONS' && url.pathname === '/v1/visual-match') {
         return sendVisualMatchOptions(req, res);
@@ -7489,6 +7964,9 @@ export function createVisualAssetService({
           catalogStore: { persistent: assetStore instanceof FileVisualAssetStore },
           visualControl: { persistent: effectiveVisualControlStore instanceof FileVisualControlStore },
         });
+      }
+      if (resolvePresentationAnalysisProxyRoute(req.method, url.pathname)) {
+        return await handlePresentationAnalysisProxyRequest(req, res, { allowedOrigins: corePlayerOriginSet });
       }
       if (localAdminEnabled && (url.pathname === LOCAL_ADMIN_STATIC_PREFIX || url.pathname.startsWith(`${LOCAL_ADMIN_STATIC_PREFIX}/`))) {
         return await handleLocalAdminStaticRoute(req, res, url);
@@ -7600,7 +8078,7 @@ export function createVisualAssetService({
     return a.length === b.length && timingSafeEqual(a, b);
   }
 
-  function authorizeLocalAdminApi(req, { requireCsrf = false } = {}) {
+  function authorizeLocalAdminApi(req, { requireCsrf = false, requireOrigin = false } = {}) {
     requireLoopbackLocalAdmin(req);
     if (req.headers.authorization
       || req.headers['x-galgame-visual-projection-proof']
@@ -7610,6 +8088,9 @@ export function createVisualAssetService({
     }
     const origin = req.headers.origin;
     const expectedOrigin = requestOrigin(req);
+    if (requireOrigin && !origin) {
+      throw visualError('VISUAL_LOCAL_ADMIN_ORIGIN_REQUIRED', 'local admin write requires an origin header', 403);
+    }
     if (origin && origin !== expectedOrigin) {
       throw visualError('VISUAL_LOCAL_ADMIN_ORIGIN_REJECTED', 'local admin origin mismatch', 403);
     }
@@ -7621,6 +8102,21 @@ export function createVisualAssetService({
       }
     }
     return session;
+  }
+
+  async function assertLocalAdminStagingCatalogId(catalogId) {
+    if (typeof catalogId !== 'string' || !catalogId) return;
+    const control = await effectiveVisualControlStore.getControl();
+    validateVisualControl(control);
+    const controlPointer = control.activeCatalog;
+    const catalogPointer = await assetStore.getActiveCatalog(catalogId);
+    if (controlPointer?.catalogId === catalogId || catalogPointer) {
+      throw visualError(
+        'VISUAL_LOCAL_ADMIN_STAGING_CATALOG_ID_ACTIVE',
+        'local staging catalog id must not replace an active catalog',
+        409,
+      );
+    }
   }
 
   function setLocalAdminSessionCookie(res, session) {
@@ -7703,6 +8199,21 @@ export function createVisualAssetService({
       authorizeLocalAdminApi(req);
       return sendJson(res, 200, { ok: true, visual: serializeVisualControl(await getVerifiedVisualControl()) });
     }
+    if (req.method === 'GET' && url.pathname === `${LOCAL_ADMIN_API_PREFIX}/catalog-migration/runtime`) {
+      authorizeLocalAdminApi(req);
+      const active = await effectiveVisualControlStore.getControl();
+      validateVisualControl(active);
+      const pointer = active.activeCatalog;
+      const catalog = pointer ? await assetStore.getCatalog(pointer.catalogId, pointer.catalogRevision) : null;
+      return sendJson(res, 200, {
+        ok: true,
+        schemaVersion: 'galgame.visual-service-runtime.v1',
+        serviceInstanceId: serviceRuntimeInfo?.serviceInstanceId || null,
+        activePointer: pointer,
+        activeCatalogHash: catalog?.catalogHash || null,
+        journal: await effectiveCatalogMigrationJournalStore.getRecord?.() || null,
+      });
+    }
     if (req.method === 'POST' && url.pathname === `${LOCAL_ADMIN_API_PREFIX}/upload`) {
       authorizeLocalAdminApi(req, { requireCsrf: true });
       const body = await readJsonBody(req, maxRequestBytes);
@@ -7713,6 +8224,36 @@ export function createVisualAssetService({
       authorizeLocalAdminApi(req, { requireCsrf: true });
       await readOptionalEmptyJsonBody(req);
       return sendJson(res, 200, await publishSimpleVisualCatalog());
+    }
+    if (req.method === 'POST' && url.pathname === `${LOCAL_ADMIN_API_PREFIX}/catalogs/draft`) {
+      authorizeLocalAdminApi(req, { requireCsrf: true, requireOrigin: true });
+      const body = await readJsonBody(req, maxRequestBytes);
+      await assertLocalAdminStagingCatalogId(body.catalogId);
+      return sendJson(res, 200, { ok: true, catalog: serializePlayerSafeCatalog(await createCatalogDraft(body)) });
+    }
+    const localCatalogLifecycleMatch = url.pathname.match(/^\/v1\/local-admin\/visual\/catalogs\/([a-z][a-z0-9_-]{2,79})\/([1-9][0-9]{0,5})\/(validate|publish)$/);
+    if (req.method === 'POST' && localCatalogLifecycleMatch) {
+      authorizeLocalAdminApi(req, { requireCsrf: true, requireOrigin: true });
+      await readOptionalEmptyJsonBody(req);
+      const [, catalogId, revision, action] = localCatalogLifecycleMatch;
+      if (action === 'publish') await assertLocalAdminStagingCatalogId(catalogId);
+      const catalog = await updateCatalogLifecycle(catalogId, Number(revision), action);
+      return sendJson(res, 200, { ok: true, catalog: serializePlayerSafeCatalog(catalog) });
+    }
+    if (req.method === 'POST' && url.pathname === `${LOCAL_ADMIN_API_PREFIX}/catalog-migration/preview`) {
+      authorizeLocalAdminApi(req, { requireCsrf: true, requireOrigin: true });
+      const body = await readStrictJsonBody(req, 2 * 1024 * 1024, 'playerCatalogManifest');
+      return sendJson(res, 200, await previewPlayerCatalogMigration(body));
+    }
+    if (req.method === 'POST' && url.pathname === `${LOCAL_ADMIN_API_PREFIX}/catalog-migration/activate`) {
+      authorizeLocalAdminApi(req, { requireCsrf: true, requireOrigin: true });
+      const body = await readStrictJsonBody(req, 2 * 1024 * 1024, 'playerCatalogManifest');
+      return sendJson(res, 200, await executePlayerCatalogMigration(body));
+    }
+    if (req.method === 'POST' && url.pathname === `${LOCAL_ADMIN_API_PREFIX}/catalog-migration/rollback`) {
+      authorizeLocalAdminApi(req, { requireCsrf: true, requireOrigin: true });
+      const body = await readStrictJsonBody(req, 64 * 1024, 'catalogMigrationRollback');
+      return sendJson(res, 200, await rollbackPlayerCatalogMigration(body));
     }
     if (req.method === 'OPTIONS') {
       return sendJson(res, 403, { ok: false, error: { code: 'VISUAL_LOCAL_ADMIN_BROWSER_PREFLIGHT_FORBIDDEN' } });
@@ -7725,6 +8266,11 @@ export function createVisualAssetService({
     const pathname = req.url ? new URL(req.url, 'http://localhost').pathname : '';
     if (pathname === VISUAL_MATCH_INTERNAL_PATH) return;
     if (pathname === '/v1/core/visual-context' && origin && corePlayerOriginSet.has(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      return;
+    }
+    if (pathname.startsWith('/v1/presentation/') && origin && corePlayerOriginSet.has(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Vary', 'Origin');
       return;
@@ -7771,10 +8317,27 @@ export function createVisualAssetService({
       return sendJson(res, 403, { ok: false, error: { code: 'VISUAL_MATCH_ORIGIN_REJECTED' } });
     }
     res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Vary', 'Origin');
+    res.setHeader('Vary', 'Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Access-Control-Request-Private-Network');
     res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', VISUAL_MATCH_ALLOWED_HEADERS);
     res.setHeader('Access-Control-Max-Age', '300');
+    setPrivateNetworkCors(req, res);
+    res.statusCode = 204;
+    return res.end();
+  }
+
+  function sendCoreReadOptions(req, res) {
+    const origin = req.headers.origin;
+    const method = String(req.headers['access-control-request-method'] || '').toUpperCase();
+    const requestedHeaders = String(req.headers['access-control-request-headers'] || '').trim();
+    if (!origin || !corePlayerOriginSet.has(origin) || method !== 'GET' || requestedHeaders) {
+      return sendJson(res, 403, { ok: false, error: { code: 'VISUAL_CORE_ORIGIN_REJECTED' } });
+    }
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Access-Control-Request-Private-Network');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
+    res.setHeader('Access-Control-Max-Age', '300');
+    setPrivateNetworkCors(req, res);
     res.statusCode = 204;
     return res.end();
   }
@@ -7787,12 +8350,23 @@ export function createVisualAssetService({
       return sendJson(res, 403, { ok: false, error: { code: 'VISUAL_CORE_ORIGIN_REJECTED' } });
     }
     res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Vary', 'Origin');
+    res.setHeader('Vary', 'Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Access-Control-Request-Private-Network');
     res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'content-type');
     res.setHeader('Access-Control-Max-Age', '300');
+    setPrivateNetworkCors(req, res);
     res.statusCode = 204;
     return res.end();
+  }
+
+  function setPrivateNetworkCors(req, res) {
+    if (String(req.headers['access-control-request-private-network'] || '').toLowerCase() === 'true') {
+      res.setHeader('Access-Control-Allow-Private-Network', 'true');
+    }
+  }
+
+  function isCoreVisualAssetContentPath(pathname) {
+    return /^\/v1\/core\/catalogs\/[a-z][a-z0-9_-]{2,79}\/[1-9][0-9]{0,5}\/assets\/[a-z][a-z0-9_-]{2,79}\/[1-9][0-9]{0,5}\/content$/u.test(pathname);
   }
 
   function authorizeAdmin(req) {
@@ -7911,6 +8485,39 @@ export function createVisualAssetService({
   }
 
   async function handleAdminRoute(req, res, url) {
+    if (req.method === 'GET' && url.pathname === '/v1/admin/catalog-migration/runtime') {
+      requireLoopbackAdminApi(req);
+      const active = await effectiveVisualControlStore.getControl();
+      validateVisualControl(active);
+      const pointer = active.activeCatalog;
+      const catalog = pointer ? await assetStore.getCatalog(pointer.catalogId, pointer.catalogRevision) : null;
+      return sendJson(res, 200, {
+        ok: true,
+        schemaVersion: 'galgame.visual-service-runtime.v1',
+        serviceInstanceId: serviceRuntimeInfo?.serviceInstanceId || null,
+        pid: process.pid,
+        port: serviceRuntimeInfo?.port || null,
+        dataRoot: serviceRuntimeInfo?.dataRoot || null,
+        activePointer: pointer,
+        activeCatalogHash: catalog?.catalogHash || null,
+        journal: await effectiveCatalogMigrationJournalStore.getRecord?.() || null,
+      });
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/admin/catalog-migration/preview') {
+      requireLoopbackAdminApi(req);
+      const body = await readStrictJsonBody(req, 2 * 1024 * 1024, 'playerCatalogManifest');
+      return sendJson(res, 200, await previewPlayerCatalogMigration(body));
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/admin/catalog-migration/activate') {
+      requireLoopbackAdminApi(req);
+      const body = await readStrictJsonBody(req, 2 * 1024 * 1024, 'playerCatalogManifest');
+      return sendJson(res, 200, await executePlayerCatalogMigration(body));
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/admin/catalog-migration/rollback') {
+      requireLoopbackAdminApi(req);
+      const body = await readStrictJsonBody(req, 64 * 1024, 'catalogMigrationRollback');
+      return sendJson(res, 200, await rollbackPlayerCatalogMigration(body));
+    }
     if (req.method === 'GET' && url.pathname === '/v1/admin/visual/status') {
       return sendJson(res, 200, { ok: true, visual: serializeVisualControl(await getVerifiedVisualControl()) });
     }
@@ -8043,19 +8650,19 @@ export function createVisualAssetService({
     }
     const runtimeRequest = parsedBody?.schemaVersion === VISUAL_RUNTIME_DECISION_REQUEST_VERSION;
     if (requestText.charCodeAt(0) === 0xfeff && runtimeRequest) {
-      return sendJson(res, 400, createRuntimeDecisionErrorResponse(parsedBody.requestId));
+      return sendJson(res, 400, createRuntimeDecisionErrorResponse(parsedBody.requestId, 'VISUAL_REQUEST_BOM_REJECTED'));
     }
     try {
       assertNoDuplicateJsonKeys(requestText, 'coreVisualDecisionRequest');
     } catch (error) {
-      if (runtimeRequest) return sendJson(res, 400, createRuntimeDecisionErrorResponse(parsedBody.requestId));
+      if (runtimeRequest) return sendJson(res, 400, createRuntimeDecisionErrorResponse(parsedBody.requestId, 'VISUAL_REQUEST_DUPLICATE_KEYS'));
       throw error;
     }
     if (runtimeRequest) {
       try {
         assertSerializedSize(parsedBody, VISUAL_RUNTIME_REQUEST_MAX_BYTES, 'runtimeVisualDecisionRequest');
       } catch {
-        return sendJson(res, 400, createRuntimeDecisionErrorResponse(parsedBody.requestId));
+        return sendJson(res, 400, createRuntimeDecisionErrorResponse(parsedBody.requestId, 'VISUAL_REQUEST_SIZE_LIMIT'));
       }
     }
     let body;
@@ -8063,6 +8670,10 @@ export function createVisualAssetService({
       body = requireCoreDecisionRouteRequest(parsedBody);
     } catch (error) {
       if (!runtimeRequest) throw error;
+      console.warn(JSON.stringify({
+        event: 'visual-runtime-request-rejected',
+        validationCode: /^[A-Z][A-Z0-9_]{0,63}$/.test(String(error?.code || '')) ? error.code : 'VISUAL_REQUEST_INVALID_SCHEMA',
+      }));
       const code = runtimeDecisionErrorCode(error.code);
       const integrityCodes = new Set(['VISUAL_CONTEXT_INVALID', 'VISUAL_SOURCE_HASH_MISMATCH', 'VISUAL_PROJECTION_HASH_MISMATCH', 'VISUAL_PROFILE_INVALID', 'VISUAL_CATALOG_INVALID']);
       const isIntegrityFailure = integrityCodes.has(error.code)
@@ -8087,7 +8698,7 @@ export function createVisualAssetService({
           decisions: [],
         });
       }
-      return sendJson(res, 400, createRuntimeDecisionErrorResponse(parsedBody.requestId));
+      return sendJson(res, 400, createRuntimeDecisionErrorResponse(parsedBody.requestId, runtimeRequestValidationErrorCode(error?.code)));
     }
     if (!coreVisualProfileMatches(expectedVisualProfile, body.visualProfile)) {
       if (runtimeRequest) {
@@ -8210,10 +8821,14 @@ export function createVisualAssetService({
     const enabled = Boolean(control.enabled && control.activeCatalog);
     const activeCatalog = enabled ? structuredClone(control.activeCatalog) : null;
     let visualProfile = null;
+    let characterChannels = [];
     if (activeCatalog) {
       const catalog = await requirePublishedCatalog(activeCatalog.catalogId, activeCatalog.catalogRevision);
       if (catalog.catalogHash !== activeCatalog.catalogHash) {
         throw visualError('VISUAL_CORE_CONTEXT_INVALID', 'active catalog hash does not match the published catalog', 500);
+      }
+      if (catalog.schemaVersion === CATALOG_V2_SCHEMA_VERSION) {
+        characterChannels = structuredClone(catalog.characterChannels);
       }
       visualProfile = createGlobalDisplayVisualProfile(activeCatalog);
     }
@@ -8222,6 +8837,7 @@ export function createVisualAssetService({
       schemaVersion: VISUAL_CORE_CONTEXT_RESPONSE_VERSION,
       enabled,
       activeCatalog,
+      characterChannels,
       visualProfile,
       source: 'visual-control',
       sourceVersion: VISUAL_CONTROL_SCHEMA_VERSION,
@@ -8230,6 +8846,7 @@ export function createVisualAssetService({
       schemaVersion: response.schemaVersion,
       enabled: response.enabled,
       activeCatalog: response.activeCatalog,
+      characterChannels: response.characterChannels,
       visualProfile: response.visualProfile,
       source: response.source,
       sourceVersion: response.sourceVersion,
@@ -8450,7 +9067,7 @@ export function createVisualAssetService({
     }));
     const candidates = [];
     for (const ref of catalog.assetRefs) {
-      if (ref.assetType !== request.entityType) continue;
+      if (!isCatalogCandidateEligible(catalog, ref, request.entityType)) continue;
       const asset = await requireAsset(ref.assetId, ref.assetVersion);
       if (asset.status !== 'published') throw visualError('VISUAL_MATCH_CANDIDATE_INVALID', 'candidate asset is not published', 409);
       candidates.push(createVisualCandidateAssetInputFromAsset(asset));
@@ -8479,7 +9096,11 @@ export function createVisualAssetService({
       catalogId: proof.catalogId,
       catalogRevision: proof.catalogRevision,
       catalogHash: proof.catalogHash,
+      catalogSchemaVersion: catalog.schemaVersion,
       catalogAssetRefs,
+      catalogAssetChannels: catalog.schemaVersion === CATALOG_V2_SCHEMA_VERSION
+        ? structuredClone(catalog.characterChannels)
+        : [],
       dictionaryVersion: String(DICTIONARY_VERSION),
       dictionaryHash: DICTIONARY_HASH,
       candidates,
@@ -8593,162 +9214,468 @@ export function createVisualAssetService({
     };
   }
 
-  async function publishSimpleVisualCatalog() {
-    const currentControl = await getVerifiedVisualControl();
-    const assets = await assetStore.listAssets?.();
-    if (!Array.isArray(assets)) throw visualError('VISUAL_SIMPLE_PUBLISH_STORE_UNSUPPORTED', 'asset store cannot list assets', 500);
-    const publishableAssets = [];
-    const seenAssetKeys = new Set();
-    for (const asset of assets) {
-      if (asset?.assetId?.startsWith('unknown_') || asset?.status === 'archived') continue;
+  async function createPlayerCatalogMigrationPlan(manifest) {
+    requireExactKeys(manifest, [
+      'schemaVersion', 'sourcePointer', 'targetCatalogId', 'targetCatalogRevision', 'createdAt', 'entries',
+    ], 'playerCatalogManifest');
+    if (manifest.schemaVersion !== 'galgame.visual-player-catalog-manifest.v1') {
+      throw visualError('VISUAL_CATALOG_MANIFEST_INVALID', 'player catalog manifest schema is invalid', 400);
+    }
+    requireExactKeys(manifest.sourcePointer, ['catalogId', 'catalogRevision', 'catalogHash'], 'playerCatalogManifest.sourcePointer');
+    assertSafeString(manifest.sourcePointer.catalogId, 'sourcePointer.catalogId', 3, 80, /^[a-z][a-z0-9_-]{2,79}$/);
+    assertPositiveInteger(manifest.sourcePointer.catalogRevision, 'sourcePointer.catalogRevision');
+    assertSafeString(manifest.sourcePointer.catalogHash, 'sourcePointer.catalogHash', 71, 71, /^sha256:[a-f0-9]{64}$/);
+    assertSafeString(manifest.targetCatalogId, 'targetCatalogId', 3, 80, /^[a-z][a-z0-9_-]{2,79}$/);
+    assertPositiveInteger(manifest.targetCatalogRevision, 'targetCatalogRevision');
+    if (manifest.targetCatalogId === manifest.sourcePointer.catalogId
+        && manifest.targetCatalogRevision === manifest.sourcePointer.catalogRevision) {
+      throw visualError('VISUAL_CATALOG_MANIFEST_INVALID', 'target catalog identity must differ from the source', 400);
+    }
+    assertIsoTimestamp(manifest.createdAt, 'createdAt');
+    if (!Array.isArray(manifest.entries) || manifest.entries.length < 1 || manifest.entries.length > 512) {
+      throw visualError('VISUAL_CATALOG_MANIFEST_INVALID', 'player catalog manifest entries are invalid', 400);
+    }
+
+    const currentControl = await effectiveVisualControlStore.getControl();
+    validateVisualControl(currentControl);
+    const currentPointer = currentControl.activeCatalog;
+    const currentIsManifestSource = Boolean(currentPointer
+      && canonicalJson(currentPointer) === canonicalJson(manifest.sourcePointer));
+    const currentMayBeManifestTarget = Boolean(currentPointer
+      && currentPointer.catalogId === manifest.targetCatalogId
+      && currentPointer.catalogRevision === manifest.targetCatalogRevision);
+    if (!currentIsManifestSource && !currentMayBeManifestTarget) {
+      throw visualError('VISUAL_CATALOG_MIGRATION_SOURCE_STALE', 'active source pointer no longer matches manifest', 409);
+    }
+    const sourceCatalog = await assetStore.getCatalog(manifest.sourcePointer.catalogId, manifest.sourcePointer.catalogRevision);
+    const sourceAssetStorePointer = await assetStore.getActiveCatalog?.(manifest.sourcePointer.catalogId);
+    if (!sourceCatalog || sourceCatalog.status !== 'published'
+        || sourceCatalog.catalogHash !== manifest.sourcePointer.catalogHash
+        || !sourceAssetStorePointer
+        || canonicalJson(sourceAssetStorePointer) !== canonicalJson(manifest.sourcePointer)) {
+      throw visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', 'active source pointers are inconsistent', 503);
+    }
+    validateCatalog(sourceCatalog);
+    await validateCatalogRefs(sourceCatalog);
+
+    const entriesByKey = new Map();
+    const contentOwners = new Map();
+    const assetRefs = [];
+    const characterChannels = [];
+    const countsByType = Object.fromEntries(ENTITY_TYPES.map((type) => [type, 0]));
+    const countsByChannel = Object.fromEntries(CHARACTER_CHANNELS.map((channel) => [channel, 0]));
+    const approvedCharacters = [];
+    for (const [index, entry] of manifest.entries.entries()) {
+      requireExactKeys(entry, [
+        'assetId', 'assetVersion', 'assetContentSha256', 'assetMetadataHash', 'assetType', 'channel', 'approvalReason',
+      ], `playerCatalogManifest.entries[${index}]`);
+      assertSafeString(entry.assetId, `entries[${index}].assetId`, 3, 80, /^[a-z][a-z0-9_-]{2,79}$/);
+      assertPositiveInteger(entry.assetVersion, `entries[${index}].assetVersion`);
+      assertSafeString(entry.assetContentSha256, `entries[${index}].assetContentSha256`, 71, 71, /^sha256:[a-f0-9]{64}$/);
+      assertSafeString(entry.assetMetadataHash, `entries[${index}].assetMetadataHash`, 71, 71, /^sha256:[a-f0-9]{64}$/);
+      if (!ENTITY_TYPE_SET.has(entry.assetType)) throw visualError('VISUAL_CATALOG_MANIFEST_INVALID', `entries[${index}].assetType is invalid`, 400);
+      if (entry.assetType === 'character') {
+        if (!CHARACTER_CHANNEL_SET.has(entry.channel) || entry.channel === 'system') {
+          throw visualError('VISUAL_CATALOG_MANIFEST_CHANNEL_INVALID', `entries[${index}].channel is invalid`, 400);
+        }
+      } else if (entry.channel !== null) {
+        throw visualError('VISUAL_CATALOG_MANIFEST_CHANNEL_INVALID', `entries[${index}].channel must be null for non-character assets`, 400);
+      }
+      assertSafeString(entry.approvalReason, `entries[${index}].approvalReason`, 8, 240, /^[\p{L}\p{N}\p{P}\p{Zs}]+$/u);
+      const key = `${entry.assetId}:${entry.assetVersion}`;
+      if (entriesByKey.has(key)) throw visualError('VISUAL_CATALOG_MANIFEST_DUPLICATE_REF', 'manifest contains a duplicate asset identity', 400);
+      entriesByKey.set(key, entry);
+
+      const asset = await assetStore.getAsset(entry.assetId, entry.assetVersion);
+      if (!asset) throw visualError('VISUAL_CATALOG_MANIFEST_ASSET_MISSING', `manifest asset ${key} is missing`, 409);
       validateAsset(asset);
-      if (!['draft', 'published'].includes(asset.status)) {
-        throw visualError('VISUAL_SIMPLE_PUBLISH_ASSET_STATUS_INVALID', 'asset status is not publishable', 409);
+      if (asset.status !== 'published'
+          || asset.assetType !== entry.assetType
+          || asset.assetContentSha256 !== entry.assetContentSha256
+          || asset.assetMetadataHash !== entry.assetMetadataHash) {
+        throw visualError('VISUAL_CATALOG_MANIFEST_ASSET_HASH_MISMATCH', `manifest asset ${key} no longer matches its approved hashes`, 409);
       }
-      const key = assetStore.key(asset.assetId, asset.assetVersion);
-      if (seenAssetKeys.has(key)) {
-        throw visualError('VISUAL_SIMPLE_PUBLISH_DUPLICATE_ASSET', 'duplicate publishable asset identity', 409);
+      if (asset.assetId.startsWith('unknown_')) throw visualError('VISUAL_CATALOG_MANIFEST_ASSET_INVALID', 'unknown placeholders are service-owned and cannot be manifest entries', 400);
+      if (asset.assetType === 'scene' && (asset.width < 640 || asset.height < 360 || asset.width / asset.height < 1.2)) {
+        throw visualError('VISUAL_CATALOG_MANIFEST_SCENE_DIMENSION_INVALID', `manifest scene ${key} does not meet stage dimensions`, 409);
       }
-      seenAssetKeys.add(key);
-      publishableAssets.push(asset);
-    }
-    publishableAssets.sort((left, right) => left.assetId.localeCompare(right.assetId) || left.assetVersion - right.assetVersion);
-    const draftAssets = publishableAssets.filter((asset) => asset.status === 'draft');
-    const existingPublishedAssets = publishableAssets.filter((asset) => asset.status === 'published');
-    if (draftAssets.length === 0) {
-      if (currentControl.activeCatalog) {
-        return {
-          ok: true,
-          schemaVersion: SIMPLE_PUBLISH_RESPONSE_SCHEMA_VERSION,
-          published: false,
-          idempotent: true,
-          catalog: serializePlayerSafeCatalog(await requirePublishedCatalog(currentControl.activeCatalog.catalogId, currentControl.activeCatalog.catalogRevision)),
-          visual: serializeVisualControl(currentControl),
-        };
+      if (asset.assetType === 'character' && (asset.width < 320 || asset.height < 320)) {
+        throw visualError('VISUAL_CATALOG_MANIFEST_CHARACTER_DIMENSION_INVALID', `manifest character ${key} is too small`, 409);
       }
-      throw visualError('VISUAL_SIMPLE_PUBLISH_NO_DRAFT_ASSETS', 'no draft visual assets to publish', 409);
-    }
-
-    const updatedAt = nowIso(now);
-    const previousAssets = new Map();
-    const promotedAssets = [];
-    for (const asset of draftAssets) {
-      validateAsset(asset);
-      await validateAssetContentAvailable(asset);
-      const promoted = { ...asset, status: 'published', updatedAt };
-      promoted.assetMetadataHash = computeAssetMetadataHash(promoted);
-      validateAsset(promoted);
-      previousAssets.set(assetStore.key(asset.assetId, asset.assetVersion), structuredClone(asset));
-      promotedAssets.push(promoted);
-    }
-    for (const asset of existingPublishedAssets) {
-      validateAsset(asset);
-      await validateAssetContentAvailable(asset);
-    }
-
-    const catalogId = await generateSimpleCatalogId();
-    const catalogAssets = [...existingPublishedAssets, ...promotedAssets]
-      .sort((left, right) => left.assetId.localeCompare(right.assetId) || left.assetVersion - right.assetVersion);
-    const catalog = createSimplePublishedCatalog({ catalogId, catalogRevision: 1, assets: catalogAssets, createdAt: updatedAt });
-    const savedPromoted = [];
-    try {
-      for (const promoted of promotedAssets) {
-        const previous = previousAssets.get(assetStore.key(promoted.assetId, promoted.assetVersion));
-        savedPromoted.push({ promoted, previous });
-        await assetStore.replaceAsset(promoted, previous.assetMetadataHash);
+      const semanticCodes = new Set([...(asset.tagCodes || []), ...(asset.featureCodes || [])]);
+      if (asset.analysisStatus === 'failed' && semanticCodes.size === 0) {
+        throw visualError('VISUAL_CATALOG_MANIFEST_ANALYSIS_UNUSABLE', `manifest asset ${key} has no approved closed taxonomy`, 409);
       }
-      await assetStore.saveCatalog(catalog, { allowExactReplay: false });
-      await assetStore.setActiveCatalog(catalog);
-      const visual = await effectiveVisualControlStore.setControl({
-        schemaVersion: VISUAL_CONTROL_SCHEMA_VERSION,
-        enabled: true,
-        activeCatalog: {
-          catalogId: catalog.catalogId,
-          catalogRevision: catalog.catalogRevision,
-          catalogHash: catalog.catalogHash,
-        },
-        updatedAt,
-      });
-      return {
-        ok: true,
-        schemaVersion: SIMPLE_PUBLISH_RESPONSE_SCHEMA_VERSION,
-        published: true,
-        idempotent: false,
-        catalog: serializePlayerSafeCatalog(catalog),
-        visual: serializeVisualControl(visual),
-      };
-    } catch (error) {
-      await rollbackSimplePublish({
-        catalog,
-        savedPromoted,
-        currentControl,
-      });
-      throw error;
-    }
-  }
-
-  async function rollbackSimplePublish({ catalog, savedPromoted, currentControl }) {
-    const rollbackErrors = [];
-    try {
-      await assetStore.deleteActiveCatalog?.(catalog.catalogId);
-    } catch (error) {
-      rollbackErrors.push(error);
-    }
-    try {
-      await assetStore.deleteCatalog?.(catalog.catalogId, catalog.catalogRevision);
-    } catch (error) {
-      rollbackErrors.push(error);
-    }
-    for (const { promoted, previous } of savedPromoted.reverse()) {
-      try {
-        await assetStore.replaceAsset(previous, promoted.assetMetadataHash);
-      } catch (error) {
-        rollbackErrors.push(error);
+      const contentOwner = contentOwners.get(asset.assetContentSha256);
+      if (contentOwner) throw visualError('VISUAL_CATALOG_MANIFEST_DUPLICATE_CONTENT', `manifest content duplicates ${contentOwner}`, 409);
+      contentOwners.set(asset.assetContentSha256, key);
+      const storedContent = await contentStore.get(asset.assetContentSha256);
+      if (!storedContent || storedContent.mime !== asset.canonicalMime
+          || `sha256:${sha256Hex(storedContent.bytes)}` !== asset.assetContentSha256) {
+        throw visualError('VISUAL_CATALOG_MANIFEST_CONTENT_INVALID', `manifest content ${key} is missing or hash-invalid`, 409);
+      }
+      assetRefs.push(assetToRef(asset));
+      countsByType[asset.assetType] += 1;
+      if (asset.assetType === 'character') {
+        characterChannels.push({ assetId: asset.assetId, assetVersion: asset.assetVersion, channel: entry.channel });
+        countsByChannel[entry.channel] += 1;
+        if (entry.channel === 'character') approvedCharacters.push(asset);
       }
     }
-    try {
-      await effectiveVisualControlStore.setControl(currentControl);
-    } catch (error) {
-      rollbackErrors.push(error);
+    assetRefs.sort((left, right) => left.assetType.localeCompare(right.assetType)
+      || left.assetId.localeCompare(right.assetId) || left.assetVersion - right.assetVersion);
+    characterChannels.sort((left, right) => left.assetId.localeCompare(right.assetId) || left.assetVersion - right.assetVersion);
+    assertCharacterChannelEntries(assetRefs, characterChannels);
+    if (!countsByType.scene || !countsByChannel.narrator || !countsByChannel.player || countsByChannel.system !== 0) {
+      throw visualError('VISUAL_CATALOG_MANIFEST_CHANNEL_INVALID', 'scene, narrator and player assets are required; system channel must remain empty', 400);
     }
-    if (rollbackErrors.length > 0) {
-      throw visualError('VISUAL_SIMPLE_PUBLISH_ROLLBACK_FAILED', 'simple publish rollback failed', 500);
-    }
-  }
-
-  async function validateAssetContentAvailable(asset) {
-    const content = await contentStore.get(asset.assetContentSha256);
-    if (!content) throw visualError('VISUAL_SIMPLE_PUBLISH_CONTENT_MISSING', 'draft asset content missing', 409);
-    if (content.mime !== asset.canonicalMime) throw visualError('VISUAL_SIMPLE_PUBLISH_CONTENT_MISMATCH', 'draft asset content mime mismatch', 409);
-    if (`sha256:${sha256Hex(content.bytes)}` !== asset.assetContentSha256) throw visualError('VISUAL_SIMPLE_PUBLISH_CONTENT_MISMATCH', 'draft asset content hash mismatch', 409);
-  }
-
-  async function generateSimpleCatalogId() {
-    for (let attempt = 0; attempt < 32; attempt += 1) {
-      const catalogId = `catalog_simple_${randomBytes(6).toString('hex')}`;
-      if (!await assetStore.getCatalog(catalogId, 1)) return catalogId;
-    }
-    throw visualError('VISUAL_SIMPLE_PUBLISH_ID_EXHAUSTED', 'could not allocate catalog id', 500);
-  }
-
-  function createSimplePublishedCatalog({ catalogId, catalogRevision, assets, createdAt }) {
+    const updatedAt = manifest.createdAt;
     const catalog = {
-      schemaVersion: CATALOG_SCHEMA_VERSION,
-      catalogId,
-      catalogRevision,
+      schemaVersion: CATALOG_V2_SCHEMA_VERSION,
+      catalogId: manifest.targetCatalogId,
+      catalogRevision: manifest.targetCatalogRevision,
       status: 'published',
-      assetRefs: assets.map((asset) => assetToRef(asset)),
+      assetRefs,
+      characterChannels,
       unknownAssetRefs: ENTITY_TYPES.map((type) => assetToRef(BUILTIN_UNKNOWN_ASSETS[type])),
       dictionaryVersion: DICTIONARY_VERSION,
       dictionaryHash: DICTIONARY_HASH,
-      createdAt,
-      updatedAt: createdAt,
-      publishedAt: createdAt,
+      createdAt: updatedAt,
+      updatedAt,
+      publishedAt: updatedAt,
       archivedAt: null,
     };
     catalog.catalogHash = computeCatalogHash(catalog);
     validateCatalog(catalog);
-    return catalog;
+    const existingTarget = await assetStore.getCatalog(catalog.catalogId, catalog.catalogRevision);
+    if (existingTarget && canonicalJson(existingTarget) !== canonicalJson(catalog)) {
+      throw visualError('VISUAL_CATALOG_MIGRATION_TARGET_CONFLICT', 'manifest target catalog already exists with different content', 409);
+    }
+    const newControl = {
+      schemaVersion: VISUAL_CONTROL_SCHEMA_VERSION,
+      enabled: true,
+      activeCatalog: {
+        catalogId: catalog.catalogId,
+        catalogRevision: catalog.catalogRevision,
+        catalogHash: catalog.catalogHash,
+      },
+      updatedAt,
+    };
+    validateVisualControl(newControl);
+    const activeRefs = new Set(sourceCatalog.assetRefs.map((ref) => `${ref.assetId}:${ref.assetVersion}`));
+    let excludedCount = 0;
+    for (const ref of sourceCatalog.assetRefs) if (!entriesByKey.has(`${ref.assetId}:${ref.assetVersion}`)) excludedCount += 1;
+    const targetPointer = newControl.activeCatalog;
+    if (currentMayBeManifestTarget) {
+      const storedTarget = await assetStore.getCatalog(targetPointer.catalogId, targetPointer.catalogRevision);
+      const targetAssetStorePointer = await assetStore.getActiveCatalog?.(targetPointer.catalogId);
+      if (canonicalJson(currentPointer) !== canonicalJson(targetPointer)
+          || !storedTarget
+          || canonicalJson(storedTarget) !== canonicalJson(catalog)
+          || !targetAssetStorePointer
+          || canonicalJson(targetAssetStorePointer) !== canonicalJson(targetPointer)) {
+        throw visualError('VISUAL_CATALOG_MIGRATION_TARGET_CONFLICT', 'active target does not exactly match the current manifest plan', 409);
+      }
+      return {
+        idempotent: true,
+        sourcePointer: currentPointer,
+        sourceAssetStorePointer,
+        sourceCatalogHash: sourceCatalog.catalogHash,
+        sourceRefCount: sourceCatalog.assetRefs.length,
+        oldControl: currentControl,
+        newControl,
+        catalog: storedTarget,
+        countsByType,
+        countsByChannel,
+        duplicateContentCount: 0,
+        excludedByReason: excludedCount ? { NOT_ALLOWLISTED: excludedCount } : {},
+        approvedCharacterCount: approvedCharacters.length,
+        sourceUnlistedRefCount: activeRefs.size - [...activeRefs].filter((key) => entriesByKey.has(key)).length,
+      };
+    }
+    return {
+      idempotent: false,
+      sourcePointer: manifest.sourcePointer,
+      sourceAssetStorePointer,
+      sourceCatalogHash: sourceCatalog.catalogHash,
+      sourceRefCount: sourceCatalog.assetRefs.length,
+      oldControl: currentControl,
+      newControl,
+      catalog,
+      countsByType,
+      countsByChannel,
+      duplicateContentCount: 0,
+      excludedByReason: excludedCount ? { NOT_ALLOWLISTED: excludedCount } : {},
+      approvedCharacterCount: approvedCharacters.length,
+      sourceUnlistedRefCount: activeRefs.size - [...activeRefs].filter((key) => entriesByKey.has(key)).length,
+    };
+  }
+
+  async function previewPlayerCatalogMigration(manifest) {
+    const plan = await createPlayerCatalogMigrationPlan(manifest);
+    return {
+      ok: true,
+      schemaVersion: 'galgame.visual-player-catalog-migration-preview.v1',
+      idempotent: plan.idempotent,
+      oldPointer: plan.sourcePointer,
+      newPointer: {
+        catalogId: plan.catalog.catalogId,
+        catalogRevision: plan.catalog.catalogRevision,
+        catalogHash: plan.catalog.catalogHash,
+      },
+      sourceCatalogHash: plan.sourceCatalogHash || plan.catalog.catalogHash,
+      targetCatalogHash: plan.catalog.catalogHash,
+      sourceRefCount: plan.sourceRefCount ?? plan.catalog.assetRefs.length,
+      targetRefCount: plan.catalog.assetRefs.length,
+      countsByType: plan.countsByType || Object.fromEntries(ENTITY_TYPES.map((type) => [type, plan.catalog.assetRefs.filter((ref) => ref.assetType === type).length])),
+      countsByChannel: plan.countsByChannel || Object.fromEntries(CHARACTER_CHANNELS.map((channel) => [channel, plan.catalog.characterChannels.filter((entry) => entry.channel === channel).length])),
+      duplicateContentCount: plan.duplicateContentCount ?? 0,
+      excludedByReason: plan.excludedByReason || {},
+    };
+  }
+
+  async function executePlayerCatalogMigration(manifest) {
+    const plan = await createPlayerCatalogMigrationPlan(manifest);
+    if (plan.idempotent) {
+      return { ok: true, idempotent: true, activePointer: plan.sourcePointer, catalogHash: plan.catalog.catalogHash };
+    }
+    const savedCatalog = await assetStore.saveCatalog(plan.catalog, { allowExactReplay: true });
+    if (savedCatalog.catalogHash !== plan.catalog.catalogHash) {
+      throw visualError('VISUAL_CATALOG_MIGRATION_TARGET_CONFLICT', 'saved migration catalog failed hash verification', 409);
+    }
+    await commitPlayerCatalogPointerTransaction({
+      action: 'activate',
+      sourceAssetStorePointer: plan.sourceAssetStorePointer,
+      sourceControl: plan.oldControl,
+      targetCatalog: savedCatalog,
+      targetControl: plan.newControl,
+      sourceCatalogHash: plan.sourceCatalogHash,
+    });
+    return {
+      ok: true,
+      idempotent: false,
+      oldPointer: plan.sourcePointer,
+      newPointer: plan.newControl.activeCatalog,
+      catalogHash: savedCatalog.catalogHash,
+      countsByType: plan.countsByType,
+      countsByChannel: plan.countsByChannel,
+    };
+  }
+
+  async function commitPlayerCatalogPointerTransaction({
+    action, sourceAssetStorePointer, sourceControl, targetCatalog, targetControl, sourceCatalogHash,
+  }) {
+    const targetPointer = {
+      catalogId: targetCatalog.catalogId,
+      catalogRevision: targetCatalog.catalogRevision,
+      catalogHash: targetCatalog.catalogHash,
+    };
+    const currentControl = await effectiveVisualControlStore.getControl();
+    const currentAssetPointer = sourceControl.activeCatalog
+      ? await assetStore.getActiveCatalog?.(sourceControl.activeCatalog.catalogId)
+      : null;
+    if (canonicalJson(currentControl) !== canonicalJson(sourceControl)
+        || canonicalJson(currentAssetPointer) !== canonicalJson(sourceAssetStorePointer)) {
+      throw visualError('VISUAL_CATALOG_MIGRATION_SOURCE_STALE', 'catalog pointer changed before transaction commit', 409);
+    }
+    const createdAt = nowIso(now);
+    const record = {
+      schemaVersion: VISUAL_CATALOG_MIGRATION_JOURNAL_SCHEMA_VERSION,
+      action,
+      state: 'PREPARED',
+      operationId: `migration_${randomUUID()}`,
+      sourceAssetStorePointer: sourceAssetStorePointer ? structuredClone(sourceAssetStorePointer) : null,
+      sourceControlPointer: sourceControl.activeCatalog ? structuredClone(sourceControl.activeCatalog) : null,
+      targetPointer,
+      oldControl: structuredClone(sourceControl),
+      newControl: structuredClone(targetControl),
+      sourceCatalogHash: sourceCatalogHash || sourceControl.activeCatalog?.catalogHash || null,
+      targetCatalogHash: targetCatalog.catalogHash,
+      createdAt,
+      updatedAt: createdAt,
+      recordHash: '',
+    };
+    record.recordHash = migrationJournalHash(record);
+    await effectiveCatalogMigrationJournalStore.setRecord(record);
+    try {
+      await assetStore.setActiveCatalog(targetCatalog);
+      const assetReadBack = await assetStore.getActiveCatalog(targetCatalog.catalogId);
+      if (canonicalJson(assetReadBack) !== canonicalJson(targetPointer)) {
+        throw visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', 'asset-store pointer readback failed', 503);
+      }
+      await effectiveVisualControlStore.setControl(targetControl);
+      const controlReadBack = await effectiveVisualControlStore.getControl();
+      if (canonicalJson(controlReadBack) !== canonicalJson(targetControl)) {
+        throw visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', 'control pointer readback failed', 503);
+      }
+      const committed = {
+        ...record,
+        state: 'COMMITTED',
+        updatedAt: nowIso(now),
+      };
+      committed.recordHash = migrationJournalHash(committed);
+      await effectiveCatalogMigrationJournalStore.setRecord(committed);
+    } catch (error) {
+      try {
+        await recoverCatalogMigrationJournal();
+      } catch {
+        catalogRecoveryReady = false;
+        catalogRecoveryError = visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', 'catalog pointer recovery is required', 503);
+        throw catalogRecoveryError;
+      }
+      throw error;
+    }
+  }
+
+  function requireLoopbackAdminApi(req) {
+    authorizeAdmin(req);
+    if (!isLoopbackLocalAdminRequest(req)) {
+      throw visualError('VISUAL_CATALOG_MIGRATION_LOOPBACK_REQUIRED', 'catalog migration API is loopback only', 403);
+    }
+  }
+
+  async function recoverCatalogMigrationJournal() {
+    const record = await effectiveCatalogMigrationJournalStore.getRecord?.();
+    if (!record) {
+      const control = await effectiveVisualControlStore.getControl();
+      validateVisualControl(control);
+      if (control.activeCatalog) {
+        const assetPointer = await assetStore.getActiveCatalog?.(control.activeCatalog.catalogId);
+        let activeCatalog = await assetStore.getCatalog(control.activeCatalog.catalogId, control.activeCatalog.catalogRevision);
+        if (!activeCatalog && typeof assetStore.getMigrationSourceForPointer === 'function') {
+          activeCatalog = (await assetStore.getMigrationSourceForPointer(control.activeCatalog))?.catalog || null;
+        }
+        if (!activeCatalog || activeCatalog.status !== 'published'
+            || activeCatalog.catalogHash !== control.activeCatalog.catalogHash
+            || !assetPointer || canonicalJson(assetPointer) !== canonicalJson(control.activeCatalog)) {
+          throw visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', 'active catalog pointers are inconsistent without a migration journal', 503);
+        }
+      }
+      return;
+    }
+    validateMigrationJournalRecord(record);
+    const targetCatalog = await assetStore.getCatalog(record.targetPointer.catalogId, record.targetPointer.catalogRevision);
+    if (!targetCatalog || targetCatalog.status !== 'published'
+        || targetCatalog.catalogHash !== record.targetCatalogHash
+        || targetCatalog.catalogHash !== record.targetPointer.catalogHash) {
+      throw visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', 'migration journal target catalog is missing or invalid', 503);
+    }
+    const rollForward = record.state === 'COMMITTED';
+    const selectedControl = rollForward ? record.newControl : record.oldControl;
+    const selectedPointer = selectedControl.activeCatalog;
+    if (selectedPointer) {
+      const selectedCatalog = await assetStore.getCatalog(selectedPointer.catalogId, selectedPointer.catalogRevision);
+      if (!selectedCatalog || selectedCatalog.status !== 'published' || selectedCatalog.catalogHash !== selectedPointer.catalogHash) {
+        throw visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', 'journal selected catalog is missing or invalid', 503);
+      }
+      await assetStore.setActiveCatalog(selectedCatalog);
+    } else {
+      await assetStore.deleteActiveCatalog?.(record.targetPointer.catalogId);
+    }
+    await effectiveVisualControlStore.setControl(selectedControl);
+    const controlReadBack = await effectiveVisualControlStore.getControl();
+    if (canonicalJson(controlReadBack) !== canonicalJson(selectedControl)) {
+      throw visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', 'recovered control snapshot does not match journal', 503);
+    }
+    if (selectedPointer) {
+      const pointerReadBack = await assetStore.getActiveCatalog(selectedPointer.catalogId);
+      if (canonicalJson(pointerReadBack) !== canonicalJson(selectedPointer)) {
+        throw visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', 'recovered asset pointer does not match journal', 503);
+      }
+    }
+  }
+
+  async function rollbackPlayerCatalogMigration(body) {
+    requireExactKeys(body, ['expectedCurrentPointer', 'targetPointer'], 'catalogMigrationRollback');
+    const currentControl = await effectiveVisualControlStore.getControl();
+    validateVisualControl(currentControl);
+    requireExactKeys(body.expectedCurrentPointer, ['catalogId', 'catalogRevision', 'catalogHash'], 'expectedCurrentPointer');
+    requireExactKeys(body.targetPointer, ['catalogId', 'catalogRevision', 'catalogHash'], 'targetPointer');
+    if (!currentControl.activeCatalog || canonicalJson(currentControl.activeCatalog) !== canonicalJson(body.expectedCurrentPointer)) {
+      throw visualError('VISUAL_CATALOG_MIGRATION_SOURCE_STALE', 'current pointer does not match rollback request', 409);
+    }
+    const currentAssetPointer = await assetStore.getActiveCatalog?.(currentControl.activeCatalog.catalogId);
+    if (!currentAssetPointer || canonicalJson(currentAssetPointer) !== canonicalJson(currentControl.activeCatalog)) {
+      throw visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', 'current asset/control pointers are inconsistent', 503);
+    }
+    const targetCatalog = await assetStore.getCatalog(body.targetPointer.catalogId, body.targetPointer.catalogRevision);
+    if (!targetCatalog || targetCatalog.status !== 'published' || targetCatalog.catalogHash !== body.targetPointer.catalogHash) {
+      throw visualError('VISUAL_CATALOG_ROLLBACK_TARGET_INVALID', 'rollback target is not the exact published catalog', 409);
+    }
+    await validateCatalogRefs(targetCatalog);
+    const targetControl = {
+      ...currentControl,
+      enabled: true,
+      activeCatalog: structuredClone(body.targetPointer),
+      updatedAt: nowIso(now),
+    };
+    await commitPlayerCatalogPointerTransaction({
+      action: 'rollback',
+      sourceAssetStorePointer: currentAssetPointer,
+      sourceControl: currentControl,
+      targetCatalog,
+      targetControl,
+      sourceCatalogHash: currentControl.activeCatalog.catalogHash,
+    });
+    return { ok: true, activePointer: targetControl.activeCatalog, catalogHash: targetCatalog.catalogHash };
+  }
+
+  async function publishSimpleVisualCatalog() {
+    const currentControl = await effectiveVisualControlStore.getControl();
+    validateVisualControl(currentControl);
+    let previousCatalog = null;
+    if (currentControl.activeCatalog) {
+      previousCatalog = await assetStore.getCatalog?.(
+        currentControl.activeCatalog.catalogId,
+        currentControl.activeCatalog.catalogRevision,
+      );
+      const assetStorePointer = await assetStore.getActiveCatalog?.(currentControl.activeCatalog.catalogId);
+      const expectedPointer = currentControl.activeCatalog;
+      if (!previousCatalog
+          || previousCatalog.status !== 'published'
+          || previousCatalog.catalogHash !== expectedPointer.catalogHash
+          || !assetStorePointer
+          || assetStorePointer.catalogId !== expectedPointer.catalogId
+          || assetStorePointer.catalogRevision !== expectedPointer.catalogRevision
+          || assetStorePointer.catalogHash !== expectedPointer.catalogHash) {
+        throw visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', 'active catalog pointers are inconsistent', 503);
+      }
+    }
+    const assets = await assetStore.listAssets?.();
+    if (!Array.isArray(assets)) throw visualError('VISUAL_SIMPLE_PUBLISH_STORE_UNSUPPORTED', 'asset store cannot list assets', 500);
+    if (previousCatalog?.schemaVersion === CATALOG_SCHEMA_VERSION
+      && previousCatalog.assetRefs.some((ref) => ref.assetType === 'character')) {
+      throw visualError('CHANNELS_UNRESOLVED', 'legacy character channels must be explicitly migrated before simple publishing', 409);
+    }
+    const [catalogs, activeCatalogs] = await Promise.all([
+      assetStore.listCatalogs?.(),
+      assetStore.listActiveCatalogs?.(),
+    ]);
+    if (!Array.isArray(catalogs) || !Array.isArray(activeCatalogs)) {
+      throw visualError('VISUAL_SIMPLE_PUBLISH_STORE_UNSUPPORTED', 'asset store cannot enumerate catalog state', 500);
+    }
+    const hasAnyDraft = assets.some((asset) => asset?.status === 'draft')
+      || catalogs.some((catalog) => catalog?.status === 'draft');
+    if (hasAnyDraft) {
+      throw visualError('EXPLICIT_CATALOG_REQUIRED', 'draft assets and catalogs require an explicit v2 catalog manifest', 409);
+    }
+    if (!currentControl.activeCatalog) {
+      throw visualError('NO_ACTIVE_CATALOG', 'there is no active catalog to read', 409);
+    }
+    if (previousCatalog?.schemaVersion === CATALOG_SCHEMA_VERSION) {
+      throw visualError('LEGACY_CATALOG_REQUIRES_MIGRATION', 'legacy catalog must be migrated with an explicit v2 manifest', 409);
+    }
+    if (previousCatalog?.schemaVersion !== CATALOG_V2_SCHEMA_VERSION) {
+      throw visualError('VISUAL_CATALOG_RECOVERY_REQUIRED', 'active catalog schema is unavailable', 503);
+    }
+    return {
+      ok: true,
+      schemaVersion: SIMPLE_PUBLISH_RESPONSE_SCHEMA_VERSION,
+      published: false,
+      idempotent: true,
+      catalog: serializePlayerSafeCatalog(previousCatalog),
+      visual: serializeVisualControl(currentControl),
+    };
   }
 
   async function requireAsset(assetId, assetVersion) {
@@ -8873,7 +9800,7 @@ export function createVisualAssetService({
   }
 
   async function createCatalogDraft(body) {
-    requireExactKeys(body, ['schemaVersion', 'catalogId', 'catalogRevision', 'assetRefs'], 'catalogDraft');
+    requireExactKeysWithOptional(body, ['schemaVersion', 'catalogId', 'catalogRevision', 'assetRefs'], ['characterChannels'], 'catalogDraft');
     if (body.schemaVersion !== CATALOG_DRAFT_SCHEMA_VERSION) throw visualError('VISUAL_CATALOG_INVALID_SCHEMA', 'catalog schema invalid', 400);
     assertSafeString(body.catalogId, 'catalogId', 3, 80, /^[a-z][a-z0-9_-]{2,79}$/);
     if (body.catalogId === UNKNOWN_CATALOG_ID) throw visualError('VISUAL_CATALOG_RESERVED_ID', 'catalog id is reserved', 400);
@@ -8895,12 +9822,19 @@ export function createVisualAssetService({
     }
     const unknownRefs = ENTITY_TYPES.map((type) => assetToRef(BUILTIN_UNKNOWN_ASSETS[type]));
     const createdAt = nowIso(now);
+    const characterRefs = refs.filter((ref) => ref.assetType === 'character' && !ref.assetId.startsWith('unknown_'));
+    if (characterRefs.length > 0 && body.characterChannels === undefined) {
+      throw visualError('VISUAL_CATALOG_CHANNELS_REQUIRED', 'explicit channel assignments are required for character assets', 400);
+    }
     const catalog = {
-      schemaVersion: CATALOG_SCHEMA_VERSION,
+      schemaVersion: CATALOG_V2_SCHEMA_VERSION,
       catalogId: body.catalogId,
       catalogRevision: body.catalogRevision,
       status: 'draft',
       assetRefs: refs,
+      characterChannels: body.characterChannels === undefined
+        ? []
+        : structuredClone(body.characterChannels),
       unknownAssetRefs: unknownRefs,
       dictionaryVersion: DICTIONARY_VERSION,
       dictionaryHash: DICTIONARY_HASH,
@@ -8986,7 +9920,10 @@ export function createVisualAssetService({
     migrateRuntimeV3Catalog,
     previewRuntimeV2CatalogMigration,
     migrateRuntimeV2CatalogAndActivateControl,
-    stores: { assetStore, contentStore },
+    previewPlayerCatalogMigration,
+    executePlayerCatalogMigration,
+    rollbackPlayerCatalogMigration,
+    stores: { assetStore, contentStore, visualControlStore: effectiveVisualControlStore, catalogMigrationJournalStore: effectiveCatalogMigrationJournalStore },
   };
 }
 
@@ -9249,9 +10186,109 @@ function isVisualAssetInternalPath(pathname) {
   return pathname === VISUAL_ASSET_INTERNAL_METADATA_RESOLVE_PATH || pathname === VISUAL_ASSET_INTERNAL_CONTENT_READ_PATH;
 }
 
-function createServiceFromEnv() {
+export async function acquireVisualServiceDataRootLease(dataRoot, { host = '127.0.0.1', port = DEFAULT_PORT } = {}) {
+  await mkdir(dataRoot, { recursive: true });
+  const resolvedRoot = realpathSync(path.resolve(dataRoot));
+  const normalizedRoot = process.platform === 'win32' ? resolvedRoot.toLowerCase() : resolvedRoot;
+  const leasePath = path.join(resolvedRoot, VISUAL_SERVICE_LEASE_FILE);
+  const record = {
+    schemaVersion: 'galgame.visual-service-data-root-lease.v1',
+    serviceInstanceId: randomUUID(),
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    host,
+    port,
+    dataRoot: normalizedRoot,
+  };
+  let handle;
+  try {
+    handle = await open(leasePath, 'wx');
+  } catch (error) {
+    if (error?.code === 'EEXIST') {
+      let existing;
+      try {
+        existing = parseJsonNoBom(readFileSync(leasePath));
+      } catch {
+        throw visualError('VISUAL_DATA_ROOT_IN_USE', 'visual data root has an unreadable lease and requires operator recovery', 409);
+      }
+      if (existing?.schemaVersion !== 'galgame.visual-service-data-root-lease.v1'
+          || !Number.isSafeInteger(existing.pid) || existing.pid < 1
+          || existing.dataRoot !== normalizedRoot) {
+        throw visualError('VISUAL_DATA_ROOT_IN_USE', 'visual data root has an invalid lease and requires operator recovery', 409);
+      }
+      if (isProcessAlive(existing.pid)) {
+        throw visualError('VISUAL_DATA_ROOT_IN_USE', 'visual data root is owned by a live service process', 409);
+      }
+      const stalePath = `${leasePath}.stale-${randomUUID()}`;
+      try {
+        await rename(leasePath, stalePath);
+      } catch (renameError) {
+        if (renameError?.code === 'ENOENT' || renameError?.code === 'EEXIST') {
+          throw visualError('VISUAL_DATA_ROOT_IN_USE', 'visual data root lease changed during stale-owner recovery', 409);
+        }
+        throw renameError;
+      }
+      try {
+        handle = await open(leasePath, 'wx');
+      } catch (claimError) {
+        await unlink(stalePath).catch(() => {});
+        if (claimError?.code === 'EEXIST') {
+          throw visualError('VISUAL_DATA_ROOT_IN_USE', 'another process claimed the visual data root lease', 409);
+        }
+        throw claimError;
+      }
+      await unlink(stalePath).catch(() => {});
+    } else {
+      throw error;
+    }
+  }
+  try {
+    await handle.writeFile(`${canonicalJson(record)}\n`, 'utf8');
+    await handle.sync();
+  } catch (error) {
+    await handle.close().catch(() => {});
+    await unlink(leasePath).catch(() => {});
+    throw error;
+  }
+  await handle.close();
+  let released = false;
+  return {
+    ...record,
+    async release() {
+      if (released) return false;
+      released = true;
+      let current;
+      try {
+        current = parseJsonNoBom(readFileSync(leasePath));
+      } catch {
+        return false;
+      }
+      if (current?.serviceInstanceId !== record.serviceInstanceId || current?.pid !== record.pid) return false;
+      await unlink(leasePath);
+      return true;
+    },
+  };
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ESRCH') return false;
+    return true;
+  }
+}
+
+function getVisualDataRootFromEnv() {
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-  const dataDir = process.env.GALGAME_VISUAL_ASSET_DATA_DIR || path.join(moduleDir, 'data');
+  const configured = process.env.GALGAME_VISUAL_ASSET_DATA_DIR || path.join(moduleDir, 'data');
+  return path.resolve(configured);
+}
+
+function createServiceFromEnv(serviceRuntimeInfo = null) {
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const dataDir = getVisualDataRootFromEnv();
   const bindingStoreDir = process.env.GALGAME_VISUAL_BINDING_STORE_DIR || '';
   const service = createVisualAssetService({
     adminToken: process.env.GALGAME_VISUAL_ASSET_ADMIN_TOKEN || '',
@@ -9271,6 +10308,8 @@ function createServiceFromEnv() {
     contentStore: new FileContentStore(path.join(dataDir, 'content')),
     analysisCacheStore: new FileVisualAnalysisCacheStore(path.join(dataDir, 'analysis-cache')),
     visualControlStore: new FileVisualControlStore(path.join(dataDir, 'control')),
+    catalogMigrationJournalStore: new FileVisualCatalogMigrationJournalStore(path.join(dataDir, 'control')),
+    serviceRuntimeInfo,
     analyzerBaseUrl: process.env.GALGAME_VISUAL_ANALYZER_BASE_URL || '',
     analyzerToken: process.env.GALGAME_VISUAL_ANALYZER_TOKEN || '',
     analyzerModel: process.env.GALGAME_VISUAL_ANALYZER_MODEL || '',
@@ -9287,8 +10326,48 @@ function createServiceFromEnv() {
   return { service, dataDir };
 }
 
-function createServerFromEnv() {
-  return http.createServer(createServiceFromEnv().service.handleRequest);
+export async function startVisualAssetHttpServer({
+  dataRoot = getVisualDataRootFromEnv(),
+  host = process.env.GALGAME_VISUAL_ASSET_HOST || '127.0.0.1',
+  port = Number(process.env.GALGAME_VISUAL_ASSET_PORT || DEFAULT_PORT),
+  createService = createServiceFromEnv,
+} = {}) {
+  const lease = await acquireVisualServiceDataRootLease(dataRoot, { host, port });
+  const runtimeInfo = {
+    serviceInstanceId: lease.serviceInstanceId,
+    pid: lease.pid,
+    dataRoot: lease.dataRoot,
+    port: lease.port,
+  };
+  let server = null;
+  try {
+    // Acquire the lease before constructing file stores, then recover the
+    // persistent journal before exposing any socket or health route.
+    const { service } = createService(runtimeInfo);
+    await service.initialize();
+    server = http.createServer(service.handleRequest);
+    await new Promise((resolve, reject) => {
+      const onError = (error) => reject(error);
+      server.once('error', onError);
+      server.listen(port, host, () => {
+        server.removeListener('error', onError);
+        const address = server.address();
+        runtimeInfo.port = typeof address === 'object' && address ? address.port : port;
+        resolve();
+      });
+    });
+    let releasePromise = null;
+    const release = () => {
+      if (!releasePromise) releasePromise = lease.release();
+      return releasePromise;
+    };
+    server.once('close', () => { void release(); });
+    return { server, service, lease, runtimeInfo };
+  } catch (error) {
+    if (server?.listening) await new Promise((resolve) => server.close(resolve));
+    await lease.release();
+    throw error;
+  }
 }
 
 function parseRuntimeV2MigrationCliArgs(argv = process.argv.slice(2)) {
@@ -9303,11 +10382,22 @@ function parseRuntimeV2MigrationCliArgs(argv = process.argv.slice(2)) {
 }
 
 async function runRuntimeV2MigrationCli(mode) {
-  const { service } = createServiceFromEnv();
-  await service.initialize();
-  return mode === 'dry-run'
-    ? service.previewRuntimeV2CatalogMigration()
-    : service.migrateRuntimeV2CatalogAndActivateControl();
+  const lease = await acquireVisualServiceDataRootLease(getVisualDataRootFromEnv(), { host: '127.0.0.1', port: DEFAULT_PORT });
+  try {
+    const runtimeInfo = {
+      serviceInstanceId: lease.serviceInstanceId,
+      pid: lease.pid,
+      dataRoot: lease.dataRoot,
+      port: lease.port,
+    };
+    const { service } = createServiceFromEnv(runtimeInfo);
+    await service.initialize();
+    return mode === 'dry-run'
+      ? service.previewRuntimeV2CatalogMigration()
+      : service.migrateRuntimeV2CatalogAndActivateControl();
+  } finally {
+    await lease.release();
+  }
 }
 
 export function isMainModule(argv1 = process.argv[1], moduleUrl = import.meta.url) {
@@ -9315,11 +10405,10 @@ export function isMainModule(argv1 = process.argv[1], moduleUrl = import.meta.ur
   try {
     const modulePath = path.resolve(fileURLToPath(moduleUrl));
     const entryPath = path.resolve(String(argv1));
-    if (process.platform === 'win32') return modulePath.toLowerCase() === entryPath.toLowerCase();
-    return modulePath === entryPath;
-  } catch {
-    return false;
-  }
+    return process.platform === 'win32'
+      ? modulePath.toLowerCase() === entryPath.toLowerCase()
+      : modulePath === entryPath;
+  } catch { return false; }
 }
 
 if (isMainModule()) {
@@ -9340,18 +10429,46 @@ if (isMainModule()) {
   } else if (process.exitCode !== 2) {
     const host = process.env.GALGAME_VISUAL_ASSET_HOST || '127.0.0.1';
     const port = Number(process.env.GALGAME_VISUAL_ASSET_PORT || DEFAULT_PORT);
-    const server = createServerFromEnv();
-    server.listen(port, host, () => {
-      const address = server.address();
-      const listeningPort = typeof address === 'object' && address ? address.port : port;
-      console.log(`${SERVICE_NAME} listening on http://${host}:${listeningPort}`);
-    });
+    startVisualAssetHttpServer({ host, port })
+      .then(({ server, lease }) => {
+        const address = server.address();
+        const listeningPort = typeof address === 'object' && address ? address.port : port;
+        console.log(`${SERVICE_NAME} listening on http://${host}:${listeningPort}`);
+        let stopping = false;
+        const removeOwnedLeaseSynchronously = () => {
+          const leasePath = path.join(getVisualDataRootFromEnv(), VISUAL_SERVICE_LEASE_FILE);
+          try {
+            const current = parseJsonNoBom(readFileSync(leasePath));
+            if (current?.pid === process.pid && current?.serviceInstanceId === lease.serviceInstanceId) unlinkSync(leasePath);
+          } catch {
+            // The process may already have released its lease or the record
+            // may be damaged; never remove a lease that cannot be identified.
+          }
+        };
+        process.once('exit', removeOwnedLeaseSynchronously);
+        const shutdown = () => {
+          if (stopping) return;
+          stopping = true;
+          server.close(() => {
+            removeOwnedLeaseSynchronously();
+            process.exitCode = 0;
+          });
+          server.closeAllConnections?.();
+        };
+        process.once('SIGINT', shutdown);
+        process.once('SIGTERM', shutdown);
+      })
+      .catch((error) => {
+        console.error(JSON.stringify({ ok: false, service: SERVICE_NAME, errorCode: error.code || 'VISUAL_SERVICE_START_FAILED' }));
+        process.exitCode = 1;
+      });
   }
 }
 
 export {
   ASSET_SCHEMA_VERSION,
   CATALOG_SCHEMA_VERSION,
+  CATALOG_V2_SCHEMA_VERSION,
   CANDIDATE_DECISION_INPUT_SCHEMA_VERSION,
   CANDIDATE_DECISION_SCHEMA_VERSION,
   UPLOAD_SCHEMA_VERSION,
@@ -9383,6 +10500,12 @@ export {
   FileVisualBindingStore,
   FileVisualAssetStore,
   FileVisualControlStore,
+  FileVisualCatalogMigrationJournalStore,
+  MemoryVisualCatalogMigrationJournalStore,
+  VISUAL_HTTP_ROUTE_ACCESS_MANIFEST,
+  resolveVisualRouteAccess,
+  migrationJournalHash,
+  validateMigrationJournalRecord,
   MAX_COMPRESSION_RATIO,
   MAX_DECODED_PIXELS,
   MemoryContentStore,

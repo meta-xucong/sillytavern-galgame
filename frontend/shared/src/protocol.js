@@ -137,12 +137,16 @@ const VISUAL_BINDING_DEFAULT_ASSET_KEYS = Object.freeze({
     system: 'systemAssetId',
 });
 
-function validateVisualBindingAssetId(value, label, errors) {
+function validateVisualBindingAssetId(value, label, errors, channel = 'character') {
+    const isCuratedPlayerAsset = /^asset_curated_player-[a-z0-9_-]{2,80}$/.test(String(value || ''));
     const isCharacterCatalogAsset = /^asset_character_[a-z0-9_-]{6,80}$/.test(String(value || ''))
         || /^asset_curated_character-[a-z0-9_-]{2,80}$/.test(String(value || ''))
-        || /^asset_curated_player-[a-z0-9_-]{2,80}$/.test(String(value || ''));
+        || isCuratedPlayerAsset;
     if (value !== undefined && (!value || !isCharacterCatalogAsset)) {
         errors.push(`${label} must reference a character catalog asset.`);
+    }
+    if (isCuratedPlayerAsset && channel !== 'player') {
+        errors.push(`${label} uses a player-only asset outside the player channel.`);
     }
 }
 
@@ -176,7 +180,7 @@ export function validateVisualCharacterBindings(manifest) {
             }
             requireString(binding.characterKey, `${label}.characterKey`, errors);
             requireString(binding.assetId, `${label}.assetId`, errors);
-            validateVisualBindingAssetId(binding.assetId, `${label}.assetId`, errors);
+            validateVisualBindingAssetId(binding.assetId, `${label}.assetId`, errors, binding.channel || 'character');
             const assetId = String(binding.assetId || '').trim();
             if (assetId) {
                 if (usedAssetIds.has(assetId)) {
@@ -218,6 +222,12 @@ export function validateVisualCharacterBindings(manifest) {
         errors.push('visualBindings.characterPool may contain at most 64 entries.');
     }
     validateBindingList(bindings.characterPool, 'characterPool', { rejectDuplicateKeys: false });
+    (Array.isArray(bindings.characterPool) ? bindings.characterPool : []).forEach((binding, index) => {
+        const channel = binding?.channel || 'any';
+        if (channel !== 'any' && channel !== 'character') {
+            errors.push(`visualBindings.characterPool[${index}].channel must be any or character.`);
+        }
+    });
     // A pool may mirror an explicitly bound character so legacy manifests can
     // keep their alias table, but the same asset must never represent a
     // different character. This preserves one-to-one identity semantics while
@@ -245,9 +255,55 @@ export function validateVisualCharacterBindings(manifest) {
                 }
             }
             for (const key of Object.values(VISUAL_BINDING_DEFAULT_ASSET_KEYS)) {
-                validateVisualBindingAssetId(defaults[key], `visualBindings.defaults.${key}`, errors);
+                const channel = Object.entries(VISUAL_BINDING_DEFAULT_ASSET_KEYS).find(([, defaultKey]) => defaultKey === key)?.[0] || 'character';
+                validateVisualBindingAssetId(defaults[key], `visualBindings.defaults.${key}`, errors, channel);
             }
         }
+    }
+    const specialChannelAssets = new Map();
+    const defaultAssetOwners = new Map();
+    const claimDefaultAsset = (assetId, channel, label) => {
+        const normalizedAssetId = String(assetId || '').trim();
+        if (!normalizedAssetId) return;
+        const previousChannel = defaultAssetOwners.get(normalizedAssetId);
+        if (previousChannel && previousChannel !== channel) {
+            errors.push(`${label} reuses an asset reserved for the ${previousChannel} channel.`);
+        } else {
+            defaultAssetOwners.set(normalizedAssetId, channel);
+        }
+    };
+    for (const [channel, defaultKey] of Object.entries(VISUAL_BINDING_DEFAULT_ASSET_KEYS)) {
+        claimDefaultAsset(defaults?.[defaultKey], channel, `visualBindings.defaults.${defaultKey}`);
+    }
+    const claimSpecialAsset = (assetId, channel, label) => {
+        const normalizedAssetId = String(assetId || '').trim();
+        if (!normalizedAssetId) return;
+        const previousChannel = specialChannelAssets.get(normalizedAssetId);
+        if (previousChannel && previousChannel !== channel) {
+            errors.push(`${label} reuses an asset reserved for the ${previousChannel} channel.`);
+        } else {
+            specialChannelAssets.set(normalizedAssetId, channel);
+        }
+    };
+    for (const channel of ['player', 'narrator', 'system']) {
+        const defaultKey = VISUAL_BINDING_DEFAULT_ASSET_KEYS[channel];
+        claimSpecialAsset(defaults?.[defaultKey], channel, `visualBindings.defaults.${defaultKey}`);
+        (Array.isArray(bindings.characters) ? bindings.characters : []).forEach((binding, index) => {
+            if (binding?.channel === channel) claimSpecialAsset(binding.assetId, channel, `visualBindings.characters[${index}].assetId`);
+        });
+    }
+    const protectedSpecialAssets = new Set(specialChannelAssets.keys());
+    for (const [listName, list] of [
+        ['characters', bindings.characters],
+        ['characterPool', bindings.characterPool],
+    ]) {
+        (Array.isArray(list) ? list : []).forEach((binding, index) => {
+            const channel = binding?.channel || 'any';
+            const assetId = String(binding?.assetId || '').trim();
+            if ((channel === 'any' || channel === 'character') && protectedSpecialAssets.has(assetId)) {
+                errors.push(`visualBindings.${listName}[${index}].assetId overlaps a dedicated player/narrator/system asset.`);
+            }
+        });
     }
     return { valid: errors.length === 0, errors, warnings };
 }
@@ -272,6 +328,28 @@ export function getVisualCharacterPool(manifest, arcId = '') {
     const raw = getVisualBindingConfig(manifest, arcId);
     const pool = Array.isArray(raw?.characterPool) ? raw.characterPool : [];
     return pool.filter((binding) => binding && typeof binding === 'object' && !Array.isArray(binding));
+}
+
+export function getSpecialVisualChannelAssetKeys(manifest, arcId = '') {
+    const raw = getVisualBindingConfig(manifest, arcId);
+    const keys = new Set();
+    const add = (assetId, assetVersion = 1) => {
+        const id = String(assetId || '').trim();
+        const version = Number.isSafeInteger(assetVersion) && assetVersion > 0 ? assetVersion : 1;
+        if (id) keys.add(`${id}:${version}`);
+    };
+    for (const key of ['playerAssetId', 'narratorAssetId', 'systemAssetId']) {
+        add(raw?.defaults?.[key]);
+    }
+    for (const list of [raw?.characters, raw?.characterPool]) {
+        if (!Array.isArray(list)) continue;
+        for (const binding of list) {
+            if (['player', 'narrator', 'system'].includes(binding?.channel)) {
+                add(binding.assetId, binding.assetVersion);
+            }
+        }
+    }
+    return [...keys].sort();
 }
 
 function normalizeVisualCharacterName(value) {
@@ -311,11 +389,32 @@ function formatVisualCharacterBinding(binding, fallbackKey = '') {
 
 const visualCharacterPoolAssignments = new Map();
 
+function getDedicatedVisualChannelAssetIds(manifest, arcId) {
+    const config = getVisualBindingConfig(manifest, arcId);
+    const reserved = new Set();
+    for (const channel of ['player', 'narrator', 'system']) {
+        const defaultKey = VISUAL_BINDING_DEFAULT_ASSET_KEYS[channel];
+        const defaultAssetId = String(config?.defaults?.[defaultKey] || '').trim();
+        if (defaultAssetId) reserved.add(defaultAssetId);
+    }
+    for (const binding of getVisualCharacterBindings(manifest, arcId)) {
+        if (['player', 'narrator', 'system'].includes(binding.channel)) {
+            const assetId = String(binding.assetId || '').trim();
+            if (assetId) reserved.add(assetId);
+        }
+    }
+    return reserved;
+}
+
 function getReservedVisualCharacterAssetIds(manifest, arcId) {
-    return new Set(getVisualCharacterBindings(manifest, arcId)
-        .filter((binding) => (binding.channel || 'any') === 'any' || (binding.channel || 'any') === 'character')
-        .map((binding) => String(binding.assetId || '').trim())
-        .filter(Boolean));
+    const reserved = getDedicatedVisualChannelAssetIds(manifest, arcId);
+    for (const binding of getVisualCharacterBindings(manifest, arcId)) {
+        if ((binding.channel || 'any') === 'any' || (binding.channel || 'any') === 'character') {
+            const assetId = String(binding.assetId || '').trim();
+            if (assetId) reserved.add(assetId);
+        }
+    }
+    return reserved;
 }
 
 function resolvePooledVisualCharacterBinding(manifest, pool, { normalizedName, arcId, sessionKey = '' }) {
@@ -326,6 +425,7 @@ function resolvePooledVisualCharacterBinding(manifest, pool, { normalizedName, a
     const assignments = visualCharacterPoolAssignments.get(scopeKey) || new Map();
     if (assignments.has(assignmentKey)) {
         const assignedAssetId = assignments.get(assignmentKey);
+        if (getDedicatedVisualChannelAssetIds(manifest, arcId).has(assignedAssetId)) return null;
         const assigned = pool.find((binding) => String(binding.assetId || '').trim() === assignedAssetId);
         if (assigned) return formatVisualCharacterBinding(assigned);
     }
@@ -337,6 +437,7 @@ function resolvePooledVisualCharacterBinding(manifest, pool, { normalizedName, a
     });
     if (exactPoolMatch) {
         const exactAssetId = String(exactPoolMatch.assetId || '').trim();
+        if (getDedicatedVisualChannelAssetIds(manifest, arcId).has(exactAssetId)) return null;
         const canonicalPoolKey = normalizeVisualCharacterName(exactPoolMatch.characterKey);
         const assignedToAnother = [...assignments.entries()].some(([key, assetId]) => {
             if (key === assignmentKey || assetId !== exactAssetId) return false;
@@ -388,12 +489,21 @@ export function resolveVisualCharacterBinding(manifest, {
     const exact = normalizedName
         ? bindings.find((binding) => {
             const channel = binding.channel || 'any';
-            if (channel !== 'any' && channel !== normalizedRole) return false;
+            if (normalizedRole === 'character') {
+                if (channel !== 'any' && channel !== 'character') return false;
+            } else if (channel !== normalizedRole) {
+                return false;
+            }
             const names = [binding.characterKey, ...(Array.isArray(binding.aliases) ? binding.aliases : [])];
             return names.some((candidate) => normalizeVisualCharacterName(candidate) === normalizedName);
         })
         : null;
-    if (exact) return formatVisualCharacterBinding(exact);
+    if (exact) {
+        if (normalizedRole === 'character' && getDedicatedVisualChannelAssetIds(manifest, arcId).has(String(exact.assetId || '').trim())) {
+            return null;
+        }
+        return formatVisualCharacterBinding(exact);
+    }
     if (normalizedRole === 'character' && poolFallbackAllowed) {
         const pooled = resolvePooledVisualCharacterBinding(manifest, getVisualCharacterPool(manifest, arcId), {
             normalizedName,
@@ -410,7 +520,7 @@ export function resolveVisualCharacterBinding(manifest, {
     }
     const defaults = getVisualBindingConfig(manifest, arcId).defaults || {};
     const defaultKey = VISUAL_BINDING_DEFAULT_ASSET_KEYS[normalizedRole] || VISUAL_BINDING_DEFAULT_ASSET_KEYS.character;
-    const defaultAssetId = defaults[defaultKey] || (normalizedRole !== 'character' ? defaults.characterAssetId : '');
+    const defaultAssetId = defaults[defaultKey] || '';
     if (!defaultAssetId) return null;
     return {
         characterKey: `__default_${normalizedRole}`,
@@ -523,6 +633,23 @@ export function validateArcBindings(manifest) {
         }
         if (arc.scenarioVersion && arc.scenarioVersion !== manifest.version) {
             errors.push(`${label}.scenarioVersion must match manifest.version.`);
+        }
+        if (arc.visualBindings !== undefined) {
+            if (!arc.visualBindings || typeof arc.visualBindings !== 'object' || Array.isArray(arc.visualBindings)) {
+                errors.push(`${label}.visualBindings must be an object.`);
+            } else {
+                const visualStatus = validateVisualCharacterBindings({
+                    ...manifest,
+                    visualBindings: {
+                        ...(manifest.visualBindings && typeof manifest.visualBindings === 'object' && !Array.isArray(manifest.visualBindings)
+                            ? manifest.visualBindings
+                            : {}),
+                        ...arc.visualBindings,
+                    },
+                });
+                errors.push(...visualStatus.errors.map((error) => `${label}: ${error}`));
+                warnings.push(...visualStatus.warnings.map((warning) => `${label}: ${warning}`));
+            }
         }
         if (!Number.isFinite(Number(arc.order))) {
             warnings.push(`${label}.order should be a number for administrator sorting.`);

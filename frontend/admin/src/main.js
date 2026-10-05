@@ -224,12 +224,6 @@ const noClaimLabels = {
     'no-preset-instruct-context-switching': '预设/上下文自动切换仍保持未接入。',
 };
 
-const fallbackRecommendationWarnings = {
-    provider: 'AI 整理没有完成，已改用基础整理。',
-    safety: 'AI 输出未通过安全检查，已改用基础整理。',
-    timeout: 'AI 整理等待太久，已改用基础整理。',
-};
-
 bootstrap().catch(() => {
     showToast('管理端暂时无法载入');
 });
@@ -1654,8 +1648,8 @@ function renderVisualAssetControls() {
     const message = isLocalVisualAdminEntry() && visualAssetState.service.configured
         ? '本地视觉后台已接入；请选择一种素材图片上传。'
         : visualAssetState.service.configured
-        ? '视觉素材服务已配置；请选择一种素材图片上传。'
-        : '未配置视觉素材服务。请先通过受控管理员部署边界接入，浏览器页面不会保存服务密钥。';
+            ? '视觉素材服务已配置；请选择一种素材图片上传。'
+            : '未配置视觉素材服务。请先通过受控管理员部署边界接入，浏览器页面不会保存服务密钥。';
     setVisualServiceStatus(message, visualAssetState.service.configured);
 }
 
@@ -2217,8 +2211,6 @@ function formatOriginalResourceDiagnostic(diagnostic) {
     const characters = diagnostic.checks.find((check) => check.name === 'characters-list');
     const worldBooks = diagnostic.checks.find((check) => check.name === 'worldbooks-list');
     const settings = diagnostic.checks.find((check) => check.name === 'settings-get');
-    const missing = missingOriginalResourceReferences(diagnostic);
-
     if (!diagnostic.ok) {
         return `更多检查未通过。连接：${health?.ok ? '正常' : '异常'}；角色资料：${characters?.ok ? characters.details.count : '不可用'}；世界设定：${worldBooks?.ok ? worldBooks.details.count : '不可用'}；运行风格：${settings?.ok ? '已读取' : '不可用'}。${formatMissingOriginalResourceText(diagnostic)}`;
     }

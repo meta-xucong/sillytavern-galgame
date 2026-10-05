@@ -217,14 +217,13 @@ const staleRecoverySave = JSON.stringify(createPlayerSaveSlot({
 localStorage.setItem(playerSaveKey('auto'), staleRecoverySave);
 globalThis.__GALGAME_TEST_SET_ACTIVE_CHAT__(null);
 chatCalls.length = 0;
+// A reset must not guess a chat from an unrelated auto-save pointer.
 assert.equal(await globalThis.__GALGAME_TEST_RECOVER_CONTENT_AFTER_RESET__(), false);
 assert.equal(globalThis.__GALGAME_TEST_GET_ACTIVE_CHAT__(), null);
 assert.equal(chatCalls.length, 0);
 assert.equal(localStorage.getItem(playerSaveKey('auto')), staleRecoverySave);
-
-// An already-bound chat is re-read in place and reset leaves its auto-save untouched.
+// Once bound, recovery re-reads that exact chat without saving or generating.
 globalThis.__GALGAME_TEST_SET_ACTIVE_CHAT__({ ...historicalSnapshot, messages: historicalSnapshot.messages.slice(0, 1) });
-chatCalls.length = 0;
 assert.equal(await globalThis.__GALGAME_TEST_RECOVER_CONTENT_AFTER_RESET__(), true);
 assert.equal(globalThis.__GALGAME_TEST_GET_ACTIVE_CHAT__().fileName, historicalChatId);
 assert.equal(globalThis.__GALGAME_TEST_GET_ACTIVE_CHAT__().messages.length, historicalSnapshot.messages.length);

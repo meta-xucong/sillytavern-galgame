@@ -227,13 +227,7 @@ const naturalSceneHints = createVisualProjectionEntityHints({
     speaker: 'Dungeon Master',
     text: '众人走进光辉神殿酒馆，短暂休息后又来到城市的中心区。',
 });
-assert.deepEqual(naturalSceneHints.filter((entity) => entity.entityType === 'scene').map((entity) => ({
-    displayLabel: entity.displayLabel,
-    value: entity.visibleAttributes[0].value,
-})), [{
-    displayLabel: '城市的中心区',
-    value: '城市的中心区（城市）',
-}]);
+assert.equal(naturalSceneHints.some((entity) => entity.entityType === 'scene'), false);
 
 const naturalTavernHints = createVisualProjectionEntityHints({
     index: 18,
@@ -241,7 +235,7 @@ const naturalTavernHints = createVisualProjectionEntityHints({
     speaker: 'Dungeon Master',
     text: '铁砧酒馆的炉火映在石墙上。',
 });
-assert.equal(naturalTavernHints.find((entity) => entity.entityType === 'scene')?.visibleAttributes[0].value, '铁砧酒馆（室内 城市）');
+assert.equal(naturalTavernHints.some((entity) => entity.entityType === 'scene'), false);
 
 const naturalSceneCategoryHints = createVisualProjectionEntityHints({
     index: 19,
@@ -249,7 +243,7 @@ const naturalSceneCategoryHints = createVisualProjectionEntityHints({
     speaker: 'Player',
     text: '你穿过森林遗迹，进入地下室寻找出口。',
 });
-assert.equal(naturalSceneCategoryHints.filter((entity) => entity.entityType === 'scene').at(-1)?.displayLabel, '地下室');
+assert.equal(naturalSceneCategoryHints.some((entity) => entity.entityType === 'scene'), false);
 
 const naturalSceneIgnoresChoiceLocations = createVisualProjectionEntityHints({
     index: 22,
@@ -257,7 +251,7 @@ const naturalSceneIgnoresChoiceLocations = createVisualProjectionEntityHints({
     speaker: 'Dungeon Master',
     text: '众人现在位于铁砧酒馆。\n\n可选行动：\n1. 前往森林\n2. 返回城市\n3. 留在酒馆',
 });
-assert.equal(naturalSceneIgnoresChoiceLocations.find((entity) => entity.entityType === 'scene')?.displayLabel, '铁砧酒馆');
+assert.equal(naturalSceneIgnoresChoiceLocations.some((entity) => entity.entityType === 'scene'), false);
 
 const locationWordInsideItem = createVisualProjectionEntityHints({
     index: 20,
@@ -316,8 +310,8 @@ assert.equal(maliciousTextHints[0].visibleAttributes[0].value.includes('<script>
 assert.equal(maliciousTextHints.some((entity) => entity.entityType === 'skill'), false);
 
 const segmented = createVisualNovelDisplaySegments('森林里传来脚步声。“喂，你这蠢货！”它举起短刀。\n\nDungeon Master：准备受死吧！', { fallbackSpeaker: 'Dungeon Master', role: 'character' });
-assert.deepEqual(segmented.map((segment) => segment.speaker), ['旁白', '旁白', '旁白', '旁白']);
-assert.equal(segmented[1].type, 'narration');
+assert.deepEqual(segmented.map((segment) => segment.speaker), ['旁白', '未识别', '旁白', '旁白']);
+assert.equal(segmented[1].type, 'unattributed-dialogue');
 assert.equal(segmented[1].text, '“喂，你这蠢货！”');
 assert.equal(segmented[3].type, 'narration');
 assert.equal(segmented[3].text, 'Dungeon Master：准备受死吧！');
@@ -332,6 +326,8 @@ assert.deepEqual(knownSpeakerSegment[0], {
     type: 'dialogue',
     speaker: 'Pippa',
     text: '“不要打开那扇门。”',
+    sourceSpan: { start: 0, end: Array.from('Pippa立刻反对：“不要打开那扇门。”').length },
+    sourceText: 'Pippa立刻反对：“不要打开那扇门。”',
 });
 
 const unknownSpeakerSegment = createVisualNovelDisplaySegments('守卫立刻反对：“不要打开那扇门。”', {

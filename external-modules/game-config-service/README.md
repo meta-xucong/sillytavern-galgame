@@ -39,9 +39,11 @@ equipment, item, or skill facts from ordinary natural-language narration.
 Projection/stub provenance now reports
 `galgame.visual-projection-shared.v2` for this five-type helper behavior.
 
-For this repository's local Galgame setup, prefer the root script. It points
-both self-owned services at the current SillyTavern instance on
-`http://127.0.0.1:8001` and uses one shared `GALGAME_BRIDGE_PROOF_SECRET`.
+For a setup where SillyTavern is already running on port 8001, use the
+project-owned services launcher below. It starts both self-owned services with
+one shared `GALGAME_BRIDGE_PROOF_SECRET`. For the complete local stack, use
+`external-modules/process-supervisor/launchers/Start_Galgame_All.bat`; it
+starts SillyTavern on port 8000 and points the services at that instance.
 The secret is loaded only into each child process environment; it is never
 placed in a command argument, log, browser response, or static frontend file.
 If the shared local secret file is missing or empty, the startup scripts stop
@@ -49,7 +51,7 @@ without starting either service. The config health response exposes
 `runtimeProof.configured`; an unconfigured proof issuer returns 503.
 
 ```powershell
-.\StartGalgameServices.cmd
+.\external-modules\process-supervisor\launchers\StartGalgameServices.cmd
 ```
 
 It starts this config service and the original runtime bridge with one shared

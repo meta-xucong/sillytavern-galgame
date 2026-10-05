@@ -254,7 +254,7 @@ try {
 
 const corsServer = createConfigService({
     store: new MemoryConfigStore(),
-    corsOrigin: 'http://127.0.0.1:8000,http://localhost:8000,http://127.0.0.1:8001',
+    corsOrigin: 'http://127.0.0.1:8000,http://localhost:8000',
 });
 await listen(corsServer);
 baseUrl = serverBaseUrl(corsServer);
@@ -469,7 +469,7 @@ try {
         body: JSON.stringify({
             protocolVersion: 'galgame.original-runtime-bridge-request.v1',
             requestId: 'config-service-proof-test',
-            sillyTavernBaseUrl: 'http://127.0.0.1:8001',
+            sillyTavernBaseUrl: 'http://127.0.0.1:8000',
             releaseId: active.releaseId,
             scenarioId: active.scenarioId,
             scenarioVersion: active.scenarioVersion,

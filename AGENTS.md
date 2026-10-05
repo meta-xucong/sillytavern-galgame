@@ -31,22 +31,22 @@ generation protocol, treat those sections as superseded.
 11. Custom player code may present dialogue, choices, input, history, stage, media, and save affordances in a Galgame style only when those behaviors delegate to SillyTavern's original data and runtime semantics. It must not replace them with frontend-authored story, parallel plot state, copied resource bodies, or incompatible prompt/context construction.
 12. Do not restore or add a custom narrative gateway, custom narrative runtime, or custom SceneResult gameplay loop that reimplements SillyTavern behavior. A thin bridge is allowed only when it delegates to existing SillyTavern APIs/runtime behavior and remains removable without backend changes.
 
-## Backend Freeze
+## SillyTavern Source Freeze (Absolute)
 
-The SillyTavern backend is read-only for this project unless the user gives explicit permission for a specific backend change.
+All original SillyTavern-owned code is read-only for this project. Custom work is upper-layer work only. Do not edit, patch, inject into, overwrite, vendor-copy and then modify, or otherwise change any SillyTavern source code, whether backend or frontend. This is a hard project boundary; when a feature appears to require an upstream code change, stop that implementation path and report the smallest required upstream capability instead.
 
-Agents MUST NOT modify:
+This prohibition includes, without limitation:
 
 - `src/**`
 - `server.js`
 - `plugins.js`
-- existing SillyTavern backend routes, middleware, authentication, CSRF, storage, or startup behavior
-- backend-related values in `config.yaml`
-- root `package.json` or `package-lock.json` in a way that changes SillyTavern dependencies or runtime behavior
+- all original SillyTavern backend routes, middleware, authentication, CSRF, storage, and startup code
+- all original SillyTavern frontend files, templates, styles, scripts, and existing extensions
+- upstream-owned configuration, manifests, build scripts, and dependency declarations, including `config.yaml`, root `package.json`, and root `package-lock.json`
 
-Agents may call existing SillyTavern APIs exactly as provided. All calls must be isolated behind a frontend adapter.
+Agents may call existing SillyTavern APIs exactly as provided. All calls must be isolated behind a frontend adapter. Normal use of those APIs may operate on the selected chat or other runtime data according to the existing contract; this does not permit changing SillyTavern source code or adding/changing its routes.
 
-If a requested feature appears to require a backend change, stop and report the need to the user. Do not implement the backend change without explicit approval.
+If a requested feature appears to require changing any original SillyTavern code, stop and report that the feature cannot be implemented within this project's source boundary. Do not treat a bridge exception, a code comment, or a prior backend-specific exception as permission to edit upstream files.
 
 ## Allowed Architecture
 
@@ -65,7 +65,7 @@ Static files under `public/game/**` and `public/game-admin/**` are build
 outputs for the custom player and administrator applications only. They must
 not import or depend on original SillyTavern frontend globals.
 
-Avoid modifying the original SillyTavern frontend, including:
+Original SillyTavern frontend code is covered by the absolute freeze above, including:
 
 - `public/index.html`
 - `public/script.js`
@@ -83,11 +83,14 @@ An external module is allowed only when it:
 - communicates through explicit HTTP or WebSocket contracts
 - can be removed or replaced without changing SillyTavern
 
-User-approved exception, 2026-07-24:
+User-approved upper-layer bridge allowance, 2026-07-24 (not an upstream-code edit exception):
 
 - `external-modules/original-runtime-bridge/**` may run an independent browser
   process against the original SillyTavern frontend runtime and call the
   original runtime generation function for a selected original character/chat.
+- This allowance only permits code in the isolated external module to invoke
+  the existing runtime. It never permits changing the SillyTavern frontend,
+  backend, plugin/extension code, configuration, or startup files.
 - This bridge is allowed only as an explicit, narrow delegation surface for
   original `Generate()` semantics. It must not copy prompt assembly into
   Galgame code, call `/api/backends/*/generate` or `/api/novelai/generate`

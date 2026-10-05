@@ -377,3 +377,9 @@ score < 60        -> placeholder，展示统一通用占位图
 完成后只能宣称：`VISUAL-RUNTIME-1` 运行时视觉智能匹配通过，且在 60 分门槛下实现对白到图片的异步展示。
 
 不得宣称：完整 Galgame 完成、ST 后端被改造、玩家运行时剧情 LLM 完成、历史 VS/Projection/binding/old-save 链完成，或所有对白都必然有具体图片。
+
+## 2026-10-04 后续窄阶段：页面场景 continuity
+
+历史 “不恢复 Projection issuer/proof/binding” 仍禁止恢复旧的剧情授权/持久绑定 heavy route。本条不恢复旧链路：用户明确要求恢复舞台背景后，新增的允许项是独立 presentation-analysis-service 的 current-visible-page scene-continuity producer，细则见 `GALGAME_VISUAL_PAGE_CONTINUITY_RESTORE_2026-10-04.md`。它只通过精确原文 evidence 构造既有 `scene-continuity.v1`，无 chat/save/manifest/binding 写入，无 assetId 由模型选取，不调用/复刻原版生成。
+
+该新 producer 是 RUNTIME-4 之后的独立窄阶段（RUNTIME-5），不能记作 RUNTIME-4 的原验收已通过，也不能启用 speaker/identity/roster 自动解析。页面分析响应只有在服务、shared 投影、8798 唯一匹配与实际 `/game/` 图片加载全部验证后才算通过；端口健康或 provider 配置存在不算通过。

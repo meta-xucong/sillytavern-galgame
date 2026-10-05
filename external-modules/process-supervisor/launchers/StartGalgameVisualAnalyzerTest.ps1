@@ -4,7 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $serverScript = Join-Path $repoRoot 'external-modules\visual-asset-service\server.mjs'
 $dataDir = Join-Path $repoRoot 'external-modules\visual-asset-service\data'
 $resolvedServerScript = $null
@@ -18,7 +18,7 @@ $tokenVariable = 'GALGAME_VISUAL_ANALYZER_TOKEN'
 $runtimeTokenVariable = 'GALGAME_VISUAL_RUNTIME_TOKEN'
 $providerEnvFile = $env:GALGAME_VISUAL_PROVIDER_ENV_FILE
 if ([string]::IsNullOrWhiteSpace($providerEnvFile)) {
-    $providerEnvFile = 'D:\AI\alchemy_video_OS\.env.local'
+    $providerEnvFile = Join-Path $repoRoot '.env.local'
 }
 
 if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
@@ -105,7 +105,8 @@ $secureToken = $null
 $tokenBstr = [IntPtr]::Zero
 $plainToken = $null
 $process = $null
-$processStartInfo = $null
+$previousChildEnvironment = @{}
+$childEnvironment = @{}
 $leaveChildRunning = $false
 
 try {
@@ -143,24 +144,14 @@ try {
         }
     }
 
-    # The ordinary launcher starts this file with a relative path while this
-    # test launcher resolves it to an absolute path. Match both forms so the
-    # health probe cannot accidentally pass against the old service process.
-    $serverCommandPattern = '(?i)visual-asset-service[\\/]+server\.mjs'
-    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like 'node*' -and $_.CommandLine -match $serverCommandPattern } |
-        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    # Only replace the exact entry process from this checkout. A similarly
+    # named server in another checkout must remain untouched.
+    $serverCommandPattern = '(?i)(?:^|[\s"])' + [regex]::Escape($resolvedServerScript.Replace('/', '\')) + '(?=$|[\s"])'
+    Get-CimInstance Win32_Process -ErrorAction Stop |
+        Where-Object { $_.Name -ieq 'node.exe' -and $_.CommandLine -match $serverCommandPattern } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop }
 
-    $processStartInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $processStartInfo.FileName = $nodeCommand
-    $processStartInfo.Arguments = '"' + $serverScript + '"'
-    $processStartInfo.WorkingDirectory = $repoRoot
-    $processStartInfo.UseShellExecute = $false
-    $processStartInfo.CreateNoWindow = $true
-    $processStartInfo.RedirectStandardOutput = $false
-    $processStartInfo.RedirectStandardError = $false
-
-    $childEnvironment = $processStartInfo.EnvironmentVariables
+    $childEnvironment = @{}
     $childEnvironment['GALGAME_VISUAL_ASSET_HOST'] = $serviceHost
     $childEnvironment['GALGAME_VISUAL_ASSET_PORT'] = $servicePort
     $childEnvironment['GALGAME_VISUAL_ASSET_DATA_DIR'] = $dataDir
@@ -190,10 +181,18 @@ try {
     $childEnvironment['GALGAME_VISUAL_RUNTIME_CACHE_SCOPE'] = 'controlled-runtime-live-v1'
     $childEnvironment[$runtimeTokenVariable] = $plainToken
 
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $processStartInfo
-    [void]$process.Start()
-    Write-ControlledLauncherLog -Message ('service_started pid={0} stdout_stderr=inherited_console' -f $process.Id)
+    $previousChildEnvironment = @{}
+    foreach ($name in $childEnvironment.Keys) {
+        $previousChildEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        [Environment]::SetEnvironmentVariable($name, [string]$childEnvironment[$name], 'Process')
+    }
+    $serviceLogDirectory = Join-Path $repoRoot '.codex-longrun'
+    New-Item -ItemType Directory -Path $serviceLogDirectory -Force | Out-Null
+    $stdoutLog = Join-Path $serviceLogDirectory 'visual-analyzer-test.out.log'
+    $stderrLog = Join-Path $serviceLogDirectory 'visual-analyzer-test.err.log'
+    $process = Start-Process -FilePath $nodeCommand -ArgumentList ('"' + $serverScript + '"') -WorkingDirectory $repoRoot `
+        -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru
+    Write-ControlledLauncherLog -Message ('service_started pid={0} stdout={1} stderr={2}' -f $process.Id, $stdoutLog, $stderrLog)
 
     $healthy = $false
     for ($attempt = 1; $attempt -le 10; $attempt++) {
@@ -212,7 +211,7 @@ try {
     if (-not $healthy) {
         $exitCode = if ($process.HasExited) { $process.ExitCode } else { 'running' }
         Write-ControlledLauncherLog -Message ('health_failed pid={0} process={1}' -f $process.Id, $exitCode)
-        Write-Error ('visual-asset-service did not become healthy; inspect {0} and the inherited console output.' -f $logPath)
+        Write-Error ('visual-asset-service did not become healthy; inspect {0}, {1}, and {2}.' -f $logPath, $stdoutLog, $stderrLog)
         exit 1
     }
 
@@ -234,10 +233,14 @@ try {
     if (-not $leaveChildRunning -and $process -and -not $process.HasExited) {
         $process.Kill()
     }
-    if ($processStartInfo) {
-        [void]$processStartInfo.EnvironmentVariables.Remove($tokenVariable)
-        [void]$processStartInfo.EnvironmentVariables.Remove($runtimeTokenVariable)
+    if ($previousChildEnvironment) {
+        foreach ($name in $previousChildEnvironment.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $previousChildEnvironment[$name], 'Process')
+        }
     }
+    # Clear managed references as well as the wrapper environment.
+    $childEnvironment.Remove($tokenVariable)
+    $childEnvironment.Remove($runtimeTokenVariable)
     $plainToken = $null
     $configuredProviderToken = $null
     if ($tokenBstr -ne [IntPtr]::Zero) {

@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Presentation projection isolated QA</title>
+  <style>
+    :root { color-scheme: dark; font: 16px/1.5 system-ui, sans-serif; background: #11151c; color: #edf1f8; }
+    body { max-width: 900px; margin: 0 auto; padding: 24px; }
+    h1 { font-size: 1.35rem; }
+    #notice { padding: 12px; border: 1px solid #536176; border-radius: 8px; background: #1c2633; }
+    #status { margin: 16px 0; font-weight: 700; }
+    .pass { color: #91e6ad; } .fail { color: #ff9a9a; }
+    .message { margin: 12px 0; padding: 14px; border: 1px solid #364354; border-radius: 8px; background: #191f29; }
+    .heading { color: #9dc8ff; font-size: .9rem; margin-bottom: 6px; }
+    .body { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .avatar { display: inline-flex; align-items: center; gap: 6px; margin: 4px 8px 4px 0; padding: 4px 8px; border-radius: 20px; background: #293444; font-size: .85rem; }
+    @media (max-width: 600px) { body { padding: 14px; } .message { padding: 11px; } }
+  </style>
+</head>
+<body>
+  <h1>呈现投影隔离验收</h1>
+  <p id="notice">QA only。仅使用内嵌合成消息；不读取生产聊天、不调用服务、不设置或绕过生产模式开关。</p>
+  <div id="status" role="status">正在执行共享校验器、身份/队伍投影与生产 renderer…</div>
+  <section><h2>合成角色头像绑定</h2><div id="avatars"></div></section>
+  <section><h2>呈现片段</h2><div id="segments"></div></section>
+  <ol id="checks"></ol>
+  <script type="module">
+    import { createVisibleMessageHash, validatePresentationAnnotationResponse } from '/shared/src/presentation-annotation.js';
+    import { bindUniquePresentationAsset, presentationPortraitScopeKey, projectPartyRoster, projectPresentationIdentityDetailed, reservePersistentPresentationAsset } from '/shared/src/presentation-projection.js';
+    import { resolveVisualCharacterBinding, validateScenarioManifest, validateVisualCharacterBindings } from '/shared/src/protocol.js';
+    import { DEMO_SCENARIO } from '/shared/src/demo-scenario.js';
+    import { createIdentityVisualAttributes, createPresentationDisplaySegments, createPresentationRosterDisplay, createSpeakerVisualAttributes, isPresentationProjectionTimelineCurrent, resolvePresentationMode } from '/player/src/presentation-renderer.js';
+
+    const cp = (value) => Array.from(value).length;
+    const findSpan = (text, needle, from = 0) => {
+      const chars = Array.from(text), target = Array.from(needle);
+      for (let start = from; start <= chars.length - target.length; start++) {
+        if (target.every((item, index) => chars[start + index] === item)) return { start, end: start + target.length };
+      }
+      throw new Error(`fixture span missing: ${needle}`);
+    };
+    let failedChecks = 0;
+    const addCheck = (label, ok) => {
+      const item = document.createElement('li'); item.textContent = `${ok ? 'PASS' : 'FAIL'} — ${label}`;
+      item.className = ok ? 'pass' : 'fail'; document.querySelector('#checks').append(item);
+      if (!ok) failedChecks++;
+    };
+    const render = async () => {
+      const text = 'Celestia: Follow me.';
+      const joined = 'The scout joined the party.';
+      const unknown = '“Someone is behind us!”';
+      const conflict = 'The scout both joins and leaves.';
+      const texts = [text, joined, unknown, conflict];
+      const hashes = await Promise.all(texts.map(createVisibleMessageHash));
+      const speaker = findSpan(text, 'Celestia');
+      const scout = findSpan(joined, 'scout');
+      const joinEvidence = findSpan(joined, 'joined the party');
+      const conflictScout = findSpan(conflict, 'scout');
+      const conflictJoin = findSpan(conflict, 'joins');
+      const conflictLeave = findSpan(conflict, 'leaves');
+      const results = [
+        { sourceMessageIndex: 0, sourceMessageHash: hashes[0], entities: [{ mentionRef: 'm0', surfaceSpan: speaker, kind: 'person', attributeEvidence: [] }], segments: [{ start: 0, end: cp(text), textHash: hashes[0], kind: 'dialogue', speakerMentionRef: 'm0', speakerSource: 'text-explicit', confidenceBand: 'high', evidenceSpans: [{ ...speaker, purpose: 'speaker' }] }], identityLinkCandidates: [], stateClaims: [] },
+        { sourceMessageIndex: 1, sourceMessageHash: hashes[1], entities: [{ mentionRef: 'm0', surfaceSpan: scout, kind: 'person', attributeEvidence: [] }], segments: [{ start: 0, end: cp(joined), textHash: hashes[1], kind: 'narration', speakerMentionRef: null, speakerSource: 'none', confidenceBand: 'high', evidenceSpans: [] }], identityLinkCandidates: [], stateClaims: [{ claimType: 'party.join', targetMentionRef: 'm0', memberMentionRefs: [], rosterSnapshotCompleteness: null, evidenceSpans: [{ ...scout, purpose: 'state' }, { ...joinEvidence, purpose: 'state' }], confidenceBand: 'high' }] },
+        { sourceMessageIndex: 2, sourceMessageHash: hashes[2], entities: [], segments: [{ start: 0, end: cp(unknown), textHash: hashes[2], kind: 'unattributed-dialogue', speakerMentionRef: null, speakerSource: 'none', confidenceBand: 'medium', evidenceSpans: [] }], identityLinkCandidates: [], stateClaims: [] },
+        { sourceMessageIndex: 3, sourceMessageHash: hashes[3], entities: [{ mentionRef: 'm0', surfaceSpan: conflictScout, kind: 'person', attributeEvidence: [] }], segments: [{ start: 0, end: cp(conflict), textHash: hashes[3], kind: 'narration', speakerMentionRef: null, speakerSource: 'none', confidenceBand: 'high', evidenceSpans: [] }], identityLinkCandidates: [], stateClaims: [
+          { claimType: 'party.join', targetMentionRef: 'm0', memberMentionRefs: [], rosterSnapshotCompleteness: null, evidenceSpans: [{ ...conflictScout, purpose: 'state' }, { ...conflictJoin, purpose: 'state' }], confidenceBand: 'high' },
+          { claimType: 'party.leave', targetMentionRef: 'm0', memberMentionRefs: [], rosterSnapshotCompleteness: null, evidenceSpans: [{ ...conflictScout, purpose: 'state' }, { ...conflictLeave, purpose: 'state' }], confidenceBand: 'high' },
+        ] },
+      ];
+      const request = { messages: texts.map((visibleText, i) => ({ sourceMessageIndex: i, sourceMessageHash: hashes[i], visibleText })), knownEntities: [] };
+      const validation = await validatePresentationAnnotationResponse({ schemaVersion: 'galgame.presentation-annotation.v1', results }, request);
+      if (!validation.valid) throw new Error(`production annotation validator rejected fixture: ${validation.errors.join(', ')}`);
+      addCheck('生产 shared annotation validator 接受完整、哈希匹配的合成结果', true);
+
+      const snapshot = { fileName: 'qa-chat', messages: texts.map((displayText, index) => ({ role: 'character', index, displayText, speaker: index === 0 ? 'Celestia' : 'Narrator' })) };
+      const timeline = results.map((annotation, i) => ({ sourceMessageIndex: i, sourceMessageHash: hashes[i], visibleText: texts[i], authorLabel: snapshot.messages[i].speaker, annotation }));
+      const identity = await projectPresentationIdentityDetailed({ chatKey: 'qa-chat', releaseId: 'qa-release', messages: timeline, publishedCast: [{ id: 'cast-celestia', name: 'Celestia', aliases: [] }] });
+      const rosterBeforeConflict = projectPartyRoster({ chatKey: 'qa-chat', releaseId: 'qa-release', messages: timeline.slice(0, 3), identityProjection: identity });
+      const roster = projectPartyRoster({ chatKey: 'qa-chat', releaseId: 'qa-release', messages: timeline, identityProjection: identity });
+      addCheck('旧角色 exact published alias 解析到稳定身份', identity.projection.entities.some((entity) => entity.identityRef.type === 'published' && entity.identityRef.id === 'cast-celestia'));
+      addCheck('明确加入 claim 在冲突发生前重放为队员', rosterBeforeConflict.entries.some((entry) => entry.membership === 'member'));
+      addCheck('队伍投影完整并保留可追溯原文证据', roster.complete && roster.entries.every((entry) => entry.membership !== 'member' || entry.evidence.length > 0));
+      const rosterDisplay = createPresentationRosterDisplay({ projection: identity.projection, roster });
+      addCheck('生产 roster renderer 展示新加入角色并拒绝不完整时间线', rosterDisplay?.some((entry) => entry.name === 'scout') === true
+        && createPresentationRosterDisplay({ projection: { complete: false }, roster }) === null);
+      addCheck('状态冲突在 roster view 中保留并标记 unknown', rosterDisplay?.some((entry) => entry.name === 'scout' && entry.membership === 'unknown'));
+
+      const currentState = { messages: timeline.map((message) => ({ sourceMessageIndex: message.sourceMessageIndex, visibleText: message.visibleText, authorLabel: message.authorLabel, sourceMessageHash: message.sourceMessageHash, annotation: message.annotation })), projection: identity.projection };
+      addCheck('当前时间线与完整投影一致时通过', isPresentationProjectionTimelineCurrent(snapshot, currentState));
+      const editedPriorMessage = structuredClone(snapshot); editedPriorMessage.messages[0].displayText += ' edited';
+      addCheck('编辑较早消息后拒绝旧投影', !isPresentationProjectionTimelineCurrent(editedPriorMessage, currentState));
+      const changedAuthor = structuredClone(snapshot); changedAuthor.messages[0].speaker = 'Different Author';
+      addCheck('改变较早消息作者后拒绝旧投影', !isPresentationProjectionTimelineCurrent(changedAuthor, currentState));
+      const deletedMessage = structuredClone(snapshot); deletedMessage.messages.splice(1, 1);
+      addCheck('删除中间消息后拒绝旧投影', !isPresentationProjectionTimelineCurrent(deletedMessage, currentState));
+
+      const all = [];
+      for (let i = 0; i < results.length; i++) all.push(...createPresentationDisplaySegments({ text: texts[i], annotation: results[i], projection: identity.projection, sourceMessageIndex: i }));
+      addCheck('production renderer 输出旁白/对白/未归属对白类型', all.some((x) => x.type === 'dialogue') && all.some((x) => x.type === 'narration') && all.some((x) => x.type === 'unattributed-dialogue'));
+      addCheck('未归属对白保持中性 unknown，旁白不冒充玩家或角色', all.some((x) => x.type === 'unattributed-dialogue' && x.speaker === '未识别' && x.identityRef.type === 'unknown') && all.some((x) => x.type === 'narration' && x.speaker === '旁白' && x.identityRef === null));
+      addCheck(`生产模式仍为 ${resolvePresentationMode('en')}; harness 未提供 assisted bypass`, resolvePresentationMode('en') === 'shadow');
+
+      let bindings = [];
+      const firstBinding = bindUniquePresentationAsset(bindings, 'published:cast-celestia', 'fixture-portrait-a');
+      bindings = firstBinding.bindings;
+      const repeatSame = bindUniquePresentationAsset(bindings, 'published:cast-celestia', 'fixture-portrait-a');
+      const rebinding = bindUniquePresentationAsset(bindings, 'published:cast-celestia', 'fixture-portrait-b');
+      const collision = bindUniquePresentationAsset(bindings, 'chat-local:scout', 'fixture-portrait-a');
+      const secondIdentity = bindUniquePresentationAsset(bindings, 'chat-local:scout', 'fixture-portrait-b');
+      addCheck('头像绑定对同一身份保持稳定，拒绝改绑', firstBinding.accepted && repeatSame.accepted && !rebinding.accepted && bindings[0].assetKey === 'fixture-portrait-a');
+      addCheck('不同身份头像冲突被拒绝，允许绑定独立头像', !collision.accepted && secondIdentity.accepted && secondIdentity.bindings.length === 2);
+      const reservedPortraits = Array.from({ length: 160 }, (_, index) => ({ identityKey: `character:${index}`, assetKey: `portrait-${index}:1` }));
+      const oldPortraitCollision = bindUniquePresentationAsset(reservedPortraits, 'character:new', 'portrait-0:1');
+      const appendPortrait = bindUniquePresentationAsset(reservedPortraits, 'character:new', 'portrait-new:1');
+      addCheck('160 个旧预留仍保留首张头像并拒绝复用', !oldPortraitCollision.accepted && oldPortraitCollision.bindings.length === 160
+        && reservedPortraits[0].assetKey === 'portrait-0:1' && appendPortrait.accepted
+        && appendPortrait.bindings.length === 161 && appendPortrait.bindings[0].assetKey === 'portrait-0:1');
+      const scopeArcA = presentationPortraitScopeKey({ chatId: 'qa-chat', releaseId: 'qa-release', arcId: 'arc-a' });
+      const scopeArcB = presentationPortraitScopeKey({ chatId: 'qa-chat', releaseId: 'qa-release', arcId: 'arc-b' });
+      addCheck('portrait reservation scope 跨 Arc 保持稳定并隔离其他聊天', scopeArcA === scopeArcB
+        && scopeArcA !== presentationPortraitScopeKey({ chatId: 'other-chat', releaseId: 'qa-release', arcId: 'arc-a' }));
+      const traitProjection = { entities: [
+        { identityRef: { type: 'chat-local', id: 'active' }, attributes: [
+          { category: 'gender', value: 'female', sourceMessageIndex: 2 },
+          { category: 'species', value: 'elf', sourceMessageIndex: 1 },
+          { category: 'appearance', value: 'silver hair', sourceMessageIndex: 3 },
+        ] },
+        { identityRef: { type: 'chat-local', id: 'second-npc' }, attributes: [
+          { category: 'gender', value: 'male', sourceMessageIndex: 4 },
+          { category: 'species', value: 'orc', sourceMessageIndex: 4 },
+          { category: 'appearance', value: 'red eyes', sourceMessageIndex: 4 },
+        ] },
+      ] };
+      const activeTraits = createIdentityVisualAttributes(traitProjection, { type: 'chat-local', id: 'active' });
+      const secondNpcTraits = createIdentityVisualAttributes(traitProjection, { type: 'chat-local', id: 'second-npc' });
+      const traitValues = (attributes) => Object.fromEntries(attributes.map((item) => [item.code, item.value]));
+      addCheck('当前头像只读取当前 identity 的性别/种族/外观，NPC 特征不串线',
+        JSON.stringify(traitValues(activeTraits)) === JSON.stringify({ 'character-explicit-gender-presentation': 'female', 'character-explicit-species': 'elf', 'character-explicit-appearance': 'silver hair' })
+        && JSON.stringify(traitValues(secondNpcTraits)) === JSON.stringify({ 'character-explicit-gender-presentation': 'male', 'character-explicit-species': 'orc', 'character-explicit-appearance': 'red eyes' }));
+      const contaminatedFullAndSegmentTraits = [
+        { code: 'character-explicit-name', value: 'Celestia', confidenceBand: 'explicit' },
+        { code: 'character-explicit-gender-presentation', value: 'male', confidenceBand: 'high' },
+        { code: 'character-explicit-species', value: 'dragon', confidenceBand: 'high' },
+        { code: 'character-explicit-appearance', value: 'towering red scales from full message', confidenceBand: 'high' },
+        { code: 'character-explicit-appearance', value: 'glowing claws from active segment', confidenceBand: 'high' },
+      ];
+      const unanchoredSpeakerTraits = createSpeakerVisualAttributes({ visibleAttributes: contaminatedFullAndSegmentTraits, projection: traitProjection, identityRef: null });
+      addCheck('full-message/segment appearance 特征没有 identityRef 时全部丢弃',
+        unanchoredSpeakerTraits.length === 1 && unanchoredSpeakerTraits[0].code === 'character-explicit-name'
+        && !unanchoredSpeakerTraits.some((item) => ['red scales from full message', 'towering red scales from full message', 'glowing claws from active segment', 'dragon', 'male'].includes(item.value)));
+      const boundSpeakerTraits = createSpeakerVisualAttributes({ visibleAttributes: contaminatedFullAndSegmentTraits, projection: traitProjection, identityRef: { type: 'chat-local', id: 'active' } });
+      const boundValues = traitValues(boundSpeakerTraits);
+      addCheck('显式 identityRef 只保留投影中绑定给当前说话人的 traits',
+        boundValues['character-explicit-gender-presentation'] === 'female'
+        && boundValues['character-explicit-species'] === 'elf'
+        && boundValues['character-explicit-appearance'] === 'silver hair'
+        && !boundSpeakerTraits.some((item) => ['towering red scales from full message', 'glowing claws from active segment', 'dragon', 'male'].includes(item.value)));
+      const neutralPortraitSrc = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"%3E%3Crect width="32" height="32" rx="16" fill="%23334455"/%3E%3C/svg%3E';
+      const applyPortraitReservationForHarness = (reservation, image) => {
+        if (!reservation.accepted) {
+          image.dataset.portraitMode = 'neutral';
+          image.alt = 'Neutral portrait placeholder';
+          image.src = neutralPortraitSrc;
+          return;
+        }
+        image.dataset.portraitMode = 'dynamic';
+        image.src = '/v1/core/catalogs/fixture/assets/dynamic-avatar/1/content';
+      };
+      const deniedStorageCases = [
+        { label: 'getItem throws', storage: { getItem() { throw new Error('blocked'); }, setItem() {} } },
+        { label: 'setItem throws', storage: { getItem() { return JSON.stringify({ 'qa-scope': [] }); }, setItem() { throw new Error('quota'); } } },
+      ];
+      const deniedPortraitImages = [];
+      for (const testCase of deniedStorageCases) {
+        const reservation = reservePersistentPresentationAsset({ storage: testCase.storage, storageKey: 'qa-ledger', scope: 'qa-scope', identityKey: 'character:active', assetKey: 'dynamic-avatar:1' });
+        const image = document.createElement('img');
+        applyPortraitReservationForHarness(reservation, image);
+        deniedPortraitImages.push(image);
+        document.querySelector('#avatars').append(image);
+      }
+      addCheck('sessionStorage 读取或写入抛错时 reservation fail closed', deniedPortraitImages.length === 2
+        && deniedPortraitImages.every((image) => image.dataset.portraitMode === 'neutral'));
+      addCheck('持久化失败时只显示 neutral portrait 且未加载 dynamic avatar', deniedPortraitImages.every((image) => image.src === neutralPortraitSrc
+        && !image.src.includes('/v1/core/catalogs/') && image.dataset.portraitMode !== 'dynamic'));
+      const mainSourceResponse = await fetch('/player/src/main.js', { credentials: 'omit' });
+      const mainSource = mainSourceResponse.ok ? await mainSourceResponse.text() : '';
+      const stripsCharacterHintForNonCharacter = /if\s*\(!usesCharacterChannel\)\s*\{\s*hints\s*=\s*hints\.filter\(\(hint\)\s*=>\s*hint\.entityType\s*!==\s*'character'\);\s*\}/u.test(mainSource);
+      const guardsRemoteCharacterDecision = mainSource.includes("const currentRole = request?.visibleContext?.current?.role || 'character';")
+        && mainSource.includes("type !== 'character' || currentRole === 'character'");
+      const hasSeparateNeutralChannels = mainSource.includes("const CORE_NARRATOR_PLACEHOLDER_URL = './assets/narrator-placeholder.svg';")
+        && mainSource.includes("const CORE_PLAYER_PLACEHOLDER_URL = './assets/player-placeholder.svg';")
+        && mainSource.includes("if (role === 'player') return CORE_PLAYER_PLACEHOLDER_URL;")
+        && mainSource.includes("if (role === 'narrator' || role === 'system') return CORE_NARRATOR_PLACEHOLDER_URL;")
+        && mainSource.includes('applyCoreVisualPlaceholderCharacter(role);');
+      addCheck('player/narrator 视觉请求不携带 character hint', stripsCharacterHintForNonCharacter);
+      addCheck('生产 remote response reducer 按当前 channel 丢弃 character decision', guardsRemoteCharacterDecision);
+      addCheck('player 与 narrator 使用不同的中性占位资源', hasSeparateNeutralChannels);
+      const simulatedCharacterResponse = { decisions: [
+        { entityType: 'character', assetId: 'unexpected-character-decision', assetVersion: 99, contentPath: '/v1/core/catalogs/fixture/assets/unexpected-character-decision/99/content' },
+        { entityType: 'scene', assetId: 'unrelated-scene', assetVersion: 1 },
+      ] };
+      const channelFallbacks = [];
+      for (const channel of [
+        { role: 'player', placeholder: '/player/src/assets/player-placeholder.svg' },
+        { role: 'narrator', placeholder: '/player/src/assets/narrator-placeholder.svg' },
+      ]) {
+        const usesCharacterChannel = channel.role === 'character';
+        const requestEntities = [{ entityType: 'character', entityKey: 'should-not-be-requested' }, { entityType: 'scene', entityKey: 'scene-only' }]
+          .filter((entity) => usesCharacterChannel || entity.entityType !== 'character');
+        const acceptedDecisions = simulatedCharacterResponse.decisions.filter((decision) => (
+          decision.entityType !== 'character' || channel.role === 'character'
+        ));
+        const image = document.createElement('img'); image.alt = `${channel.role} neutral portrait`;
+        const acceptedCharacterDecision = acceptedDecisions.find((decision) => decision.entityType === 'character');
+        image.dataset.portraitMode = acceptedCharacterDecision ? 'dynamic' : 'neutral';
+        image.src = acceptedCharacterDecision?.contentPath || channel.placeholder;
+        document.querySelector('#avatars').append(image);
+        if (image.decode) await image.decode();
+        channelFallbacks.push({ ...channel, requestEntities, acceptedCharacterDecision, image });
+      }
+      addCheck('模拟响应即使带 character decision，player/narrator 也不请求或选用它', channelFallbacks.every((item) => (
+        !item.requestEntities.some((entity) => entity.entityType === 'character') && !item.acceptedCharacterDecision
+      )));
+      addCheck('player 与 narrator 均显示各自已加载的 neutral placeholder，无动态头像 URL', channelFallbacks.length === 2
+        && channelFallbacks.every((item) => item.image.dataset.portraitMode === 'neutral' && item.image.complete && item.image.naturalWidth > 0)
+        && channelFallbacks[0].image.src !== channelFallbacks[1].image.src
+        && channelFallbacks.every((item) => !item.image.src.includes('/v1/core/catalogs/')));
+
+      const isolationBindings = {
+        schemaVersion: 'galgame.visual-character-bindings.v1',
+        characters: [
+          { characterKey: 'Hero', aliases: [], assetId: 'asset_character_aaaaaa', assetVersion: 1, channel: 'character' },
+          { characterKey: 'Narrator', aliases: [], assetId: 'asset_character_dddddd', assetVersion: 1, channel: 'narrator' },
+        ],
+        characterPool: [{ characterKey: 'Pool NPC', aliases: ['Pool Exact Alias'], assetId: 'asset_character_bbbbbb', assetVersion: 1, channel: 'character' }],
+        defaults: {
+          characterAssetId: 'asset_character_cccccc',
+          playerAssetId: 'asset_curated_player-neutral-compass',
+          narratorAssetId: 'asset_character_dddddd',
+          systemAssetId: 'asset_character_eeeeee',
+        },
+      };
+      const baseIsolationManifest = { id: 'qa-channel-isolation', visualBindings: isolationBindings };
+      const playerCharacterOverlap = validateVisualCharacterBindings({ ...baseIsolationManifest, visualBindings: {
+        ...isolationBindings, defaults: { ...isolationBindings.defaults, playerAssetId: 'asset_character_aaaaaa' },
+      } });
+      const narratorPoolOverlap = validateVisualCharacterBindings({ ...baseIsolationManifest, visualBindings: {
+        ...isolationBindings, defaults: { ...isolationBindings.defaults, narratorAssetId: 'asset_character_bbbbbb' },
+      } });
+      const systemGenericDefaultOverlap = validateVisualCharacterBindings({ ...baseIsolationManifest, visualBindings: {
+        ...isolationBindings, defaults: { ...isolationBindings.defaults, systemAssetId: 'asset_character_cccccc' },
+      } });
+      addCheck('校验器拒绝 player default 与 ordinary character binding 资产重叠', !playerCharacterOverlap.valid);
+      addCheck('校验器拒绝 narrator default 与 characterPool 资产重叠', !narratorPoolOverlap.valid);
+      addCheck('校验器拒绝 system default 与 generic character default 资产重叠', !systemGenericDefaultOverlap.valid);
+      const illegalPlayerPool = { ...baseIsolationManifest, id: 'qa-player-pool-conflict', visualBindings: {
+        ...isolationBindings,
+        characterPool: [{ characterKey: 'Reserved NPC', aliases: ['Reserved Alias'], assetId: 'asset_curated_player-neutral-compass', assetVersion: 1, channel: 'character' }],
+      } };
+      const exactReservedPoolMatch = resolveVisualCharacterBinding(illegalPlayerPool, { name: 'Reserved Alias', role: 'character', allowCharacterPoolFallback: true, sessionKey: 'qa-exact-reserved' });
+      const reservedPoolFallback = resolveVisualCharacterBinding(illegalPlayerPool, { name: 'Unknown Pool Character', role: 'character', allowCharacterPoolFallback: true, sessionKey: 'qa-fallback-reserved' });
+      addCheck('非法 manifest 中 exact pool match 与 fallback 都排除 dedicated player asset', exactReservedPoolMatch === null && reservedPoolFallback === null);
+      const playerWithoutDedicatedDefault = resolveVisualCharacterBinding({ ...baseIsolationManifest, visualBindings: {
+        ...isolationBindings, defaults: { ...isolationBindings.defaults, playerAssetId: undefined },
+      } }, { name: '你', role: 'player' });
+      addCheck('player 缺少专属 default 时不回退 generic characterAsset', playerWithoutDedicatedDefault === null);
+      const arcOverrideManifest = structuredClone(DEMO_SCENARIO);
+      arcOverrideManifest.visualBindings = isolationBindings;
+      const arcId = arcOverrideManifest.arcs[0].arcId;
+      arcOverrideManifest.arcs[0].visualBindings = { defaults: { playerAssetId: 'asset_character_bbbbbb' } };
+      const arcOverrideValidation = validateScenarioManifest(arcOverrideManifest);
+      const arcOverrideExact = resolveVisualCharacterBinding(arcOverrideManifest, { name: 'Pool NPC', role: 'character', arcId, allowCharacterPoolFallback: true, sessionKey: 'qa-arc-exact' });
+      const arcOverrideFallback = resolveVisualCharacterBinding(arcOverrideManifest, { name: 'Another Unknown', role: 'character', arcId, allowCharacterPoolFallback: true, sessionKey: 'qa-arc-fallback' });
+      addCheck('Arc override 与 pool 资产重叠被 manifest 校验拒绝，resolver 同样 fail closed',
+        !arcOverrideValidation.valid && arcOverrideExact === null && arcOverrideFallback === null);
+      for (const binding of secondIdentity.bindings) {
+        const chip = document.createElement('span'); chip.className = 'avatar'; chip.dataset.identityRef = binding.identityKey;
+        chip.dataset.assetId = binding.assetKey; chip.textContent = `${binding.identityKey} · ${binding.assetKey}`; document.querySelector('#avatars').append(chip);
+      }
+      for (const segment of all) {
+        const card = document.createElement('article'); card.className = 'message';
+        const heading = document.createElement('div'); heading.className = 'heading'; heading.textContent = segment.speaker;
+        heading.dataset.kind = segment.type; heading.dataset.identityRef = segment.identityRef ? `${segment.identityRef.type}:${segment.identityRef.id}` : 'narration';
+        const body = document.createElement('div'); body.className = 'body'; body.textContent = segment.text;
+        card.append(heading, body); document.querySelector('#segments').append(card);
+      }
+      if (failedChecks) throw new Error(`${failedChecks} 项断言失败`);
+      const status = document.querySelector('#status'); status.textContent = '全部隔离 QA 检查通过'; status.className = 'pass';
+    };
+    render().catch((error) => { const status = document.querySelector('#status'); status.textContent = `QA 失败：${error.message}`; status.className = 'fail'; });
+  </script>
+</body>
+</html>

@@ -8,6 +8,7 @@ import {
     SillyTavernHttpClient,
     SillyTavernOriginalChatBridge,
     createVisualNovelDisplaySegments,
+    applyQuotedDialogueSpeakerContinuity,
     createCoreVisualDisplayEntityHints,
     extractSuggestedActionsFromOriginalText,
     formatVisualNovelDisplayText,
@@ -235,6 +236,7 @@ assert.equal(typeof chatBridge.continueSession, 'undefined');
 assert.equal(typeof chatBridge.generate, 'undefined');
 assert.equal((await chatBridge.healthCheck()).ok, true);
 const chatSnapshot = await chatBridge.loadOpeningChat(DEMO_SCENARIO);
+assert.equal(await chatBridge.hasLatestBoundChat(DEMO_SCENARIO), true);
 assert.equal(chatSnapshot.ok, true);
 assert.equal(chatSnapshot.generationBridge, false);
 assert.equal(chatSnapshot.fileName, boundChatSeedId);
@@ -266,6 +268,21 @@ const runtimeBridge = new OriginalRuntimeBridgeClient({
 });
 assert.equal(runtimeBridge.isConfigured(), true);
 assert.equal((await runtimeBridge.healthCheck()).ok, true);
+let llmHealthRequest = null;
+const llmHealthClient = new OriginalRuntimeBridgeClient({
+    baseUrl: 'http://127.0.0.1:8795',
+    fetchImpl: async (url, options) => {
+        llmHealthRequest = { url, options };
+        return jsonResponse({
+            protocolVersion: 'galgame.llm-health.v1', ok: true,
+            provider: 'claude', model: 'claude-sonnet-4-6', checkedAt: new Date().toISOString(), latencyMs: 42,
+        });
+    },
+});
+assert.equal((await llmHealthClient.llmHealthCheck()).ok, true);
+assert.equal(llmHealthRequest.url, 'http://127.0.0.1:8795/v1/llm-health');
+assert.equal(JSON.parse(llmHealthRequest.options.body).protocolVersion, 'galgame.llm-health.v1');
+assert.equal(JSON.stringify(llmHealthRequest.options).includes('token'), false);
 const generatedSnapshot = await runtimeBridge.generateReply({
     manifest: DEMO_SCENARIO,
     release: {
@@ -372,27 +389,33 @@ const multiSceneHints = createCoreVisualDisplayEntityHints({
     speaker: 'Dungeon Master',
     text: multiSceneVisibleText,
 });
-assert.equal(multiSceneHints.find((entity) => entity.entityType === 'scene')?.displayLabel, '灰境前厅');
-assert.match(
-    multiSceneHints.find((entity) => entity.entityType === 'scene')?.visibleAttributes?.[0]?.value || '',
-    /灰境前厅（地牢）/u,
-);
-const bellTowerHints = createCoreVisualDisplayEntityHints({
+assert.equal(multiSceneHints.some((entity) => entity.entityType === 'scene'), false,
+    'unstructured narrative prose is classified by the evidence-bound scene analyzer, not raw adapter heuristics');
+const labeledSceneHints = createCoreVisualDisplayEntityHints({
     index: 18,
+    role: 'character',
+    speaker: 'Dungeon Master',
+    text: '当前地点: 灰境前厅',
+});
+assert.equal(labeledSceneHints.find((entity) => entity.entityType === 'scene')?.displayLabel, '灰境前厅');
+assert.equal(labeledSceneHints.find((entity) => entity.entityType === 'scene')?.visibleAttributes?.[0]?.value, '灰境前厅');
+const bellTowerHints = createCoreVisualDisplayEntityHints({
+    index: 19,
     role: 'character',
     speaker: 'Dungeon Master',
     text: '队伍来到旧钟楼，雨幕下停步。',
 });
-assert.equal(bellTowerHints.find((entity) => entity.entityType === 'scene')?.displayLabel, '旧钟楼');
+assert.equal(bellTowerHints.some((entity) => entity.entityType === 'scene'), false,
+    'the adapter does not infer a scene from prose without validated continuity analysis');
 const hiddenOnlySceneHints = createCoreVisualDisplayEntityHints({
-    index: 19,
+    index: 20,
     role: 'character',
     speaker: 'Dungeon Master',
     text: '[thinking]进入灰境前厅[/thinking]\n“我们继续前进。”',
 });
 assert.equal(hiddenOnlySceneHints.some((entity) => entity.entityType === 'scene'), false);
 const xmlAnalysisOnlySceneHints = createCoreVisualDisplayEntityHints({
-    index: 20,
+    index: 21,
     role: 'character',
     speaker: 'Dungeon Master',
     text: '<analysis>进入旧钟楼</analysis>\n\n你继续前进。',
@@ -400,7 +423,7 @@ const xmlAnalysisOnlySceneHints = createCoreVisualDisplayEntityHints({
 assert.equal(xmlAnalysisOnlySceneHints.some((entity) => entity.entityType === 'scene'), false);
 assert.equal(formatVisualNovelDisplayText('<analysis>进入旧钟楼</analysis>\n\n你继续前进。').includes('进入旧钟楼'), false);
 const bracketAnalysisOnlySceneHints = createCoreVisualDisplayEntityHints({
-    index: 21,
+    index: 22,
     role: 'character',
     speaker: 'Dungeon Master',
     text: '[analysis]进入旧钟楼[/analysis]\n\n你继续前进。',
@@ -450,15 +473,49 @@ assert.equal(visibleStatusBlockText.includes('📃 Status: Healthy'), true);
 const displaySegments = createVisualNovelDisplaySegments(roleplayMarkdownText, {
     fallbackSpeaker: 'WorldDirector',
     role: 'character',
-    knownSpeakers: ['Andrei'],
+    knownSpeakers: [{ characterKey: 'Andrei', aliases: [] }],
 });
 assert.deepEqual(
     displaySegments.map((segment) => segment.type),
-    ['narration', 'narration', 'stage', 'dialogue', 'narration'],
+    ['narration', 'narration', 'stage', 'unattributed-dialogue', 'narration'],
 );
 assert.equal(displaySegments[2].speaker, 'Andrei');
-assert.equal(displaySegments[3].speaker, 'Andrei');
+assert.equal(displaySegments[3].speaker, '未识别');
 assert.equal(displaySegments[3].text, '“你愿以何物偿付？”');
+
+const longKnownQuotedDialogue = createVisualNovelDisplaySegments(
+    `Pippa说道：“${'这段对白跨过分页仍然属于同一个角色。'.repeat(14)}结束。”`,
+    { knownSpeakers: [{ characterKey: 'Pippa', aliases: [] }] },
+);
+assert.ok(longKnownQuotedDialogue.length > 1, 'long quote should split into multiple visible pages');
+assert.ok(longKnownQuotedDialogue.every((segment) => segment.type === 'dialogue' && segment.speaker === 'Pippa'));
+assert.equal(longKnownQuotedDialogue[1].speakerContinuation, true, 'an unclosed confirmed quote keeps its speaker on the next page');
+assert.equal(longKnownQuotedDialogue.at(-1).speakerContinuation, true, 'the final quote fragment remains bound until its closer');
+
+const quoteCarryIdentity = { type: 'published', id: 'Pippa' };
+const quoteCarry = applyQuotedDialogueSpeakerContinuity([
+    { type: 'dialogue', speaker: 'Pippa', identityRef: quoteCarryIdentity, sourceText: '“仍在说' },
+    { type: 'narration', speaker: '旁白', sourceText: '话，没有闭合。”' },
+    { type: 'unattributed-dialogue', speaker: '未识别', identityRef: { type: 'unknown' }, sourceText: '“这是新的一句。”' },
+]);
+assert.deepEqual(quoteCarry.slice(0, 2).map((segment) => [segment.type, segment.speaker, segment.speakerContinuation]), [
+    ['dialogue', 'Pippa', undefined], ['dialogue', 'Pippa', true],
+]);
+assert.equal(quoteCarry[2].type, 'unattributed-dialogue', 'a closed quote never attributes a later independent quote');
+
+const explicitSpeakerOverridesCarry = applyQuotedDialogueSpeakerContinuity([
+    { type: 'dialogue', speaker: 'Pippa', identityRef: quoteCarryIdentity, sourceText: '“旧句仍未结束' },
+    { type: 'dialogue', speaker: 'Durik', identityRef: { type: 'published', id: 'Durik' }, sourceText: 'Durik说道：“新角色接话。”' },
+    { type: 'unattributed-dialogue', speaker: '未识别', identityRef: { type: 'unknown' }, sourceText: '“没有署名。”' },
+]);
+assert.equal(explicitSpeakerOverridesCarry[1].speaker, 'Durik');
+assert.equal(explicitSpeakerOverridesCarry[2].type, 'unattributed-dialogue', 'explicit new speaker supersedes stale quote carry');
+
+const mismatchedQuotesFailClosed = applyQuotedDialogueSpeakerContinuity([
+    { type: 'dialogue', speaker: 'Pippa', identityRef: quoteCarryIdentity, sourceText: '“未闭合' },
+    { type: 'unattributed-dialogue', speaker: '未识别', identityRef: { type: 'unknown' }, sourceText: '错配结束』' },
+]);
+assert.equal(mismatchedQuotesFailClosed[1].type, 'unattributed-dialogue', 'mismatched quote family cannot inherit identity');
 
 const thinkingMarkerSegments = createVisualNovelDisplaySegments('``` [thinking] ``` 你用气若游丝的声音命令尼布：“放囚犯……制造混乱……逃。”', {
     fallbackSpeaker: 'Dungeon Master',
@@ -525,12 +582,14 @@ const asciiSpeakerExact = createVisualNovelDisplaySegments('Ann immediately obje
 });
 assert.equal(asciiSpeakerExact[0].speaker, 'Ann');
 
-const unknownNarrativeDialogueSegments = createVisualNovelDisplaySegments('守卫立刻反对：“这里禁止通行。”', {
+const inferredGuardDialogueSegments = createVisualNovelDisplaySegments('守卫立刻反对：“这里禁止通行。”', {
     fallbackSpeaker: 'Dungeon Master',
     knownSpeakers: ['Pippa'],
 });
-assert.equal(unknownNarrativeDialogueSegments[0].type, 'narration');
-assert.equal(unknownNarrativeDialogueSegments[0].speaker, '旁白');
+assert.equal(inferredGuardDialogueSegments[0].type, 'dialogue');
+assert.equal(inferredGuardDialogueSegments[0].speaker, '守卫');
+assert.equal(inferredGuardDialogueSegments[0].speakerConfidence, 'inferred');
+assert.match(inferredGuardDialogueSegments[0].text, /守卫立刻反对/u);
 
 const inferredNewSpeakerSegments = createVisualNovelDisplaySegments('约翰立刻反对：“这里禁止通行。”', {
     fallbackSpeaker: 'Dungeon Master',

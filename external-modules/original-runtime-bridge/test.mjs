@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { request as httpRequest } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
     BrowserOriginalRuntimeBridge,
     createOriginalRuntimeBridgeServer,
     createSignedBridgeProof,
+    probeConfiguredLlm,
 } from './server.mjs';
 
 const proofSecret = 'test-proof-secret';
@@ -238,9 +240,28 @@ const fakeRuntime = {
 
 const server = createOriginalRuntimeBridgeServer({
     runtime: fakeRuntime,
-    allowedOrigins: ['http://127.0.0.1:8001'],
+    allowedOrigins: ['http://127.0.0.1:8000'],
     authToken,
     proofSecret,
+    providerSettingsReader: () => ({
+        provider: 'claude',
+        model: 'claude-sonnet-4-6',
+        reverseProxy: 'https://proxy.example.test/v1',
+        proxyPassword: 'test-secret-must-not-leak',
+    }),
+    fetchImpl: async (url, options) => {
+        assert.equal(String(url), 'https://proxy.example.test/v1/messages');
+        assert.equal(options.headers['anthropic-version'], '2023-06-01');
+        assert.equal(options.headers['x-api-key'], 'test-secret-must-not-leak');
+        const request = JSON.parse(options.body);
+        assert.equal(request.model, 'claude-sonnet-4-6');
+        assert.equal(request.max_tokens, 8);
+        assert.deepEqual(request.messages, [{ role: 'user', content: 'Reply with OK.' }]);
+        return new Response(JSON.stringify({ content: [{ type: 'text', text: 'OK' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+        });
+    },
     logger: {
         warn(...args) {
             warnings.push(args);
@@ -264,7 +285,7 @@ try {
         },
     });
     assert.equal(optionsResponse.status, 204);
-    assert.equal(optionsResponse.headers.get('access-control-allow-origin'), 'http://127.0.0.1:8001');
+    assert.equal(optionsResponse.headers.get('access-control-allow-origin'), null);
     assert.equal(optionsResponse.headers.get('access-control-allow-headers'), 'Content-Type, Authorization');
 
     const unauthenticated = await postGenerate(baseUrl, {
@@ -280,6 +301,53 @@ try {
     assert.equal(health.mode, 'sillytavern-original-runtime-bridge');
     assert.equal(health.authRequired, true);
     assert.equal(health.proofRequired, true);
+    assert.equal(health.proofConfigured, true);
+
+    const llmHealthResponse = await fetch(`${baseUrl}/v1/llm-health`, {
+        method: 'POST',
+        headers: { ...authHeaders(), Origin: 'http://127.0.0.1:8000', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ protocolVersion: 'galgame.llm-health.v1' }),
+    });
+    assert.equal(llmHealthResponse.status, 200);
+    const llmHealth = await llmHealthResponse.json();
+    assert.deepEqual(Object.keys(llmHealth).sort(), ['checkedAt', 'errorCode', 'latencyMs', 'model', 'ok', 'protocolVersion', 'provider'].sort());
+    assert.equal(llmHealth.ok, true);
+    assert.equal(llmHealth.provider, 'claude');
+    assert.equal(llmHealth.model, 'claude-sonnet-4-6');
+    assert.equal(JSON.stringify(llmHealth).includes('test-secret'), false);
+    assert.equal(JSON.stringify(llmHealth).includes('OK'), false);
+
+    const llmHealthForbiddenOrigin = await fetch(`${baseUrl}/v1/llm-health`, {
+        method: 'POST',
+        headers: { ...authHeaders(), Origin: 'https://attacker.example', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ protocolVersion: 'galgame.llm-health.v1' }),
+    });
+    assert.equal(llmHealthForbiddenOrigin.status, 403);
+    assert.equal((await llmHealthForbiddenOrigin.json()).errorCode, 'LLM_HEALTH_ORIGIN_NOT_ALLOWED');
+
+    const retiredOrigin = await fetch(`${baseUrl}/v1/llm-health`, {
+        method: 'POST',
+        headers: { ...authHeaders(), Origin: 'http://127.0.0.1:8001', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ protocolVersion: 'galgame.llm-health.v1' }),
+    });
+    assert.equal(retiredOrigin.status, 403);
+    assert.equal((await retiredOrigin.json()).errorCode, 'LLM_HEALTH_ORIGIN_NOT_ALLOWED');
+
+    const llmHealthSimpleRequest = await fetch(`${baseUrl}/v1/llm-health`, {
+        method: 'POST',
+        headers: { ...authHeaders(), Origin: 'http://127.0.0.1:8000', 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ protocolVersion: 'galgame.llm-health.v1' }),
+    });
+    assert.equal(llmHealthSimpleRequest.status, 415);
+    assert.equal((await llmHealthSimpleRequest.json()).errorCode, 'LLM_HEALTH_CONTENT_TYPE_REQUIRED');
+
+    const badLlmHealthProtocol = await fetch(`${baseUrl}/v1/llm-health`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ protocolVersion: 'wrong' }),
+    });
+    assert.equal(badLlmHealthProtocol.status, 400);
+    assert.equal((await badLlmHealthProtocol.json()).errorCode, 'LLM_HEALTH_PROTOCOL_INVALID');
 
     const invalid = await postGenerate(baseUrl, {
         headers: authHeaders(),
@@ -435,6 +503,7 @@ try {
     assert.equal(calls.length, callCountBeforeStoppedGenerate);
 
     await runPendingGenerationStopRegression();
+    await runShutdownGateRegression();
     await runProviderRetryRegression();
     await runNonRetryableBindingRegression();
 
@@ -443,11 +512,25 @@ try {
     await new Promise((resolve) => server.close(resolve));
 }
 
+const failedLlmProbe = await probeConfiguredLlm({
+    settings: {
+        provider: 'claude', model: 'claude-sonnet-4-6',
+        reverseProxy: 'https://proxy.example.test/v1', proxyPassword: 'secret-not-to-return',
+    },
+    fetchImpl: async () => new Response(JSON.stringify({ error: { message: 'secret-not-to-return upstream internal detail' } }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+    }),
+});
+assert.equal(failedLlmProbe.ok, false);
+assert.equal(failedLlmProbe.errorCode, 'LLM_UPSTREAM_HTTP_401');
+assert.equal(JSON.stringify(failedLlmProbe).includes('secret-not-to-return'), false);
+
 async function runPendingGenerationStopRegression() {
     const pendingRuntime = new PendingRuntime();
     const pendingServer = createOriginalRuntimeBridgeServer({
         runtime: pendingRuntime,
-        allowedOrigins: ['http://127.0.0.1:8001'],
+        allowedOrigins: ['http://127.0.0.1:8000'],
         authToken,
         proofSecret,
         logger: quietLogger(),
@@ -520,6 +603,149 @@ async function runPendingGenerationStopRegression() {
         assert.equal(pendingRuntime.unsafeCalls, 1);
     } finally {
         await new Promise((resolve) => pendingServer.close(resolve));
+    }
+}
+
+async function runShutdownGateRegression() {
+    let nowMs = 1_000;
+    const gateRuntime = {
+        unsafeCalls: 0,
+        getStatus: () => ({ pending: false, stale: false, stopping: false }),
+        healthCheck: async () => ({ ok: true, ready: true }),
+        isStopping: () => false,
+        async generateReply() {
+            this.unsafeCalls += 1;
+            return { chatId: targetChatId, generatedText: 'lease expired safely', diagnostics: {} };
+        },
+    };
+    const gateServer = createOriginalRuntimeBridgeServer({
+        runtime: gateRuntime,
+        allowedOrigins: ['http://127.0.0.1:8000'],
+        authToken,
+        proofSecret,
+        logger: quietLogger(),
+        shutdownGateTtlMs: 2_000,
+        now: () => nowMs,
+    });
+    await new Promise((resolve, reject) => {
+        gateServer.once('error', reject);
+        gateServer.listen(0, '127.0.0.1', resolve);
+    });
+    try {
+        const baseUrl = `http://127.0.0.1:${gateServer.address().port}`;
+        const gateRequest = (body) => fetch(`${baseUrl}${body.action === 'release' ? '/v1/shutdown-gate/release' : '/v1/shutdown-gate'}`, {
+            method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        const protocolVersion = 'galgame.original-runtime-shutdown-gate.v1';
+        const acquired = await gateRequest({ protocolVersion, action: 'acquire' });
+        assert.equal(acquired.status, 200);
+        const lease = await acquired.json();
+        assert.equal(lease.shutdownGate, true);
+        const renewRequest = (gateId) => fetch(`${baseUrl}/v1/shutdown-gate/renew`, {
+            method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ protocolVersion, action: 'renew', gateId }),
+        });
+        assert.equal((await renewRequest('another-owner')).status, 409, 'only the owner gate id can renew a shutdown lease');
+        nowMs += 1_500;
+        const renewed = await renewRequest(lease.gateId);
+        assert.equal(renewed.status, 200);
+        assert.equal((await renewed.json()).renewed, true);
+        nowMs += 600;
+        const health = await fetch(`${baseUrl}/health`, { headers: authHeaders() }).then((response) => response.json());
+        assert.equal(health.shutdownGate, true, 'renewal extends the gate beyond its original expiry');
+        assert.equal(health.ready, false);
+        const gatedGeneration = await postGenerate(baseUrl, {
+            headers: authHeaders(),
+            body: validGenerateBody({ bridgeProof: signedProof({ nonce: 'shutdown-gate-blocks-generation' }) }),
+        });
+        assert.equal(gatedGeneration.status, 503);
+        assert.equal((await gatedGeneration.json()).errorCode, 'BRIDGE_SHUTDOWN_IN_PROGRESS');
+        assert.equal(gateRuntime.unsafeCalls, 0, 'generation cannot enter runtime while shutdown lease is held');
+        const gatedStop = await fetch(`${baseUrl}/v1/stop`, {
+            method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ timeoutMs: 1 }),
+        });
+        assert.equal(gatedStop.status, 409, 'a competing stop request cannot mutate bridge state under the shutdown lease');
+
+        const wrongRelease = await gateRequest({ protocolVersion, action: 'release', gateId: 'wrong-lease' });
+        assert.equal(wrongRelease.status, 409);
+        assert.equal((await wrongRelease.json()).errorCode, 'BRIDGE_SHUTDOWN_GATE_MISMATCH');
+        const released = await gateRequest({ protocolVersion, action: 'release', gateId: lease.gateId });
+        assert.equal(released.status, 200);
+        assert.equal((await released.json()).released, true);
+        const afterRelease = await fetch(`${baseUrl}/health`, { headers: authHeaders() }).then((response) => response.json());
+        assert.equal(afterRelease.shutdownGate, false);
+        assert.equal(afterRelease.ready, true);
+
+        const abandonedAcquire = await gateRequest({ protocolVersion, action: 'acquire' });
+        assert.equal(abandonedAcquire.status, 200);
+        const abandonedLease = await abandonedAcquire.json();
+        assert.equal(abandonedLease.shutdownGate, true);
+        nowMs += 2_001;
+        const recoveredHealth = await fetch(`${baseUrl}/health`, { headers: authHeaders() }).then((response) => response.json());
+        assert.equal(recoveredHealth.shutdownGate, false, 'expired shutdown leases are lazily cleared by health checks');
+        const generationAfterExpiry = await postGenerate(baseUrl, {
+            headers: authHeaders(),
+            body: validGenerateBody({ bridgeProof: signedProof({ nonce: 'expired-shutdown-gate-allows-generation' }) }),
+        });
+        assert.equal(generationAfterExpiry.status, 200, 'a crashed supervisor cannot strand the runtime after lease expiry');
+        assert.equal(gateRuntime.unsafeCalls, 1);
+    } finally {
+        await new Promise((resolve) => gateServer.close(resolve));
+    }
+
+    const stopAdmissionRuntime = {
+        stopCalls: 0,
+        getStatus: () => ({ pending: false, stale: false, stopping: false }),
+        healthCheck: async () => ({ ok: true, ready: true }),
+        isStopping: () => false,
+        async stop() { this.stopCalls += 1; return { stopped: true }; },
+    };
+    const slowStopServer = createOriginalRuntimeBridgeServer({
+        runtime: stopAdmissionRuntime,
+        allowedOrigins: ['http://127.0.0.1:8000'],
+        authToken,
+        proofSecret,
+        logger: quietLogger(),
+    });
+    await new Promise((resolve, reject) => {
+        slowStopServer.once('error', reject);
+        slowStopServer.listen(0, '127.0.0.1', resolve);
+    });
+    try {
+        const baseUrl = `http://127.0.0.1:${slowStopServer.address().port}`;
+        const body = JSON.stringify({ timeoutMs: 10 });
+        const pendingStop = httpRequest(baseUrl, {
+            method: 'POST',
+            path: '/v1/stop',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        });
+        const stopResult = new Promise((resolve, reject) => {
+            pendingStop.once('response', (response) => {
+                const chunks = [];
+                response.on('data', (chunk) => chunks.push(chunk));
+                response.on('end', () => resolve({ status: response.statusCode, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
+            });
+            pendingStop.once('error', reject);
+        });
+        pendingStop.write('{');
+        await new Promise((resolve) => setImmediate(resolve));
+        const gateResponse = await fetch(`${baseUrl}/v1/shutdown-gate`, {
+            method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ protocolVersion: 'galgame.original-runtime-shutdown-gate.v1', action: 'acquire' }),
+        });
+        assert.equal(gateResponse.status, 409, 'shutdown gate cannot overtake a stop request with a slow body');
+        assert.equal((await gateResponse.json()).errorCode, 'BRIDGE_SHUTDOWN_GATE_BUSY');
+        pendingStop.end(body.slice(1));
+        const stopped = await stopResult;
+        assert.equal(stopped.status, 200);
+        assert.equal(stopAdmissionRuntime.stopCalls, 1);
+        const gateAfterStop = await fetch(`${baseUrl}/v1/shutdown-gate`, {
+            method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ protocolVersion: 'galgame.original-runtime-shutdown-gate.v1', action: 'acquire' }),
+        });
+        assert.equal(gateAfterStop.status, 200, 'gate acquisition is available after the admitted stop finishes');
+    } finally {
+        await new Promise((resolve) => slowStopServer.close(resolve));
     }
 }
 
@@ -597,7 +823,7 @@ async function postGenerate(baseUrl, { headers = {}, body } = {}) {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            Origin: 'http://127.0.0.1:8001',
+            Origin: 'http://127.0.0.1:8000',
             ...headers,
         },
         body: JSON.stringify(body),

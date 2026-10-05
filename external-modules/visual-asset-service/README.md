@@ -25,10 +25,10 @@ node external-modules/visual-asset-service/server.mjs
 From the repository root on Windows, the self-owned launcher is:
 
 ```powershell
-.\StartGalgameVisualAssetService.cmd
+.\external-modules\process-supervisor\launchers\StartGalgameVisualAssetService.cmd
 ```
 
-`StartGalgameServices.cmd` calls that launcher after the config service and
+`external-modules/process-supervisor/launchers/StartGalgameServices.cmd` calls that launcher after the config service and
 original-runtime bridge. Its health output is diagnostic only: if the
 SillyTavern route or bridge is unavailable, the player must remain in its
 normal recovery state and no local story is substituted.
@@ -39,7 +39,33 @@ Default URL:
 http://127.0.0.1:8798/game-admin/
 ```
 
-The Windows launcher `StartGalgameVisualAssetService.cmd` uses the service-owned
+## Player Presentation-Analysis Proxy
+
+The player browser uses the already allowlisted visual-service origin (8798)
+for the visual-analysis contracts, instead of opening another loopback port.
+The service exposes only these fixed routes:
+
+- `GET /v1/presentation/health`
+- `POST /v1/presentation/annotations`
+- `POST /v1/presentation/scene-continuity`
+
+The proxy accepts only configured player origins and fixed route contracts.
+Scene-continuity requests use a CORS-safelisted `text/plain` browser transport;
+the endpoint path and closed JSON `schemaVersion` keep the request versioned,
+and 8798 normalizes it to the internal JSON/version-header contract before
+forwarding. The prior JSON plus version-header transport remains accepted for
+compatibility. Requests go only to the fixed loopback analyzer at
+`127.0.0.1:8801`; callers cannot provide a URL, host, path, credential, or
+cookie to forward. Request and response sizes are bounded, and browser
+cancellation and timeouts are forwarded. The 8801 service remains responsible
+for loading the visual-only provider credential and invoking the analyzer.
+The player's single visual-health status is ready only when the catalog is
+enabled, its active catalog and visual-profile IDs/revisions/hashes are complete
+and consistent, and this analyzer route reports both presentation and
+scene-continuity scopes ready. An HTTP 200 with a disabled or empty catalog is
+not sufficient.
+
+The Windows launcher `external-modules/process-supervisor/launchers/StartGalgameVisualAssetService.cmd` uses the service-owned
 data directory `external-modules/visual-asset-service/data`. This directory is
 persistent runtime data for metadata, PNG content, analysis cache and visual
 control; it is not evidence or state data, is ignored by Git, and must be
@@ -103,7 +129,7 @@ Anthropic Messages credential for upload-time vision and runtime visible-text
 hints, use:
 
 ```text
-StartGalgameVisualAnalyzerTest.cmd
+external-modules/process-supervisor/launchers/StartGalgameVisualAnalyzerTest.cmd
 ```
 
 The wrapper prompts once for `视觉服务密钥（隐藏输入）`, starts the child service on
@@ -115,7 +141,7 @@ constructing the child environment, never puts the token in command-line
 arguments, and clears its temporary string/BSTR/environment references on
 exit. It records only non-sensitive PID/health diagnostics.
 
-The ordinary `StartGalgameVisualAssetService.cmd` explicitly clears both token
+The ordinary `external-modules/process-supervisor/launchers/StartGalgameVisualAssetService.cmd` explicitly clears both token
 variables and therefore remains a no-provider launcher unless a separate
 server-side deployment supplies configuration. Do not paste a token into a
 browser field, URL, command argument, repository file or evidence record.
@@ -191,6 +217,17 @@ add runtime LLM calls or manifest/profile auto-binding; the existing active
 The separately gated VISUAL-RUNTIME-1 contract is documented below and remains
 server-only.
 
+Runtime player matching excludes undersized stage assets before scoring:
+background candidates must be at least 640×360 with a landscape aspect ratio of
+1.2 or greater, and dynamic character candidates must be at least 320×320.
+Exact manifest-bound character assets remain eligible after normal asset
+validation. When optional asset analysis failed, hash-bound published taxonomy
+codes (only codes scoped to the candidate's entity type) may still participate
+in runtime scoring, but require exact overlap with current visible evidence.
+Failed-analysis character candidates within five score points of the best
+candidate are treated as ambiguous and return `unknown_character`; the matcher
+never breaks that tie by catalog order.
+
 ## VISUAL-RUNTIME-1 Visible-Context Hint Adapter
 
 The existing `POST /v1/core/visual-decisions` route also accepts the closed
@@ -239,7 +276,15 @@ failed` plus a bounded error code. It never fabricates tags or deletes an
 asset. Runtime hint cache is memory-only (256 entries, 300-second TTL,
 in-flight deduplication) and is cleared on restart. Only validated successful
 `VisualRuntimeHintV1` objects are cached; failure wrappers and error details are
-never cached, so a later request may retry after a transient failure. The
+never cached, so a later request may retry after a transient failure.
+
+Runtime decision request validation preserves the closed schema and returns
+bounded error codes for invalid fields, unknown/missing fields, duplicate JSON
+keys, BOMs and size limits. Projected display labels and visible attribute
+values accept Unicode symbols as well as letters, numbers, punctuation and
+spaces, matching the player adapter's sanitizer; control characters remain
+rejected. Error responses never include the rejected value or story text.
+
 The service now uses RUNTIME-3, a closed dictionary that retains all revision-2
 codes and adds stable character species/role and presentation tags
 `character.masculine`, `character.feminine` and `character.androgynous`.
