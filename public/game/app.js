@@ -1,4 +1,4 @@
-import { createReleaseStore } from './shared/config-service.js?v=auto-a91c272b35f1';
+import { createReleaseStore } from './shared/config-service.js?v=auto-fdcc7c7c5302';
 import {
     getAssetUrl,
     getVisualCharacterBindings,
@@ -7,13 +7,13 @@ import {
     getActiveSillyTavernBindings,
     materializeManifestForArc,
     resolveAdaptivePresentationProfileBinding,
-} from './shared/protocol.js?v=auto-a91c272b35f1';
+} from './shared/protocol.js?v=auto-fdcc7c7c5302';
 import {
     AUTO_SAVE_ID,
     createCanonicalPlayerSaveRelease,
     createPlayerSaveStore,
     manualSaveIds,
-} from './shared/player-save.js?v=auto-a91c272b35f1';
+} from './shared/player-save.js?v=auto-fdcc7c7c5302';
 import {
     createCoreVisualDisplayEntityHints,
     createCoreVisualDisplayEntityKey,
@@ -21,11 +21,11 @@ import {
     createVisualNovelDisplaySegments,
     OriginalRuntimeBridgeClient,
     SillyTavernOriginalChatBridge,
-} from './shared/sillytavern-adapter.js?v=auto-a91c272b35f1';
-import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-a91c272b35f1';
-import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-a91c272b35f1';
-import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-a91c272b35f1';
-import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-a91c272b35f1';
+} from './shared/sillytavern-adapter.js?v=auto-fdcc7c7c5302';
+import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-fdcc7c7c5302';
+import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-fdcc7c7c5302';
+import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-fdcc7c7c5302';
+import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-fdcc7c7c5302';
 
 const releaseStore = createReleaseStore(null, { fallbackToLocal: false });
 const playerSaveStore = createPlayerSaveStore();
@@ -93,6 +93,7 @@ let immediateVisualCharacterIdentity = '';
 
 const ui = {
     connectionStatus: document.querySelector('#connectionStatus'),
+    connectionResetButton: document.querySelector('#connectionResetButton'),
     titleBackdrop: document.querySelector('#titleBackdrop'),
     titleHeroine: document.querySelector('.title-heroine'),
     gameScreen: document.querySelector('#gameScreen'),
@@ -179,6 +180,7 @@ let activeMessageIndex = -1;
 let pageIndex = 0;
 let inputPending = false;
 let generationPending = false;
+let connectionResetInFlight = false;
 let textSizeMode = 'standard';
 let motionEnabled = true;
 let releaseReadyPromise = null;
@@ -227,6 +229,11 @@ if (globalThis.__GALGAME_PLAYER_TEMPLATE_MATRIX_SMOKE__) {
     globalThis.__GALGAME_TEST_CONTINUE__ = () => continueFromSaveOrLatest();
     globalThis.__GALGAME_TEST_LOAD_SAVE__ = (saveId = AUTO_SAVE_ID) => loadPlayerSave(saveId);
     globalThis.__GALGAME_TEST_GET_ACTIVE_CHAT__ = () => activeChatSnapshot;
+    globalThis.__GALGAME_TEST_SET_ACTIVE_CHAT__ = (snapshot) => {
+        activeChatSnapshot = snapshot;
+    };
+    globalThis.__GALGAME_TEST_RECOVER_CONTENT_AFTER_RESET__ = () => recoverPlayerContentAfterReset();
+    globalThis.__GALGAME_TEST_RENDER_CONNECTION_HEALTH__ = (snapshot) => renderConnectionHealth(snapshot);
 }
 
 async function bootstrap() {
@@ -340,6 +347,92 @@ function renderConnectionHealth(snapshot) {
     ui.connectionStatus.textContent = `${overallLabel} · ${parts.join(' · ')}`;
     ui.connectionStatus.dataset.connectionState = snapshot.overall;
     ui.connectionStatus.title = parts.join('\n');
+    if (ui.connectionResetButton) {
+        const generationFailed = generation?.status === 'down';
+        const runtimeNeedsReset = Boolean(runtime?.status === 'pending'
+            || runtime?.details?.connectionState === 'generating'
+            || runtime?.details?.stale
+            || runtime?.details?.stopping);
+        const abnormal = snapshot.overall === 'degraded' || snapshot.overall === 'down' || generationFailed || runtimeNeedsReset;
+        ui.connectionResetButton.hidden = !abnormal && !connectionResetInFlight;
+        ui.connectionResetButton.disabled = connectionResetInFlight;
+        ui.connectionResetButton.textContent = connectionResetInFlight ? '复位检查中…' : '复位';
+        ui.connectionResetButton.setAttribute('aria-busy', connectionResetInFlight ? 'true' : 'false');
+    }
+}
+
+async function resetConnectionState() {
+    if (!connectionHealthMonitor || connectionResetInFlight) return;
+    connectionResetInFlight = true;
+    renderConnectionHealth(connectionHealthMonitor.getSnapshot());
+    // Invalidate late visual responses while preserving the already displayed
+    // scene/portrait. The active message is re-projected below after probing.
+    const visualToken = ++visualBundleRequestToken;
+    resetCoreVisualAvailability();
+    try {
+        const snapshot = await connectionHealthMonitor.reset({
+            reason: 'user-reset',
+            preserveGenerationPending: generationPending,
+        });
+        let contentRecovered = null;
+        const contentServicesReady = snapshot.services?.sillyTavern?.status === 'up'
+            && snapshot.services?.configService?.status === 'up';
+        if (contentServicesReady && !generationPending) {
+            try {
+                contentRecovered = await recoverPlayerContentAfterReset();
+            } catch (error) {
+                console.warn('Player content recovery after reset failed.', error);
+                contentRecovered = false;
+            }
+        }
+        if (activeChatSnapshot && activeMessageIndex >= 0) {
+            void renderCoreVisualPresentation(activeChatSnapshot, activeMessageIndex, visualToken);
+        }
+        if (snapshot.overall !== 'up') {
+            showToast('仍有连接异常，请稍后再试');
+        } else if (generationPending) {
+            showToast('连接正常，当前回应仍在处理中');
+        } else if (contentRecovered === false) {
+            showToast('连接已恢复，但当前内容还没读到；请稍后再试');
+        } else if (contentRecovered === true) {
+            showToast('连接已恢复，当前内容已重新同步');
+        } else {
+            showToast('连接已恢复');
+        }
+    } catch (error) {
+        console.warn('Connection health reset failed.', error);
+        showToast('连接检查未完成，请稍后再试');
+    } finally {
+        connectionResetInFlight = false;
+        renderConnectionHealth(connectionHealthMonitor.getSnapshot());
+    }
+}
+
+async function recoverPlayerContentAfterReset() {
+    if (ui.gameScreen?.hidden) {
+        if (!release || !manifest) {
+            await refreshRelease();
+        }
+        await refreshPlayableStories();
+        renderTitle();
+        await refreshTitleSaveState();
+        return Boolean(release && manifest);
+    }
+
+    if (activeChatSnapshot?.fileName && manifest) {
+        const latestSnapshot = await loadLatestSnapshotForActiveChat(activeChatSnapshot);
+        if (latestSnapshot?.ok && latestSnapshot.fileName === activeChatSnapshot.fileName) {
+            activeChatSnapshot = latestSnapshot;
+            renderChatSnapshot(latestSnapshot, getLatestSnapshotRenderOptions(latestSnapshot));
+            return true;
+        }
+        return false;
+    }
+
+    // Without an active chat anchor, selecting an auto-save or latest chat can
+    // silently switch the player's current branch. Preserve the stage and save
+    // until the player explicitly chooses a saved chat.
+    return false;
 }
 
 async function refreshRelease() {
@@ -372,6 +465,9 @@ async function ensureReleaseReady() {
 }
 
 function bindEvents() {
+    ui.connectionResetButton?.addEventListener('click', () => {
+        void resetConnectionState();
+    });
     ui.startButton.addEventListener('click', () => {
         void startNewGame();
     });
@@ -835,7 +931,11 @@ async function saveCurrentSlot(saveId = AUTO_SAVE_ID) {
     }
 }
 
-async function loadPlayerSave(saveId = AUTO_SAVE_ID, { silentFailure = false } = {}) {
+async function loadPlayerSave(saveId = AUTO_SAVE_ID, {
+    silentFailure = false,
+    requestReply = true,
+    persistSyncedProgress = true,
+} = {}) {
     const slot = await playerSaveStore.loadSlot(saveId).catch(() => null);
     if (!slot) {
         if (!silentFailure) {
@@ -861,12 +961,12 @@ async function loadPlayerSave(saveId = AUTO_SAVE_ID, { silentFailure = false } =
         activeChatSnapshot = snapshot;
         const restoreOptions = getSaveRestoreRenderOptions(snapshot, slot, saveId);
         renderChatSnapshot(snapshot, restoreOptions);
-        if (restoreOptions.syncedToLatest) {
+        if (restoreOptions.syncedToLatest && persistSyncedProgress) {
             void persistAutoSave(snapshot);
             showToast('已同步到最新回应');
         }
         closeDrawers();
-        if (snapshotAwaitsReply(snapshot)) {
+        if (requestReply && snapshotAwaitsReply(snapshot)) {
             void requestOriginalReply(snapshot);
         }
         return true;
@@ -1050,7 +1150,7 @@ async function submitPlayerMessage(message) {
     }
 }
 
-async function loadOriginalChat(mode = 'continue') {
+async function loadOriginalChat(mode = 'continue', { requestReply = true, persistSnapshot = true } = {}) {
     try {
         const snapshot = mode === 'start'
             ? await chatBridge.loadOpeningChat(manifest)
@@ -1061,8 +1161,10 @@ async function loadOriginalChat(mode = 'continue') {
         }
         activeChatSnapshot = snapshot;
         renderChatSnapshot(snapshot);
-        void persistAutoSave(snapshot);
-        if (snapshotAwaitsReply(snapshot)) {
+        if (persistSnapshot) {
+            void persistAutoSave(snapshot);
+        }
+        if (requestReply && snapshotAwaitsReply(snapshot)) {
             void requestOriginalReply(snapshot);
         }
     } catch (error) {

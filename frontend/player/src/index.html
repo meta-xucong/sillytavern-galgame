@@ -12,7 +12,10 @@
 </head>
 <body>
     <main class="app-shell">
-        <p id="connectionStatus" class="connection-status" role="status" aria-live="polite">连接检查中</p>
+        <div class="connection-health" aria-label="连接状态">
+            <p id="connectionStatus" class="connection-status" role="status" aria-live="polite">连接检查中</p>
+            <button id="connectionResetButton" class="connection-reset-button" type="button" hidden>复位</button>
+        </div>
         <section id="titleScreen" class="screen title-screen" aria-label="标题画面">
             <div class="title-backdrop" id="titleBackdrop"></div>
             <div class="title-heroine" aria-hidden="true"></div>

@@ -8,11 +8,14 @@
     <meta name="galgame-sillytavern-runtime-base" content="">
     <meta name="galgame-original-runtime-bridge" content="">
     <title>Galgame Player</title>
-    <link rel="stylesheet" href="./styles.css?v=auto-a91c272b35f1">
+    <link rel="stylesheet" href="./styles.css?v=auto-fdcc7c7c5302">
 </head>
 <body>
     <main class="app-shell">
-        <p id="connectionStatus" class="connection-status" role="status" aria-live="polite">连接检查中</p>
+        <div class="connection-health" aria-label="连接状态">
+            <p id="connectionStatus" class="connection-status" role="status" aria-live="polite">连接检查中</p>
+            <button id="connectionResetButton" class="connection-reset-button" type="button" hidden>复位</button>
+        </div>
         <section id="titleScreen" class="screen title-screen" aria-label="标题画面">
             <div class="title-backdrop" id="titleBackdrop"></div>
             <div class="title-heroine" aria-hidden="true"></div>
@@ -131,6 +134,6 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-    <script type="module" src="./app.js?v=auto-a91c272b35f1"></script>
+    <script type="module" src="./app.js?v=auto-fdcc7c7c5302"></script>
 </body>
 </html>

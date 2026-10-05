@@ -20,12 +20,20 @@ body {
     height: 100%;
 }
 
-.connection-status {
+.connection-health {
     position: fixed;
     z-index: 30;
     top: 10px;
     right: 14px;
     max-width: min(90vw, 720px);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.connection-status {
+    min-width: 0;
+    overflow: hidden;
     margin: 0;
     padding: 5px 10px;
     border: 1px solid rgba(255, 255, 255, 0.16);
@@ -34,8 +42,32 @@ body {
     color: rgba(245, 248, 255, 0.78);
     font-size: 11px;
     letter-spacing: .02em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     pointer-events: none;
     backdrop-filter: blur(8px);
+}
+
+.connection-reset-button {
+    min-height: 26px;
+    padding: 3px 9px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 999px;
+    background: rgba(30, 35, 48, 0.9);
+    color: rgba(255, 250, 244, 0.9);
+    font-size: 11px;
+    white-space: nowrap;
+    pointer-events: auto;
+}
+
+.connection-reset-button:hover:not(:disabled),
+.connection-reset-button:focus-visible {
+    border-color: rgba(241, 198, 111, 0.8);
+    color: #ffe7ae;
+}
+
+.connection-reset-button:disabled {
+    opacity: 0.65;
 }
 
 .connection-status[data-connection-state="up"] {

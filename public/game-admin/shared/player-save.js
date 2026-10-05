@@ -4,8 +4,8 @@ import {
     nowIso,
     resolveAdaptivePresentationProfileBinding,
     sanitizeText,
-} from './protocol.js?v=auto-a91c272b35f1';
-import { createStorageBackend } from './storage.js?v=auto-a91c272b35f1';
+} from './protocol.js?v=auto-fdcc7c7c5302';
+import { createStorageBackend } from './storage.js?v=auto-fdcc7c7c5302';
 
 export const PLAYER_SAVE_PROTOCOL_VERSION = 'galgame.player-save.v1';
 export const AUTO_SAVE_ID = 'auto';
