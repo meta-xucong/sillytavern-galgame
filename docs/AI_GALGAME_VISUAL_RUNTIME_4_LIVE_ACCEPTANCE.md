@@ -24,13 +24,13 @@ SillyTavern 不接触该 token；运行时模型只返回视觉 hint，不生成
 Windows 操作者使用仓库根目录的：
 
 ```text
-StartGalgameVisualAnalyzerTest.cmd
+external-modules/process-supervisor/launchers/StartGalgameVisualAnalyzerTest.cmd
 ```
 
 入口优先读取本机已配置的 `.env.local`，不再重复索取密钥；只在 provider 配置缺失时使用隐藏输入回退，并在 child process environment 设置：
 
 ```text
-GALGAME_VISUAL_PROVIDER_ENV_FILE=D:\\AI\\alchemy_video_OS\\.env.local
+GALGAME_VISUAL_PROVIDER_ENV_FILE=<optional private config path; defaults to repository .env.local>
 GALGAME_VISUAL_ANALYZER_BASE_URL=https://aiself.vip/v1
 GALGAME_VISUAL_ANALYZER_MODEL=doubao-seed-2-0-lite-260428
 GALGAME_VISUAL_ANALYZER_REQUEST_STYLE=openai_chat_completions_vision
@@ -43,7 +43,7 @@ GALGAME_VISUAL_ANALYZER_CACHE_SCOPE=controlled-analyzer-test-doubao-v1
 GALGAME_VISUAL_RUNTIME_CACHE_SCOPE=controlled-runtime-live-v1
 ```
 
-普通 `StartGalgameVisualAssetService.cmd` 不携带 token，只能启动未配置 analyzer 的
+普通 `external-modules/process-supervisor/launchers/StartGalgameVisualAssetService.cmd` 不携带 token，只能启动未配置 analyzer 的
 本地服务；此时上传仍可保存图片，但 analysis/runtime 状态为 unavailable，不能声称
 生产 AI 已启用。
 
@@ -103,7 +103,7 @@ manifest/profile context 后，才可运行一次 real acceptance；否则停止
 
 ## 5. Doubao provider adapter audit addendum
 
-- `StartGalgameVisualAnalyzerTest.cmd` now discovers the configured provider automatically; a normal launch logs only source=dotenv, host, model and request styles.
+- `external-modules/process-supervisor/launchers/StartGalgameVisualAnalyzerTest.cmd` now discovers the configured provider automatically; a normal launch logs only source=dotenv, host, model and request styles.
 - Analyzer uses `openai_chat_completions_vision`; runtime uses `openai_chat_completions_text`; both normalize `/v1` to `/v1/chat/completions` and validate URL origin.
 - Analyzer parser accepts only one OpenAI `choices` item with assistant string content, then validates the exact five-field closed output.
 - Runtime prompt carries the current dictionary version/hash, lower-case enum contract, one entity per type rule and full allowed code set so Doubao output can pass the local validator without guessed fields.

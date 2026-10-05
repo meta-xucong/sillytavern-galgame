@@ -1,11 +1,13 @@
 {
   "schemaVersion": "galgame.side-art-manifest.v1",
   "description": "Curated square side-panel illustrations for equipment, item, and skill entities.",
+  "legacyCharacterChannels": [],
   "assets": [
     {
       "assetId": "asset_curated_character-narrator-ink-emblem",
       "fileName": "narrator-ink-emblem.png",
       "assetType": "character",
+      "channel": "narrator",
       "title": "Ink and Constellation Narrator",
       "tagCodes": ["character.androgynous"],
       "featureCodes": ["feature.transparent", "feature.portrait"]
@@ -14,6 +16,7 @@
       "assetId": "asset_curated_player-neutral-compass",
       "fileName": "player-neutral-compass.png",
       "assetType": "character",
+      "channel": "player",
       "title": "Neutral Compass Player",
       "tagCodes": ["character.androgynous"],
       "featureCodes": ["feature.transparent", "feature.portrait"]

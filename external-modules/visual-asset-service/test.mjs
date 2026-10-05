@@ -10,7 +10,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import {
   BUILTIN_UNKNOWN_ASSETS,
+  CATALOG_SCHEMA_VERSION,
   CATALOG_DRAFT_SCHEMA_VERSION,
+  CATALOG_V2_SCHEMA_VERSION,
   CANDIDATE_DECISION_INPUT_SCHEMA_VERSION,
   CANDIDATE_DECISION_SCHEMA_VERSION,
   VISUAL_CORE_CONTEXT_RESPONSE_VERSION,
@@ -40,12 +42,19 @@ import {
   FileVisualBindingStore,
   FileVisualAssetStore,
   FileVisualControlStore,
+  MemoryVisualCatalogMigrationJournalStore,
   MemoryContentStore,
   MemoryProofReplayStore,
   MemoryRestoreReplayStore,
   MemoryVisualBindingStore,
   MemoryVisualAssetStore,
   MemoryVisualControlStore,
+  VISUAL_HTTP_ROUTE_ACCESS_MANIFEST,
+  resolveVisualRouteAccess,
+  migrationJournalHash,
+  validateMigrationJournalRecord,
+  startVisualAssetHttpServer,
+  acquireVisualServiceDataRootLease,
   PNG_MIME,
   UNKNOWN_COMPATIBILITY_REPORT_SCHEMA_VERSION,
   UPLOAD_SCHEMA_VERSION,
@@ -72,6 +81,12 @@ import {
   canonicalJson,
   base64UrlEncodeCanonical,
 } from './server.mjs';
+import { buildCharacterChannelsForMergedCatalog, importSideArtAssets } from './import-side-art-assets.mjs';
+import { runPlayerCatalogRebuild } from './rebuild-player-catalog.mjs';
+import {
+  handlePresentationAnalysisProxyRequest,
+  resolvePresentationAnalysisProxyRoute,
+} from './presentation-analysis-proxy.mjs';
 
 const ADMIN_TOKEN = 'test-admin-token';
 const ORIGIN = 'http://127.0.0.1:41111';
@@ -82,9 +97,18 @@ const CORE_DEFAULT_LOCALHOST_ORIGIN = 'http://localhost:8001';
 
 async function main() {
   await testControlledLauncherStaticSecurity();
+  await testVisualRouteAccessRegistry();
+  await testPresentationAnalysisBrowserProxy();
+  await testSlowPresentationAnalysisDoesNotBlockVisualReads();
+  await testVisualDataRootLeaseStartupOrder();
+  await testCatalogMigrationJournalRecovery();
+  await testCatalogMigrationRecoveryRequestFence();
+  await testPlayerCatalogMigrationIdempotentRevalidation();
+  await testPlayerCatalogMigrationCli();
   await testCliEntrypoint();
   await testHealthAndAdminAuth();
   await testLocalAdminEntrypoint();
+  await testLocalAdminExplicitCatalogMigration();
   await testVisualAiTaggingAnalysis();
   await testPersistedAnalysisErrorCodeRestart();
   await testConfiguredAnalyzerHttpBoundary();
@@ -94,6 +118,10 @@ async function main() {
   await testSimpleVisualUploadChapterTwo();
   await testSimpleVisualPublishChapterThree();
   await testAssetUploadAndCatalogLifecycle();
+  await testCatalogChannelValidationAndRollback();
+  await testCatalogChannelDecisionIsolation();
+  await testLegacyVisualMatchChannelIsolation();
+  await testSideArtImporterChannelMigration();
   await testCorePublishedCatalogReads();
   await testCoreVisualContextRoute();
   await testRuntimeVisualDecisionV2();
@@ -113,17 +141,416 @@ async function main() {
   console.log('visual-asset-service CORE-2, CORE-3, CORE-4, VS-CODE-1, VS-CODE-2A, VS-CODE-2B-R, VS-CODE-2B-S-B, VS-CODE-3A-MA and VS-CODE-3B tests passed');
 }
 
+async function testVisualRouteAccessRegistry() {
+  const routedSamples = [
+    ['GET', '/v1/health', 'health'],
+    ['GET', '/v1/presentation/health', 'presentation-analysis'],
+    ['POST', '/v1/presentation/annotations', 'presentation-analysis'],
+    ['POST', '/v1/presentation/scene-continuity', 'presentation-analysis'],
+    ['GET', '/game-admin/', 'local-admin-static'],
+    ['HEAD', '/game-admin/app.js', 'local-admin-static'],
+    ['GET', '/v1/local-admin/visual/status', 'local-admin-api'],
+    ['POST', '/v1/local-admin/visual/upload', 'local-admin-api'],
+    ['GET', '/v1/local-admin/visual/catalog-migration/runtime', 'local-admin-api'],
+    ['POST', '/v1/local-admin/visual/catalogs/draft', 'local-admin-api'],
+    ['POST', '/v1/local-admin/visual/catalogs/catalog-stage/1/validate', 'local-admin-api'],
+    ['POST', '/v1/local-admin/visual/catalogs/catalog-stage/1/publish', 'local-admin-api'],
+    ['POST', '/v1/local-admin/visual/catalog-migration/preview', 'local-admin-api'],
+    ['POST', '/v1/local-admin/visual/catalog-migration/activate', 'local-admin-api'],
+    ['POST', '/v1/local-admin/visual/catalog-migration/rollback', 'local-admin-api'],
+    ['OPTIONS', '/anything', 'cors-preflight'],
+    ['POST', '/v1/visual-match', 'visual-match'],
+    ['POST', '/v1/internal/visual-match', 'internal-visual-match'],
+    ['POST', '/v1/internal/assets/metadata-resolve', 'internal-asset-metadata'],
+    ['POST', '/v1/internal/assets/content-read', 'internal-asset-content'],
+    ['POST', '/v1/visual/restore-bindings/rollback', 'restore-binding'],
+    ['GET', '/v1/core/visual-context', 'core-read'],
+    ['POST', '/v1/core/visual-decisions', 'core-write'],
+    ['GET', '/v1/admin/catalog-migration/runtime', 'admin-read'],
+    ['POST', '/v1/admin/catalog-migration/activate', 'admin-write'],
+  ];
+  for (const [method, pathname, route] of routedSamples) {
+    assert.equal(resolveVisualRouteAccess(method, pathname)?.route, route, `${method} ${pathname} has one registered access route`);
+  }
+  assert.equal(resolveVisualRouteAccess('DELETE', '/v1/admin/visual/status'), null);
+  assert.equal(resolveVisualRouteAccess('GET', '/v1/unregistered'), null);
+  assert.equal(resolveVisualRouteAccess('POST', '/v1/presentation/annotations')?.access, 'READ',
+    'the fixed annotation proxy does not mutate visual-service stores and must not block catalog reads');
+  assert.equal(resolveVisualRouteAccess('POST', '/v1/presentation/scene-continuity')?.access, 'READ',
+    'the fixed scene-analysis proxy does not mutate visual-service stores and must not block catalog reads');
+  assert.equal(new Set(VISUAL_HTTP_ROUTE_ACCESS_MANIFEST.map((entry) => `${entry.method} ${entry.pathPattern}`)).size,
+    VISUAL_HTTP_ROUTE_ACCESS_MANIFEST.length, 'route registry has no duplicate access entries');
+  assert.deepEqual(new Set(VISUAL_HTTP_ROUTE_ACCESS_MANIFEST.map((entry) => entry.route)), new Set([
+    'health', 'presentation-analysis', 'local-admin-static', 'local-admin-api', 'cors-preflight', 'visual-match', 'internal-visual-match',
+    'internal-asset-metadata', 'internal-asset-content', 'restore-binding', 'core-read', 'core-write', 'admin-read', 'admin-write',
+  ]), 'route manifest covers every HTTP dispatch family');
+}
+
+async function testVisualDataRootLeaseStartupOrder() {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'galgame-visual-lease-'));
+  let initialized = false;
+  let constructed = false;
+  try {
+    const started = await startVisualAssetHttpServer({
+      dataRoot: root, host: '127.0.0.1', port: 0,
+      createService(runtimeInfo) {
+        constructed = true;
+        assert.ok(existsSync(path.join(root, '.visual-asset-service.lease.json')), 'lease exists before stores/service are constructed');
+        assert.ok(runtimeInfo.serviceInstanceId);
+        return {
+          service: {
+            async initialize() { initialized = true; },
+            handleRequest(_req, res) {
+              assert.equal(initialized, true, 'no route can run before journal recovery/initialize');
+              res.statusCode = 200;
+              res.end('ready');
+            },
+          },
+        };
+      },
+    });
+    assert.equal(constructed, true);
+    assert.equal(initialized, true);
+    assert.equal(started.server.listening, true);
+    assert.equal(started.runtimeInfo.port, started.server.address().port);
+    const response = await fetch(`http://127.0.0.1:${started.runtimeInfo.port}/ready`);
+    assert.equal(await response.text(), 'ready');
+    await assert.rejects(() => acquireVisualServiceDataRootLease(root, { port: 0 }), (error) => error?.code === 'VISUAL_DATA_ROOT_IN_USE');
+    await new Promise((resolve) => started.server.close(resolve));
+    for (let attempt = 0; attempt < 20 && existsSync(path.join(root, '.visual-asset-service.lease.json')); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(existsSync(path.join(root, '.visual-asset-service.lease.json')), false, 'graceful close releases the matching lease');
+
+    writeFileSync(path.join(root, '.visual-asset-service.lease.json'), JSON.stringify({
+      schemaVersion: 'galgame.visual-service-data-root-lease.v1', serviceInstanceId: 'stale-instance',
+      pid: 2147483647, startedAt: '2026-09-01T00:00:00.000Z', host: '127.0.0.1', port: 8798,
+      dataRoot: process.platform === 'win32' ? root.toLowerCase() : root,
+    }), 'utf8');
+    const recoveredStaleLease = await acquireVisualServiceDataRootLease(root, { port: 0 });
+    assert.equal(existsSync(path.join(root, '.visual-asset-service.lease.json')), true, 'dead PID lease is safely replaced with an exclusive live lease');
+    await recoveredStaleLease.release();
+
+    await assert.rejects(() => startVisualAssetHttpServer({
+      dataRoot: root, port: 0,
+      createService: () => ({ service: { async initialize() { throw new Error('injected recovery failure'); }, handleRequest() {} } }),
+    }), /injected recovery failure/u);
+    assert.equal(existsSync(path.join(root, '.visual-asset-service.lease.json')), false, 'failed recovery releases lease without listening');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function testCatalogMigrationJournalRecovery() {
+  const oldHash = `sha256:${'a'.repeat(64)}`;
+  const newHash = `sha256:${'b'.repeat(64)}`;
+  const oldPointer = { catalogId: 'catalog_journal_old', catalogRevision: 1, catalogHash: oldHash };
+  const newPointer = { catalogId: 'catalog_journal_new', catalogRevision: 1, catalogHash: newHash };
+  const oldControl = { schemaVersion: VISUAL_CONTROL_SCHEMA_VERSION, enabled: true, activeCatalog: oldPointer, updatedAt: '2026-09-01T00:00:00.000Z' };
+  const newControl = { schemaVersion: VISUAL_CONTROL_SCHEMA_VERSION, enabled: true, activeCatalog: newPointer, updatedAt: '2026-09-02T00:00:00.000Z' };
+  const makeRecord = (state) => {
+    const record = {
+      schemaVersion: 'galgame.visual-catalog-migration-journal.v1', action: 'activate', state,
+      operationId: 'migration_12345678-abcd', sourceAssetStorePointer: oldPointer, sourceControlPointer: oldPointer,
+      targetPointer: newPointer, oldControl, newControl, sourceCatalogHash: oldHash, targetCatalogHash: newHash,
+      createdAt: '2026-09-02T00:00:00.000Z', updatedAt: '2026-09-02T00:00:00.000Z', recordHash: '',
+    };
+    record.recordHash = migrationJournalHash(record);
+    return record;
+  };
+  const prepared = makeRecord('PREPARED');
+  validateMigrationJournalRecord(prepared);
+  const reverseKeys = (value) => Array.isArray(value) ? value.map(reverseKeys)
+    : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).reverse().map((key) => [key, reverseKeys(value[key])]))
+      : value;
+  const reordered = reverseKeys(prepared);
+  assert.equal(migrationJournalHash(prepared), migrationJournalHash(reordered), 'journal hash follows canonical JSON key order');
+  const tampered = structuredClone(prepared);
+  tampered.newControl.enabled = false;
+  assert.throws(() => validateMigrationJournalRecord(tampered), (error) => error?.code === 'VISUAL_CATALOG_RECOVERY_REQUIRED');
+  const journalStore = new MemoryVisualCatalogMigrationJournalStore();
+  await journalStore.setRecord(prepared);
+  assert.deepEqual(await journalStore.getRecord(), prepared);
+  await assert.rejects(() => journalStore.setRecord(tampered), (error) => error?.code === 'VISUAL_CATALOG_RECOVERY_REQUIRED');
+
+  for (const state of ['PREPARED', 'COMMITTED']) {
+    const assetStore = new MemoryVisualAssetStore();
+    const contentStore = new MemoryContentStore();
+    const controlStore = new MemoryVisualControlStore();
+    const oldAsset = await seedJournalScene(assetStore, contentStore, `scene_journal_old_${state.toLowerCase()}`, [201, 20, 20]);
+    const newAsset = await seedJournalScene(assetStore, contentStore, `scene_journal_new_${state.toLowerCase()}`, [20, 201, 20]);
+    const oldCatalog = createCorePublishedCatalog([oldAsset], { catalogId: oldPointer.catalogId });
+    const newCatalog = createCorePublishedCatalog([newAsset], { catalogId: newPointer.catalogId });
+    oldCatalog.catalogHash = oldHash;
+    newCatalog.catalogHash = newHash;
+    oldCatalog.catalogHash = computeCatalogHash(oldCatalog);
+    newCatalog.catalogHash = computeCatalogHash(newCatalog);
+    const expectedOldPointer = { catalogId: oldCatalog.catalogId, catalogRevision: 1, catalogHash: oldCatalog.catalogHash };
+    const expectedNewPointer = { catalogId: newCatalog.catalogId, catalogRevision: 1, catalogHash: newCatalog.catalogHash };
+    const currentOldControl = { ...oldControl, activeCatalog: expectedOldPointer };
+    const currentNewControl = { ...newControl, activeCatalog: expectedNewPointer };
+    await assetStore.saveCatalog(oldCatalog);
+    await assetStore.saveCatalog(newCatalog);
+    await assetStore.setActiveCatalog(newCatalog);
+    await controlStore.setControl(currentNewControl);
+    const exactRecord = {
+      ...makeRecord(state),
+      sourceAssetStorePointer: expectedOldPointer,
+      sourceControlPointer: expectedOldPointer,
+      targetPointer: expectedNewPointer,
+      oldControl: currentOldControl,
+      newControl: currentNewControl,
+      sourceCatalogHash: expectedOldPointer.catalogHash,
+      targetCatalogHash: expectedNewPointer.catalogHash,
+      recordHash: '',
+    };
+    exactRecord.recordHash = migrationJournalHash(exactRecord);
+    const recoveryJournal = new MemoryVisualCatalogMigrationJournalStore();
+    await recoveryJournal.setRecord(exactRecord);
+    const service = createVisualAssetService({
+      assetStore, contentStore, visualControlStore: controlStore, catalogMigrationJournalStore: recoveryJournal,
+    });
+    await service.initialize();
+    const expectedPointer = state === 'PREPARED' ? expectedOldPointer : expectedNewPointer;
+    assert.deepEqual((await controlStore.getControl()).activeCatalog, expectedPointer, `${state} journal recovery selects matching control pointer`);
+    assert.deepEqual(await assetStore.getActiveCatalog(expectedPointer.catalogId), expectedPointer, `${state} journal recovery selects matching asset pointer`);
+  }
+}
+
+async function testCatalogMigrationRecoveryRequestFence() {
+  const cases = [
+    { name: 'asset active index', kind: 'asset', failures: 4 },
+    { name: 'control pointer', kind: 'control', failures: 4 },
+    { name: 'migration journal', kind: 'journal', failures: 3 },
+  ];
+  for (const scenario of cases) {
+    const fault = { assetSetFailures: 0, controlSetFailures: 0, journalReadFailures: 0, committedJournalFailures: 0 };
+    class FaultAssetStore extends MemoryVisualAssetStore {
+      async setActiveCatalog(catalog) {
+        if (fault.assetSetFailures > 0) {
+          fault.assetSetFailures -= 1;
+          throw new Error(`injected ${scenario.name} recovery write failure`);
+        }
+        return super.setActiveCatalog(catalog);
+      }
+    }
+    class FaultControlStore extends MemoryVisualControlStore {
+      async setControl(control) {
+        if (fault.controlSetFailures > 0) {
+          fault.controlSetFailures -= 1;
+          throw new Error('injected control pointer recovery write failure');
+        }
+        return super.setControl(control);
+      }
+    }
+    class FaultJournalStore extends MemoryVisualCatalogMigrationJournalStore {
+      async getRecord() {
+        if (fault.journalReadFailures > 0) {
+          fault.journalReadFailures -= 1;
+          throw new Error('injected migration journal recovery read failure');
+        }
+        return super.getRecord();
+      }
+      async setRecord(record) {
+        if (record.state === 'COMMITTED' && fault.committedJournalFailures > 0) {
+          fault.committedJournalFailures -= 1;
+          fault.journalReadFailures = scenario.failures;
+          throw new Error('injected COMMITTED journal phase write failure');
+        }
+        return super.setRecord(record);
+      }
+    }
+
+    const assetStore = new FaultAssetStore();
+    const contentStore = new MemoryContentStore();
+    const controlStore = new FaultControlStore();
+    const journalStore = new FaultJournalStore();
+    const fixture = await seedPlayerCatalogMigrationFixture({ assetStore, contentStore, controlStore });
+    const service = createVisualAssetService({
+      adminToken: ADMIN_TOKEN,
+      adminOrigins: [ORIGIN],
+      corePlayerOrigins: [ORIGIN],
+      assetStore,
+      contentStore,
+      visualControlStore: controlStore,
+      catalogMigrationJournalStore: journalStore,
+    });
+    await service.initialize();
+    if (scenario.kind === 'asset') fault.assetSetFailures = scenario.failures;
+    if (scenario.kind === 'control') fault.controlSetFailures = scenario.failures;
+    if (scenario.kind === 'journal') {
+      fault.committedJournalFailures = 1;
+    }
+
+    await withServer(service, async (baseUrl) => {
+      const activation = await request(baseUrl, 'POST', '/v1/admin/catalog-migration/activate', { body: fixture.manifest });
+      assert.equal(activation.status, 503, `${scenario.name}: activation surfaces recovery-required after injected commit/recovery faults: ${JSON.stringify(activation.body)}`);
+      assert.equal(activation.body.error.code, 'VISUAL_CATALOG_RECOVERY_REQUIRED');
+
+      const healthBlocked = await request(baseUrl, 'GET', '/v1/health', { token: null, origin: null });
+      assert.equal(healthBlocked.status, 503, `${scenario.name}: health is fenced while recovery keeps failing`);
+      assert.deepEqual(healthBlocked.body.readiness, { catalogRecovery: 'required' });
+      assert.equal(JSON.stringify(healthBlocked.body).includes('injected'), false, `${scenario.name}: health does not expose recovery diagnostics`);
+      assert.equal(JSON.stringify(healthBlocked.body).includes('dataRoot'), false);
+
+      const coreBlocked = await request(baseUrl, 'GET', '/v1/core/visual-context', { token: null });
+      assert.equal(coreBlocked.status, 503, `${scenario.name}: player routes remain closed while recovery fails`);
+      assert.equal(coreBlocked.body.error.code, 'VISUAL_CATALOG_RECOVERY_REQUIRED');
+
+      fault.assetSetFailures = 0;
+      fault.controlSetFailures = 0;
+      fault.journalReadFailures = 0;
+      fault.committedJournalFailures = 0;
+      const healthRecovered = await request(baseUrl, 'GET', '/v1/health', { token: null, origin: null });
+      assert.equal(healthRecovered.status, 200, `${scenario.name}: a successful journal recovery reopens health`);
+      const coreResponse = await fetch(`${baseUrl}/v1/core/visual-context`, { headers: { origin: ORIGIN, accept: 'application/json' } });
+      const coreRecovered = { status: coreResponse.status, body: await coreResponse.json() };
+      assert.equal(coreRecovered.status, 200, `${scenario.name}: a successful journal recovery reopens player routes`);
+    });
+  }
+}
+
+async function seedPlayerCatalogMigrationFixture({ assetStore, contentStore, controlStore }) {
+  const definitions = [
+    { assetId: 'asset_scene_migration_fixture', assetType: 'scene', role: 'background', width: 640, height: 360, tagCodes: ['scene.forest'], featureCodes: ['feature.dark'], color: [20, 60, 100] },
+    { assetId: 'asset_character_migration_narrator', assetType: 'character', role: 'transparent-sprite', width: 320, height: 320, tagCodes: ['character.androgynous'], featureCodes: ['feature.transparent'], color: [180, 80, 40], channel: 'narrator' },
+    { assetId: 'asset_character_migration_player', assetType: 'character', role: 'transparent-sprite', width: 320, height: 320, tagCodes: ['character.androgynous'], featureCodes: ['feature.transparent'], color: [40, 120, 80], channel: 'player' },
+  ];
+  const assets = [];
+  for (const definition of definitions) {
+    const png = makePng({ width: definition.width, height: definition.height, colorType: definition.assetType === 'character' ? 6 : 2, rgb: definition.color, alpha: 180 });
+    const content = await contentStore.put(png, PNG_MIME);
+    const asset = makeValidatedAssetRecord({
+      assetId: definition.assetId,
+      assetType: definition.assetType,
+      role: definition.role,
+      width: definition.width,
+      height: definition.height,
+      tagCodes: definition.tagCodes,
+      featureCodes: definition.featureCodes,
+      assetContentSha256: content.hash,
+    });
+    await assetStore.saveAsset(asset);
+    assets.push({ asset, channel: definition.channel ?? null });
+  }
+  const sourceCatalog = createCorePublishedCatalog(assets.map(({ asset }) => asset), { catalogId: 'catalog_migration_fixture_source' });
+  await assetStore.saveCatalog(sourceCatalog);
+  await assetStore.setActiveCatalog(sourceCatalog);
+  const sourcePointer = {
+    catalogId: sourceCatalog.catalogId,
+    catalogRevision: sourceCatalog.catalogRevision,
+    catalogHash: sourceCatalog.catalogHash,
+  };
+  await controlStore.setControl({
+    schemaVersion: VISUAL_CONTROL_SCHEMA_VERSION,
+    enabled: true,
+    activeCatalog: sourcePointer,
+    updatedAt: '2026-10-02T00:00:00.000Z',
+  });
+  const manifest = {
+    schemaVersion: 'galgame.visual-player-catalog-manifest.v1',
+    sourcePointer,
+    targetCatalogId: 'catalog_migration_fixture_target',
+    targetCatalogRevision: 1,
+    createdAt: '2026-10-02T00:01:00.000Z',
+    entries: assets.map(({ asset, channel }) => ({
+      assetId: asset.assetId,
+      assetVersion: asset.assetVersion,
+      assetContentSha256: asset.assetContentSha256,
+      assetMetadataHash: asset.assetMetadataHash,
+      assetType: asset.assetType,
+      channel,
+      approvalReason: 'approved migration fixture',
+    })),
+  };
+  return { manifest, sourceCatalog, sourcePointer };
+}
+
+async function testPlayerCatalogMigrationIdempotentRevalidation() {
+  const assetStore = new MemoryVisualAssetStore();
+  const contentStore = new MemoryContentStore();
+  const controlStore = new MemoryVisualControlStore();
+  const fixture = await seedPlayerCatalogMigrationFixture({ assetStore, contentStore, controlStore });
+  const service = createVisualAssetService({
+    adminToken: ADMIN_TOKEN,
+    adminOrigins: [ORIGIN],
+    assetStore,
+    contentStore,
+    visualControlStore: controlStore,
+  });
+  await service.initialize();
+  await withServer(service, async (baseUrl) => {
+    const firstPreview = await request(baseUrl, 'POST', '/v1/admin/catalog-migration/preview', { body: fixture.manifest });
+    assert.equal(firstPreview.status, 200, JSON.stringify(firstPreview.body));
+    assert.equal(firstPreview.body.idempotent, false);
+    assert.equal(firstPreview.body.targetRefCount, fixture.manifest.entries.length);
+    assert.equal(firstPreview.body.countsByType.scene, 1);
+    assert.equal(firstPreview.body.countsByChannel.narrator, 1);
+    assert.equal(firstPreview.body.countsByChannel.player, 1);
+
+    const activated = await request(baseUrl, 'POST', '/v1/admin/catalog-migration/activate', { body: fixture.manifest });
+    assert.equal(activated.status, 200, JSON.stringify(activated.body));
+    const replayPreview = await request(baseUrl, 'POST', '/v1/admin/catalog-migration/preview', { body: fixture.manifest });
+    assert.equal(replayPreview.status, 200, JSON.stringify(replayPreview.body));
+    assert.equal(replayPreview.body.idempotent, true);
+    assert.deepEqual(replayPreview.body.oldPointer, replayPreview.body.newPointer);
+    assert.equal(replayPreview.body.targetCatalogHash, activated.body.catalogHash);
+    assert.equal(replayPreview.body.targetRefCount, fixture.manifest.entries.length);
+
+    const changedChannels = structuredClone(fixture.manifest);
+    const narratorEntry = changedChannels.entries.find((entry) => entry.channel === 'narrator');
+    const playerEntry = changedChannels.entries.find((entry) => entry.channel === 'player');
+    narratorEntry.channel = 'player';
+    playerEntry.channel = 'narrator';
+    const changed = await request(baseUrl, 'POST', '/v1/admin/catalog-migration/preview', { body: changedChannels });
+    assert.equal(changed.status, 409);
+    assert.equal(changed.body.error.code, 'VISUAL_CATALOG_MIGRATION_TARGET_CONFLICT');
+
+    const changedAssetHash = structuredClone(fixture.manifest);
+    changedAssetHash.entries[0].assetMetadataHash = `sha256:${'f'.repeat(64)}`;
+    const invalidHash = await request(baseUrl, 'POST', '/v1/admin/catalog-migration/preview', { body: changedAssetHash });
+    assert.equal(invalidHash.status, 409);
+    assert.equal(invalidHash.body.error.code, 'VISUAL_CATALOG_MANIFEST_ASSET_HASH_MISMATCH');
+  });
+}
+
+async function seedJournalScene(assetStore, contentStore, assetId, rgb) {
+  const content = await contentStore.put(makePng({ width: 640, height: 360, colorType: 2, rgb }), PNG_MIME);
+  const asset = makeValidatedAssetRecord({
+    assetId, assetType: 'scene', role: 'background', width: 640, height: 360,
+    assetContentSha256: content.hash, tagCodes: ['scene.exterior', 'scene.forest'], featureCodes: ['feature.dark'],
+  });
+  await assetStore.saveAsset(asset);
+  return asset;
+}
+
+function assertControlledLauncherLifecycle(source) {
+  const code = source.replace(/<#[\s\S]*?#>/g, '').replace(/^\s*#.*$/gm, '');
+  const launch = `$process = Start-Process -FilePath $nodeCommand -ArgumentList ('"' + $serverScript + '"') -WorkingDirectory $repoRoot`;
+  assert.ok(code.includes(launch), 'must launch only the quoted script path');
+  const cleanup = code.slice(code.lastIndexOf('} finally {'));
+  for (const variable of ['$tokenVariable', '$runtimeTokenVariable']) {
+    const remove = `Remove-Item -LiteralPath "Env:${variable}"`;
+    assert.ok(code.split(remove).length >= 3, 'clear inherited and final wrapper token');
+    assert.ok(cleanup.includes(remove), 'clear wrapper token in finally');
+    assert.ok(cleanup.includes(`$childEnvironment.Remove(${variable})`), 'clear managed token reference in finally');
+  }
+  assert.ok(cleanup.includes("[Environment]::SetEnvironmentVariable($name, $previousChildEnvironment[$name], 'Process')"), 'restore non-secret environment in finally');
+  assert.doesNotMatch(code, /(?:\.Arguments\s*=|-ArgumentList)[^\r\n]*(?:plainToken|tokenVariable|runtimeTokenVariable)/i);
+}
+
 async function testControlledLauncherStaticSecurity() {
   const projectRoot = path.resolve(path.dirname(fileURLToPath(new URL('./server.mjs', import.meta.url))), '..', '..');
-  const controlledPs1Path = path.join(projectRoot, 'StartGalgameVisualAnalyzerTest.ps1');
-  const controlledCmdPath = path.join(projectRoot, 'StartGalgameVisualAnalyzerTest.cmd');
-  const ordinaryCmdPath = path.join(projectRoot, 'StartGalgameVisualAssetService.cmd');
+  const launcherRoot = path.join(projectRoot, 'external-modules', 'process-supervisor', 'launchers');
+  const controlledPs1Path = path.join(launcherRoot, 'StartGalgameVisualAnalyzerTest.ps1');
+  const controlledCmdPath = path.join(launcherRoot, 'StartGalgameVisualAnalyzerTest.cmd');
+  const ordinaryCmdPath = path.join(launcherRoot, 'StartGalgameVisualAssetService.cmd');
   for (const filePath of [controlledPs1Path, controlledCmdPath, ordinaryCmdPath]) {
     assert.ok(existsSync(filePath), `launcher file missing: ${filePath}`);
     assert.equal(readFileSync(filePath).subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), false, `launcher has BOM: ${filePath}`);
   }
 
-  const controlled = readFileSync(controlledPs1Path, 'utf8');
+  const controlled = readFileSync(controlledPs1Path, 'utf8').replace(/<#[\s\S]*?#>/g, '').replace(/^\s*#.*$/gm, '');
   const controlledCmd = readFileSync(controlledCmdPath, 'utf8');
   const ordinary = readFileSync(ordinaryCmdPath, 'utf8');
   for (const value of [
@@ -142,11 +569,14 @@ async function testControlledLauncherStaticSecurity() {
     "$childEnvironment['GALGAME_VISUAL_RUNTIME_CACHE_SCOPE'] = 'controlled-runtime-live-v1'",
     '$childEnvironment[$tokenVariable] = $plainToken',
     '$childEnvironment[$runtimeTokenVariable] = $plainToken',
-    'EnvironmentVariables.Remove($tokenVariable)',
-    'EnvironmentVariables.Remove($runtimeTokenVariable)',
+    '$childEnvironment.Remove($tokenVariable)',
+    '$childEnvironment.Remove($runtimeTokenVariable)',
   ]) assert.ok(controlled.includes(value), `controlled launcher missing: ${value}`);
-  assert.ok(controlled.includes("$processStartInfo.Arguments = '\"' + $serverScript + '\"'"));
-  assert.equal(/Arguments[^\r\n]*(?:plainToken|tokenVariable|runtimeTokenVariable)/i.test(controlled), false);
+  assertControlledLauncherLifecycle(controlled);
+  assert.throws(() => assertControlledLauncherLifecycle(controlled.replace('-ArgumentList', '-OtherArgument')), /quoted script path/);
+  assert.throws(() => assertControlledLauncherLifecycle(controlled.replace('$childEnvironment.Remove($tokenVariable)', '# $childEnvironment.Remove($tokenVariable)')), /managed token reference/);
+
+  assert.equal(/(?:\.Arguments\s*=|-ArgumentList)[^\r\n]*(?:plainToken|tokenVariable|runtimeTokenVariable)/i.test(controlled), false);
   const outputLines = controlled.split(/\r?\n/).filter((line) => /Write-(?:Host|Output|Error)|Write-ControlledLauncherLog/i.test(line));
   assert.equal(outputLines.some((line) => /\$(?:plainToken|tokenBstr)|GALGAME_VISUAL_(?:ANALYZER|RUNTIME)_TOKEN/i.test(line)), false);
   assert.ok(controlledCmd.includes('StartGalgameVisualAnalyzerTest.ps1'));
@@ -232,6 +662,18 @@ async function testRuntimeDictionaryV2AndScorer() {
   }, { entityType: 'character', codes: ['character.beastkin'], confidence: 0.95, confidenceBand: 'explicit' }, { recent: [] });
   assert.equal(enemyScore.policy.isUnknown, false);
   assert.ok(enemyScore.policy.score >= 60);
+  const curatedFailedCharacter = scoreRuntimeCandidate({
+    entityType: 'character',
+    visibleAttributeCodes: ['character-explicit-name', 'character-explicit-species', 'character-explicit-gender-presentation'],
+    visibleNormalizedCodes: ['character.undead', 'character.androgynous'],
+    candidates: [],
+  }, {
+    assetId: 'asset_character_curated_failed', assetVersion: 1, assetType: 'character', analysisStatus: 'failed',
+    tagCodes: ['character.undead', 'character.androgynous'],
+    analysisTagCodes: [], analysisAttributeCodes: [], analysisConfidence: 0, negativeTagCodes: [],
+  }, { entityType: 'character', codes: ['character.undead', 'character.androgynous'], confidence: 0.95, confidenceBand: 'explicit' }, { recent: [] });
+  assert.equal(curatedFailedCharacter.policy.isUnknown, false);
+  assert.ok(curatedFailedCharacter.policy.score >= 60);
   const feminineCharacter = makeValidatedAssetRecord({
     assetId: 'asset_character_feminine_dictionary',
     assetType: 'character',
@@ -327,8 +769,8 @@ async function testRuntimeDictionaryV2AndScorer() {
     const response = await request(baseUrl, 'POST', '/v1/core/visual-decisions', { token: null, origin: CORE_DEFAULT_ORIGIN, body: routeBody });
     assert.equal(response.status, 200, JSON.stringify(response.body));
     assert.equal(response.body.understandingStatus, 'ready');
-    assert.equal(response.body.matcherVersion, 'vs-runtime-2');
-    assert.equal(response.body.scorerVersion, 'vs-runtime-scorer-v2');
+    assert.equal(response.body.matcherVersion, 'vs-runtime-3');
+    assert.equal(response.body.scorerVersion, 'vs-runtime-scorer-v3');
     assert.equal(response.body.decisions[0].assetId, asset.assetId);
     assert.ok(response.body.decisions[0].score >= 60);
   });
@@ -898,11 +1340,20 @@ async function testCliEntrypoint() {
   const projectRoot = path.resolve(path.dirname(serverPath), '..', '..');
   const moduleUrl = pathToFileURL(serverPath).href;
   assert.equal(isMainModule(serverPath, moduleUrl), true);
-  assert.equal(isMainModule(path.relative(projectRoot, serverPath), moduleUrl), true);
+  assert.equal(isMainModule(path.relative(process.cwd(), serverPath), moduleUrl), true);
   assert.equal(isMainModule(path.join(projectRoot, 'missing-server.mjs'), moduleUrl), false);
   assert.equal(isMainModule('', moduleUrl), false);
 
   const dataDir = mkdtempSync(path.join(os.tmpdir(), 'galgame-visual-cli-smoke-'));
+  const originalCwd = process.cwd();
+  try {
+    for (const cwd of [projectRoot, path.dirname(serverPath), dataDir]) {
+      process.chdir(cwd);
+      assert.equal(isMainModule(path.relative(cwd, serverPath), moduleUrl), true);
+      assert.equal(isMainModule('server.mjs', moduleUrl), cwd === path.dirname(serverPath), 'must not guess another checkout entry');
+    }
+  } finally { process.chdir(originalCwd); }
+
   let child = null;
   try {
     child = spawnVisualServiceCli(serverPath, projectRoot, dataDir);
@@ -935,14 +1386,13 @@ async function testCliEntrypoint() {
       csrfToken,
       body: {},
     });
-    assert.equal(publishResult.status, 200, JSON.stringify(publishResult.body));
-    const publishedRef = {
-      catalog: publishResult.body.visual.activeCatalog,
+    assert.equal(publishResult.status, 409, JSON.stringify(publishResult.body));
+    assert.equal(publishResult.body.error.code, 'EXPLICIT_CATALOG_REQUIRED');
+    const persistedDraftRef = {
       assetId: uploadResult.body.asset.assetId,
       assetVersion: uploadResult.body.asset.assetVersion,
       contentHash: uploadResult.body.asset.assetContentSha256,
     };
-    assert.ok(publishedRef.catalog);
     await stopVisualServiceCli(child);
     child = null;
 
@@ -960,12 +1410,16 @@ async function testCliEntrypoint() {
       origin: secondBaseUrl,
     });
     assert.equal(status.status, 200, JSON.stringify(status.body));
-    assert.deepEqual(status.body.visual.activeCatalog, publishedRef.catalog);
-    assert.equal(status.body.visual.enabled, true);
-    const content = await request(secondBaseUrl, 'GET', `/v1/core/catalogs/${publishedRef.catalog.catalogId}/${publishedRef.catalog.catalogRevision}/assets/${publishedRef.assetId}/${publishedRef.assetVersion}/content`, { token: null, origin: null, raw: true });
-    assert.equal(content.status, 200);
-    assert.equal(content.headers.get('content-type'), PNG_MIME);
-    assert.equal(`sha256:${sha256Hex(content.bytes)}`, publishedRef.contentHash);
+    assert.equal(status.body.visual.activeCatalog, null);
+    assert.equal(status.body.visual.enabled, false);
+    const asset = await localAdminRequest(secondBaseUrl, 'GET', `/v1/local-admin/visual/status`, {
+      cookie: secondCookie,
+      csrfToken: secondCsrfToken,
+      origin: secondBaseUrl,
+    });
+    assert.equal(asset.status, 200, JSON.stringify(asset.body));
+    assert.equal(asset.body.visual.activeCatalog, null);
+    assert.equal(persistedDraftRef.assetId, uploadResult.body.asset.assetId);
   } finally {
     if (child) await stopVisualServiceCli(child);
     rmSync(dataDir, { recursive: true, force: true });
@@ -2011,9 +2465,25 @@ async function upload(baseUrl, meta, png) {
   return request(baseUrl, 'POST', '/v1/admin/assets/upload', { body: uploadBody(meta, png) });
 }
 
-async function publishCatalog(baseUrl, catalogId, catalogRevision, assetRefs) {
+async function publishCatalog(baseUrl, catalogId, catalogRevision, assetRefs, characterChannels = undefined) {
+  const explicitCharacterChannels = characterChannels || [];
+  if (!characterChannels) {
+    for (const ref of assetRefs) {
+      const asset = await request(baseUrl, 'GET', `/v1/admin/assets/${ref.assetId}/${ref.assetVersion}`);
+      assert.equal(asset.status, 200, JSON.stringify(asset.body));
+      if (asset.body.asset.assetType === 'character') {
+        explicitCharacterChannels.push({ assetId: ref.assetId, assetVersion: ref.assetVersion, channel: 'character' });
+      }
+    }
+  }
   const draft = await request(baseUrl, 'POST', '/v1/admin/catalogs/draft', {
-    body: { schemaVersion: CATALOG_DRAFT_SCHEMA_VERSION, catalogId, catalogRevision, assetRefs },
+    body: {
+      schemaVersion: CATALOG_DRAFT_SCHEMA_VERSION,
+      catalogId,
+      catalogRevision,
+      assetRefs,
+      characterChannels: explicitCharacterChannels,
+    },
   });
   assert.equal(draft.status, 200, JSON.stringify(draft.body));
   const validated = await request(baseUrl, 'POST', `/v1/admin/catalogs/${catalogId}/${catalogRevision}/validate`, { body: {} });
@@ -2069,7 +2539,7 @@ async function testLocalAdminEntrypoint() {
     adminOrigins: [],
     ...firstStores,
   });
-  let publishedRef;
+  let uploadedRef;
   await withServer(service, async (baseUrl) => {
     const directAdmin = await request(baseUrl, 'POST', '/v1/admin/visual/upload', {
       token: null,
@@ -2134,11 +2604,9 @@ async function testLocalAdminEntrypoint() {
       csrfToken,
       body: {},
     });
-    assert.equal(publishResult.status, 200, JSON.stringify(publishResult.body));
-    assert.equal(publishResult.body.visual.enabled, true);
-    assert.ok(publishResult.body.visual.activeCatalog);
-    publishedRef = {
-      catalog: publishResult.body.visual.activeCatalog,
+    assert.equal(publishResult.status, 409, JSON.stringify(publishResult.body));
+    assert.equal(publishResult.body.error.code, 'EXPLICIT_CATALOG_REQUIRED');
+    uploadedRef = {
       assetId: uploadResult.body.asset.assetId,
       assetVersion: uploadResult.body.asset.assetVersion,
       contentHash: uploadResult.body.asset.assetContentSha256,
@@ -2146,8 +2614,8 @@ async function testLocalAdminEntrypoint() {
 
     const status = await localAdminRequest(baseUrl, 'GET', '/v1/local-admin/visual/status', { cookie, origin: baseUrl });
     assert.equal(status.status, 200, JSON.stringify(status.body));
-    assert.equal(status.body.visual.enabled, true);
-    assert.deepEqual(status.body.visual.activeCatalog, publishedRef.catalog);
+    assert.equal(status.body.visual.enabled, false);
+    assert.equal(status.body.visual.activeCatalog, null);
   });
 
   const restarted = createVisualAssetService({
@@ -2168,11 +2636,592 @@ async function testLocalAdminEntrypoint() {
     assert.ok(csrfToken);
     const status = await localAdminRequest(baseUrl, 'GET', '/v1/local-admin/visual/status', { cookie, origin: baseUrl });
     assert.equal(status.status, 200, JSON.stringify(status.body));
-    assert.deepEqual(status.body.visual.activeCatalog, publishedRef.catalog);
-    const content = await request(baseUrl, 'GET', `/v1/core/catalogs/${publishedRef.catalog.catalogId}/${publishedRef.catalog.catalogRevision}/assets/${publishedRef.assetId}/${publishedRef.assetVersion}/content`, { token: null, origin: null, raw: true });
-    assert.equal(content.status, 200);
-    assert.equal(content.headers.get('content-type'), PNG_MIME);
-    assert.equal(`sha256:${sha256Hex(content.bytes)}`, publishedRef.contentHash);
+    assert.deepEqual(status.body.visual.activeCatalog, null);
+    assert.equal(status.body.visual.enabled, false);
+    assert.ok(uploadedRef.assetId);
+  });
+}
+
+async function testPresentationAnalysisBrowserProxy() {
+  const origin = CORE_DEFAULT_ORIGIN;
+  const allowedOrigins = new Set([origin]);
+  assert.equal(resolvePresentationAnalysisProxyRoute('GET', '/v1/presentation/health')?.upstreamPath, '/v1/health');
+  assert.equal(resolvePresentationAnalysisProxyRoute('POST', '/v1/presentation/scene-continuity')?.versionHeader,
+    'x-galgame-scene-continuity-version');
+  assert.equal(resolvePresentationAnalysisProxyRoute('POST', '/v1/presentation/../admin')?.upstreamPath, undefined,
+    'only the exact registered presentation paths are routable');
+
+  const makeResponse = () => ({
+    headers: {}, statusCode: 0, body: '', writableEnded: false, destroyed: false,
+    writeHead(status, headers = {}) { this.statusCode = status; Object.assign(this.headers, headers); },
+    setHeader(name, value) { this.headers[name.toLowerCase()] = value; },
+    end(body = '') { this.body = Buffer.from(body).toString('utf8'); this.writableEnded = true; },
+  });
+  const healthRes = makeResponse();
+  let forwardedHealthUrl = '';
+  await handlePresentationAnalysisProxyRequest({ method: 'GET', url: '/v1/presentation/health', headers: { origin } }, healthRes, {
+    allowedOrigins,
+    upstreamBaseUrl: 'http://127.0.0.1:41112',
+    fetchImpl: async (url, options) => {
+      forwardedHealthUrl = String(url);
+      assert.equal(options.method, 'GET');
+      assert.deepEqual(options.headers, { origin });
+      return new Response(JSON.stringify({
+        serviceReady: true,
+        analyzerConfigured: true,
+        analyzerScope: 'model:prompt.v1',
+        sceneAnalyzerScope: 'model:scene.v2',
+        apiKey: 'must not cross the response boundary',
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    },
+  });
+  assert.equal(forwardedHealthUrl, 'http://127.0.0.1:41112/v1/health');
+  assert.equal(healthRes.statusCode, 200);
+  assert.equal(healthRes.headers['access-control-allow-origin'], undefined,
+    'CORS headers are applied by the outer 8798 dispatcher');
+  assert.deepEqual(JSON.parse(healthRes.body), {
+    schemaVersion: 'galgame.presentation-analysis-proxy-health.v1',
+    serviceReady: true,
+    analyzerConfigured: true,
+    analyzerScope: 'model:prompt.v1',
+    sceneAnalyzerScope: 'model:scene.v2',
+  }, 'health response is closed and excludes provider credentials');
+
+  const sceneRequestBody = JSON.stringify({ schemaVersion: 'galgame.scene-continuity-analysis-request.v1', pageText: 'current visible page' });
+  const sceneRes = makeResponse();
+  let forwardedScene = null;
+  await handlePresentationAnalysisProxyRequest({
+    method: 'POST', url: '/v1/presentation/scene-continuity',
+    headers: { origin, 'content-type': 'application/json', 'x-galgame-scene-continuity-version': '1', cookie: 'must-not-forward' },
+    async *[Symbol.asyncIterator]() { yield Buffer.from(sceneRequestBody); },
+    once() {}, off() {},
+  }, sceneRes, {
+    allowedOrigins,
+    upstreamBaseUrl: 'http://127.0.0.1:41112',
+    fetchImpl: async (url, options) => {
+      forwardedScene = { url: String(url), options };
+      return new Response(JSON.stringify({ schemaVersion: 'galgame.scene-continuity-analysis.v1', requestId: 'test' }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  assert.equal(forwardedScene.url, 'http://127.0.0.1:41112/v1/presentation/scene-continuity');
+  assert.deepEqual(forwardedScene.options.headers, {
+    origin,
+    'content-type': 'application/json',
+    'x-galgame-scene-continuity-version': '1',
+  });
+  assert.equal(forwardedScene.options.body, sceneRequestBody);
+  assert.equal(sceneRes.statusCode, 200);
+
+  const simpleSceneRes = makeResponse();
+  let simpleForwardedScene = null;
+  await handlePresentationAnalysisProxyRequest({
+    method: 'POST', url: '/v1/presentation/scene-continuity',
+    headers: { origin, 'content-type': 'text/plain' },
+    async *[Symbol.asyncIterator]() { yield Buffer.from(sceneRequestBody); },
+    once() {}, off() {},
+  }, simpleSceneRes, {
+    allowedOrigins,
+    upstreamBaseUrl: 'http://127.0.0.1:41112',
+    fetchImpl: async (url, options) => {
+      simpleForwardedScene = { url: String(url), options };
+      return new Response(JSON.stringify({ schemaVersion: 'galgame.scene-continuity-analysis.v1', requestId: 'test' }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  assert.equal(simpleSceneRes.statusCode, 200);
+  assert.deepEqual(simpleForwardedScene.options.headers, {
+    origin,
+    'content-type': 'application/json',
+    'x-galgame-scene-continuity-version': '1',
+  }, 'simple browser transport is normalized to the fixed versioned analyzer contract');
+  assert.equal(simpleForwardedScene.options.body, sceneRequestBody);
+
+  const preflightRes = makeResponse();
+  await handlePresentationAnalysisProxyRequest({
+    method: 'OPTIONS', url: '/v1/presentation/scene-continuity',
+    headers: {
+      origin,
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'content-type,x-galgame-scene-continuity-version',
+      'access-control-request-private-network': 'true',
+    },
+  }, preflightRes, { allowedOrigins });
+  assert.equal(preflightRes.statusCode, 204);
+  assert.equal(preflightRes.headers['access-control-allow-origin'], origin);
+  assert.equal(preflightRes.headers['access-control-allow-private-network'], 'true');
+
+  const simplePreflightRes = makeResponse();
+  await handlePresentationAnalysisProxyRequest({
+    method: 'OPTIONS', url: '/v1/presentation/scene-continuity',
+    headers: {
+      origin,
+      'access-control-request-method': 'POST',
+      'access-control-request-private-network': 'true',
+    },
+  }, simplePreflightRes, { allowedOrigins });
+  assert.equal(simplePreflightRes.statusCode, 204, 'PNA preflight without non-safelisted headers is accepted');
+  assert.equal(simplePreflightRes.headers['access-control-allow-origin'], origin);
+  assert.equal(simplePreflightRes.headers['access-control-allow-private-network'], 'true');
+
+  const healthPreflightRes = makeResponse();
+  await handlePresentationAnalysisProxyRequest({
+    method: 'OPTIONS', url: '/v1/presentation/health',
+    headers: {
+      origin,
+      'access-control-request-method': 'GET',
+      'access-control-request-private-network': 'true',
+    },
+  }, healthPreflightRes, { allowedOrigins });
+  assert.equal(healthPreflightRes.statusCode, 204);
+  assert.equal(healthPreflightRes.headers['access-control-allow-origin'], origin);
+  assert.equal(healthPreflightRes.headers['access-control-allow-methods'], 'GET, OPTIONS');
+  assert.equal(healthPreflightRes.headers['access-control-allow-private-network'], 'true');
+
+  const deniedRes = makeResponse();
+  await handlePresentationAnalysisProxyRequest({ method: 'GET', url: '/v1/presentation/health', headers: { origin: 'http://attacker.example' } }, deniedRes, {
+    allowedOrigins,
+    fetchImpl: async () => { throw new Error('disallowed origin reached upstream'); },
+  });
+  assert.equal(deniedRes.statusCode, 403);
+  assert.equal(JSON.parse(deniedRes.body).code, 'PRESENTATION_ORIGIN_REJECTED');
+
+  const queryRes = makeResponse();
+  await handlePresentationAnalysisProxyRequest({ method: 'GET', url: '/v1/presentation/health?key=never-forwarded', headers: { origin } }, queryRes, {
+    allowedOrigins,
+    fetchImpl: async () => { throw new Error('query-bearing URL reached upstream'); },
+  });
+  assert.equal(queryRes.statusCode, 400);
+  assert.equal(JSON.parse(queryRes.body).code, 'INVALID_REQUEST');
+
+  const badUpstreamRes = makeResponse();
+  await assert.rejects(() => handlePresentationAnalysisProxyRequest({
+    method: 'GET', url: '/v1/presentation/health', headers: { origin },
+  }, badUpstreamRes, {
+    allowedOrigins,
+    upstreamBaseUrl: 'https://attacker.example',
+    fetchImpl: async () => { throw new Error('unreachable'); },
+  }), /fixed loopback HTTP origin/u);
+
+  const originalFetch = globalThis.fetch;
+  const upstreamCalls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    if (!url.startsWith('http://127.0.0.1:8801/')) return originalFetch(input, init);
+    upstreamCalls.push({ url, options: init });
+    if (url.endsWith('/v1/health')) return new Response(JSON.stringify({
+      serviceReady: true, analyzerConfigured: true, analyzerScope: 'integration', sceneAnalyzerScope: 'integration-scene',
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+    return new Response(JSON.stringify({ schemaVersion: url.endsWith('/annotations')
+      ? 'galgame.presentation-annotation.v1' : 'galgame.scene-continuity-analysis.v1' }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    const service = createVisualAssetService({ corePlayerOrigins: [origin] });
+    await withServer(service, async (baseUrl) => {
+      const healthResponse = await originalFetch(`${baseUrl}/v1/presentation/health`, { headers: { origin } });
+      assert.equal(healthResponse.status, 200);
+      assert.equal(healthResponse.headers.get('access-control-allow-origin'), origin);
+      assert.equal((await healthResponse.json()).sceneAnalyzerScope, 'integration-scene');
+
+      const healthPreflight = await originalFetch(`${baseUrl}/v1/presentation/health`, {
+        method: 'OPTIONS',
+        headers: {
+          origin,
+          'access-control-request-method': 'GET',
+          'access-control-request-private-network': 'true',
+        },
+      });
+      assert.equal(healthPreflight.status, 204);
+      assert.equal(healthPreflight.headers.get('access-control-allow-origin'), origin);
+      assert.equal(healthPreflight.headers.get('access-control-allow-methods'), 'GET, OPTIONS');
+      assert.equal(healthPreflight.headers.get('access-control-allow-private-network'), 'true');
+
+      const preflight = await originalFetch(`${baseUrl}/v1/presentation/scene-continuity`, {
+        method: 'OPTIONS',
+        headers: {
+          origin,
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'content-type,x-galgame-scene-continuity-version',
+          'access-control-request-private-network': 'true',
+        },
+      });
+      assert.equal(preflight.status, 204);
+      assert.equal(preflight.headers.get('access-control-allow-private-network'), 'true');
+
+      const input = JSON.stringify({ schemaVersion: 'galgame.scene-continuity-analysis-request.v1', requestId: 'test-request' });
+      const sceneResponse = await originalFetch(`${baseUrl}/v1/presentation/scene-continuity`, {
+        method: 'POST',
+        headers: {
+          origin,
+          'content-type': 'application/json',
+          'x-galgame-scene-continuity-version': '1',
+          cookie: 'session=must-not-forward',
+        },
+        body: input,
+      });
+      assert.equal(sceneResponse.status, 200);
+      assert.equal((await sceneResponse.json()).schemaVersion, 'galgame.scene-continuity-analysis.v1');
+      const forwarded = upstreamCalls.find((call) => call.url.endsWith('/v1/presentation/scene-continuity'));
+      assert.ok(forwarded);
+      assert.deepEqual(forwarded.options.headers, {
+        origin,
+        'content-type': 'application/json',
+        'x-galgame-scene-continuity-version': '1',
+      });
+      assert.equal(forwarded.options.body, input);
+
+      const denied = await originalFetch(`${baseUrl}/v1/presentation/health`, {
+        headers: { origin: 'http://attacker.example' },
+      });
+      assert.equal(denied.status, 403);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+async function testSlowPresentationAnalysisDoesNotBlockVisualReads() {
+  const origin = CORE_DEFAULT_ORIGIN;
+  const service = createVisualAssetService({ corePlayerOrigins: [origin] });
+  await service.initialize();
+  const server = http.createServer(service.handleRequest);
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+
+  const originalFetch = globalThis.fetch;
+  let releaseSlowAnalysis;
+  let announceSlowAnalysis;
+  const slowAnalysis = new Promise((resolve) => { releaseSlowAnalysis = resolve; });
+  const analysisEntered = new Promise((resolve) => { announceSlowAnalysis = resolve; });
+  globalThis.fetch = async (input, options) => {
+    const url = new URL(String(input));
+    if (url.origin !== 'http://127.0.0.1:8801') return originalFetch(input, options);
+    if (url.pathname === '/v1/health') {
+      return new Response(JSON.stringify({
+        serviceReady: true,
+        analyzerConfigured: true,
+        analyzerScope: 'test:presentation.v1',
+        sceneAnalyzerScope: 'test:scene-continuity.v1',
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    if (url.pathname === '/v1/presentation/scene-continuity') {
+      announceSlowAnalysis();
+      await slowAnalysis;
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    throw new Error('unexpected analyzer route in visual-read concurrency test');
+  };
+
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  let analysisRequest;
+  try {
+    analysisRequest = originalFetch(`${baseUrl}/v1/presentation/scene-continuity`, {
+      method: 'POST',
+      headers: { origin, 'content-type': 'text/plain' },
+      body: JSON.stringify({ schemaVersion: 'galgame.scene-continuity-analysis-request.v1' }),
+      signal: AbortSignal.timeout(4_000),
+    });
+    let enteredTimeout;
+    await Promise.race([
+      analysisEntered,
+      new Promise((_, reject) => {
+        enteredTimeout = setTimeout(() => reject(new Error('slow analysis did not reach the test upstream')), 1_000);
+      }),
+    ]);
+    clearTimeout(enteredTimeout);
+
+    const startedAt = Date.now();
+    const [contextResponse, healthResponse] = await Promise.all([
+      originalFetch(`${baseUrl}/v1/core/visual-context`, {
+        headers: { origin, accept: 'application/json' },
+        signal: AbortSignal.timeout(1_500),
+      }),
+      originalFetch(`${baseUrl}/v1/presentation/health`, {
+        headers: { origin, accept: 'application/json' },
+        signal: AbortSignal.timeout(1_500),
+      }),
+    ]);
+    assert.equal(contextResponse.status, 200, 'catalog/profile reads remain available during a slow analyzer request');
+    assert.equal(healthResponse.status, 200, 'analyzer health remains available during a slow scene request');
+    assert.ok(Date.now() - startedAt < 1_500, 'visual reads must not wait for the analyzer response');
+    assert.equal((await contextResponse.json()).ok, true);
+    assert.equal((await healthResponse.json()).analyzerConfigured, true);
+
+    releaseSlowAnalysis();
+    assert.equal((await analysisRequest).status, 200, 'the slow analysis request itself completes normally');
+  } finally {
+    releaseSlowAnalysis();
+    globalThis.fetch = originalFetch;
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+async function testLocalAdminExplicitCatalogMigration() {
+  const assetStore = new MemoryVisualAssetStore();
+  const contentStore = new MemoryContentStore();
+  const controlStore = new MemoryVisualControlStore();
+  const fixture = await seedPlayerCatalogMigrationFixture({ assetStore, contentStore, controlStore });
+  const service = createVisualAssetService({
+    adminToken: '',
+    adminOrigins: [],
+    corePlayerOrigins: [ORIGIN],
+    assetStore,
+    contentStore,
+    visualControlStore: controlStore,
+  });
+  await service.initialize();
+
+  await withServer(service, async (baseUrl) => {
+    const bootstrap = await fetch(`${baseUrl}/game-admin/`);
+    const html = await bootstrap.text();
+    const cookie = bootstrap.headers.get('set-cookie') || '';
+    const csrfToken = extractLocalAdminCsrf(html);
+    assert.equal(bootstrap.status, 200);
+    assert.ok(cookie);
+    assert.match(csrfToken, /^[A-Za-z0-9_-]{32,80}$/);
+
+    const noSession = await localAdminRequest(baseUrl, 'GET', '/v1/local-admin/visual/catalog-migration/runtime');
+    assert.equal(noSession.status, 401);
+    assert.equal(noSession.body.error.code, 'VISUAL_LOCAL_ADMIN_SESSION_REQUIRED');
+
+    const wrongOrigin = await localAdminRequest(baseUrl, 'POST', '/v1/local-admin/visual/catalog-migration/preview', {
+      cookie, csrfToken, origin: 'http://evil.example', body: fixture.manifest,
+    });
+    assert.equal(wrongOrigin.status, 403);
+    assert.equal(wrongOrigin.body.error.code, 'VISUAL_LOCAL_ADMIN_ORIGIN_REJECTED');
+
+    const missingOrigin = await localAdminRequest(baseUrl, 'POST', '/v1/local-admin/visual/catalog-migration/preview', {
+      cookie, csrfToken, origin: null, body: fixture.manifest,
+    });
+    assert.equal(missingOrigin.status, 403);
+    assert.equal(missingOrigin.body.error.code, 'VISUAL_LOCAL_ADMIN_ORIGIN_REQUIRED');
+
+    const forbiddenBearer = await localAdminRequest(baseUrl, 'POST', '/v1/local-admin/visual/catalog-migration/preview', {
+      cookie, csrfToken, authorization: `Bearer ${ADMIN_TOKEN}`, body: fixture.manifest,
+    });
+    assert.equal(forbiddenBearer.status, 400);
+    assert.equal(forbiddenBearer.body.error.code, 'VISUAL_LOCAL_ADMIN_FORBIDDEN_TRANSPORT');
+
+    const wrongCsrf = await localAdminRequest(baseUrl, 'POST', '/v1/local-admin/visual/catalog-migration/preview', {
+      cookie, csrfToken: 'wrong-local-admin-csrf-token-000000', body: fixture.manifest,
+    });
+    assert.equal(wrongCsrf.status, 403);
+    assert.equal(wrongCsrf.body.error.code, 'VISUAL_LOCAL_ADMIN_CSRF_REJECTED');
+
+    const badHost = await new Promise((resolve, reject) => {
+      const request = http.request(new URL('/v1/local-admin/visual/catalog-migration/runtime', baseUrl), {
+        method: 'GET',
+        headers: { cookie, host: 'evil.example' },
+      }, (response) => {
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('end', () => resolve({
+          status: response.statusCode,
+          body: JSON.parse(Buffer.concat(chunks).toString('utf8')),
+        }));
+      });
+      request.on('error', reject);
+      request.end();
+    });
+    assert.equal(badHost.status, 403);
+    assert.equal(badHost.body.error.code, 'VISUAL_LOCAL_ADMIN_LOOPBACK_REQUIRED');
+
+    const forbiddenQuery = await localAdminRequest(baseUrl, 'GET', '/v1/local-admin/visual/catalog-migration/runtime?source=active', {
+      cookie,
+    });
+    assert.equal(forbiddenQuery.status, 400);
+    assert.equal(forbiddenQuery.body.error.code, 'VISUAL_LOCAL_ADMIN_FORBIDDEN_TRANSPORT');
+
+    const runtimeBefore = await localAdminRequest(baseUrl, 'GET', '/v1/local-admin/visual/catalog-migration/runtime', {
+      cookie, origin: baseUrl,
+    });
+    assert.equal(runtimeBefore.status, 200, JSON.stringify(runtimeBefore.body));
+    assert.deepEqual(runtimeBefore.body.activePointer, fixture.sourcePointer);
+    assert.equal(runtimeBefore.body.activeCatalogHash, fixture.sourcePointer.catalogHash);
+    assert.equal(Object.hasOwn(runtimeBefore.body, 'dataRoot'), false);
+    assert.equal(Object.hasOwn(runtimeBefore.body, 'pid'), false);
+
+    const image = makePng({ width: 640, height: 360, colorType: 2, noise: true });
+    const upload = await localAdminRequest(baseUrl, 'POST', '/v1/local-admin/visual/upload', {
+      cookie,
+      csrfToken,
+      body: simpleUploadBody({
+        assetType: 'scene',
+        title: 'Local-admin migration night city',
+        imageBase64: image.toString('base64'),
+        tagCodes: ['scene.city', 'scene.exterior', 'scene.night'],
+        featureCodes: ['feature.stone', 'feature.dark', 'feature.warm'],
+      }),
+    });
+    assert.equal(upload.status, 200, JSON.stringify(upload.body));
+    assert.equal(upload.body.asset.status, 'draft');
+    const uploadedAsset = upload.body.asset;
+
+    const sourceCatalogCollision = await localAdminRequest(baseUrl, 'POST', '/v1/local-admin/visual/catalogs/draft', {
+      cookie,
+      csrfToken,
+      body: {
+        schemaVersion: CATALOG_DRAFT_SCHEMA_VERSION,
+        catalogId: fixture.sourcePointer.catalogId,
+        catalogRevision: fixture.sourcePointer.catalogRevision + 1,
+        assetRefs: [{ assetId: uploadedAsset.assetId, assetVersion: uploadedAsset.assetVersion }],
+      },
+    });
+    assert.equal(sourceCatalogCollision.status, 409);
+    assert.equal(sourceCatalogCollision.body.error.code, 'VISUAL_LOCAL_ADMIN_STAGING_CATALOG_ID_ACTIVE');
+    assert.deepEqual(await controlStore.getControl(), {
+      schemaVersion: VISUAL_CONTROL_SCHEMA_VERSION,
+      enabled: true,
+      activeCatalog: fixture.sourcePointer,
+      updatedAt: '2026-10-02T00:00:00.000Z',
+    }, 'local staging must reject the active player catalog id before writing another revision');
+    assert.deepEqual(await assetStore.getActiveCatalog(fixture.sourcePointer.catalogId), fixture.sourcePointer,
+      'local staging must preserve the active player catalog index when ids collide');
+
+    const publishSourceCatalog = await localAdminRequest(baseUrl, 'POST', `/v1/local-admin/visual/catalogs/${fixture.sourcePointer.catalogId}/${fixture.sourcePointer.catalogRevision}/publish`, {
+      cookie, csrfToken, body: {},
+    });
+    assert.equal(publishSourceCatalog.status, 409);
+    assert.equal(publishSourceCatalog.body.error.code, 'VISUAL_LOCAL_ADMIN_STAGING_CATALOG_ID_ACTIVE');
+    assert.deepEqual(await controlStore.getControl().then((control) => control.activeCatalog), fixture.sourcePointer,
+      'local staging publish must not republish or rewrite the active player catalog');
+
+    const simplePublish = await localAdminRequest(baseUrl, 'POST', '/v1/local-admin/visual/publish', {
+      cookie, csrfToken, body: {},
+    });
+    assert.equal(simplePublish.status, 409);
+    assert.equal(simplePublish.body.error.code, 'EXPLICIT_CATALOG_REQUIRED');
+
+    const stageCatalogId = 'catalog_local_ingest_fixture';
+    assert.notEqual(stageCatalogId, fixture.sourcePointer.catalogId);
+    assert.notEqual(stageCatalogId, fixture.manifest.targetCatalogId);
+    const draft = await localAdminRequest(baseUrl, 'POST', '/v1/local-admin/visual/catalogs/draft', {
+      cookie,
+      csrfToken,
+      body: {
+        schemaVersion: CATALOG_DRAFT_SCHEMA_VERSION,
+        catalogId: stageCatalogId,
+        catalogRevision: 1,
+        assetRefs: [{ assetId: uploadedAsset.assetId, assetVersion: uploadedAsset.assetVersion }],
+      },
+    });
+    assert.equal(draft.status, 200, JSON.stringify(draft.body));
+    assert.equal(draft.body.catalog.status, 'draft');
+
+    const validateStage = await localAdminRequest(baseUrl, 'POST', `/v1/local-admin/visual/catalogs/${stageCatalogId}/1/validate`, {
+      cookie, csrfToken, body: {},
+    });
+    assert.equal(validateStage.status, 200, JSON.stringify(validateStage.body));
+    assert.equal(validateStage.body.catalog.status, 'validated');
+    const publishStage = await localAdminRequest(baseUrl, 'POST', `/v1/local-admin/visual/catalogs/${stageCatalogId}/1/publish`, {
+      cookie, csrfToken, body: {},
+    });
+    assert.equal(publishStage.status, 200, JSON.stringify(publishStage.body));
+    assert.equal(publishStage.body.catalog.status, 'published');
+
+    const publishedAsset = await assetStore.getAsset(uploadedAsset.assetId, uploadedAsset.assetVersion);
+    assert.equal(publishedAsset.status, 'published');
+    assert.notEqual(publishedAsset.assetMetadataHash, uploadedAsset.assetMetadataHash);
+    assert.deepEqual(await assetStore.getActiveCatalog(fixture.sourcePointer.catalogId), fixture.sourcePointer,
+      'publishing a separate ingest catalog must preserve the player source catalog index');
+    const runtimeAfterStage = await localAdminRequest(baseUrl, 'GET', '/v1/local-admin/visual/catalog-migration/runtime', {
+      cookie, origin: baseUrl,
+    });
+    assert.deepEqual(runtimeAfterStage.body.activePointer, fixture.sourcePointer,
+      'publishing an ingest catalog must not switch the player control pointer');
+
+    const manifest = {
+      ...fixture.manifest,
+      targetCatalogId: 'catalog_local_migration_target',
+      targetCatalogRevision: 1,
+      createdAt: '2026-10-04T00:00:00.000Z',
+      entries: [
+        ...fixture.manifest.entries,
+        {
+          assetId: publishedAsset.assetId,
+          assetVersion: publishedAsset.assetVersion,
+          assetContentSha256: publishedAsset.assetContentSha256,
+          assetMetadataHash: publishedAsset.assetMetadataHash,
+          assetType: 'scene',
+          channel: null,
+          approvalReason: 'Reviewed night city stage background with explicit city, exterior, night and stone taxonomy.',
+        },
+      ],
+    };
+    const preview = await localAdminRequest(baseUrl, 'POST', '/v1/local-admin/visual/catalog-migration/preview', {
+      cookie, csrfToken, body: manifest,
+    });
+    assert.equal(preview.status, 200, JSON.stringify(preview.body));
+    assert.equal(preview.body.ok, true);
+    assert.equal(preview.body.idempotent, false);
+    assert.equal(preview.body.oldPointer.catalogId, fixture.sourcePointer.catalogId);
+    assert.equal(preview.body.sourceRefCount, fixture.sourceCatalog.assetRefs.length);
+    assert.equal(preview.body.targetRefCount, fixture.sourceCatalog.assetRefs.length + 1);
+    assert.equal(preview.body.countsByType.scene, 2);
+    assert.equal(preview.body.countsByChannel.narrator, 1);
+    assert.equal(preview.body.countsByChannel.player, 1);
+    assert.equal(preview.body.countsByChannel.system, 0);
+    assert.equal(preview.body.duplicateContentCount, 0);
+    assert.deepEqual(await controlStore.getControl(), {
+      schemaVersion: VISUAL_CONTROL_SCHEMA_VERSION,
+      enabled: true,
+      activeCatalog: fixture.sourcePointer,
+      updatedAt: '2026-10-02T00:00:00.000Z',
+    }, 'preview must not mutate the active visual control pointer');
+    assert.deepEqual(await assetStore.getActiveCatalog(fixture.sourcePointer.catalogId), fixture.sourcePointer,
+      'preview must not mutate the active player asset-store pointer');
+
+    const activate = await localAdminRequest(baseUrl, 'POST', '/v1/local-admin/visual/catalog-migration/activate', {
+      cookie, csrfToken, body: manifest,
+    });
+    assert.equal(activate.status, 200, JSON.stringify(activate.body));
+    assert.equal(activate.body.ok, true);
+    const targetPointer = activate.body.newPointer;
+    assert.equal(targetPointer.catalogId, manifest.targetCatalogId);
+    assert.equal((await controlStore.getControl()).activeCatalog.catalogHash, targetPointer.catalogHash);
+    assert.deepEqual(await assetStore.getActiveCatalog(targetPointer.catalogId), targetPointer);
+    assert.equal((await service.stores.catalogMigrationJournalStore.getRecord()).state, 'COMMITTED');
+
+    const playerContextResponse = await fetch(`${baseUrl}/v1/core/visual-context`, {
+      headers: { origin: ORIGIN, accept: 'application/json' },
+    });
+    const playerContext = await playerContextResponse.json();
+    assert.equal(playerContextResponse.status, 200, JSON.stringify(playerContext));
+    assert.deepEqual(playerContext.activeCatalog, targetPointer);
+    assert.equal(playerContext.characterChannels.length, 2);
+
+    const contentResponse = await fetch(`${baseUrl}/v1/core/catalogs/${targetPointer.catalogId}/${targetPointer.catalogRevision}/assets/${publishedAsset.assetId}/${publishedAsset.assetVersion}/content`, {
+      headers: { origin: ORIGIN, accept: PNG_MIME },
+    });
+    const contentBytes = Buffer.from(await contentResponse.arrayBuffer());
+    assert.equal(contentResponse.status, 200);
+    assert.equal(contentResponse.headers.get('content-type'), PNG_MIME);
+    assert.equal(`sha256:${sha256Hex(contentBytes)}`, publishedAsset.assetContentSha256);
+
+    const rollback = await localAdminRequest(baseUrl, 'POST', '/v1/local-admin/visual/catalog-migration/rollback', {
+      cookie,
+      csrfToken,
+      body: { expectedCurrentPointer: targetPointer, targetPointer: fixture.sourcePointer },
+    });
+    assert.equal(rollback.status, 200, JSON.stringify(rollback.body));
+    assert.deepEqual(rollback.body.activePointer, fixture.sourcePointer);
+    assert.deepEqual((await controlStore.getControl()).activeCatalog, fixture.sourcePointer);
+    assert.deepEqual(await assetStore.getActiveCatalog(fixture.sourcePointer.catalogId), fixture.sourcePointer);
+    assert.deepEqual(await assetStore.getActiveCatalog(targetPointer.catalogId), targetPointer,
+      'rollback retains the published target catalog for diagnosis or a later retry');
+    assert.equal((await assetStore.getCatalog(stageCatalogId, 1)).status, 'published',
+      'rollback retains the non-player ingest catalog and asset history');
+    assert.equal((await assetStore.getAsset(publishedAsset.assetId, publishedAsset.assetVersion)).status, 'published');
   });
 }
 
@@ -2278,11 +3327,11 @@ async function testSimpleVisualControlChapterOne() {
   });
   await withServer(staleControlService, async (baseUrl) => {
     const staleStatus = await request(baseUrl, 'GET', '/v1/admin/visual/status');
-    assert.equal(staleStatus.status, 500, JSON.stringify(staleStatus.body));
-    assert.equal(staleStatus.body.error.code, 'VISUAL_CONTROL_ACTIVE_CATALOG_INVALID');
+    assert.equal(staleStatus.status, 503, JSON.stringify(staleStatus.body));
+    assert.equal(staleStatus.body.error.code, 'VISUAL_CATALOG_RECOVERY_REQUIRED');
     const staleEnable = await request(baseUrl, 'POST', '/v1/admin/visual/enable', { body: {} });
-    assert.equal(staleEnable.status, 500, JSON.stringify(staleEnable.body));
-    assert.equal(staleEnable.body.error.code, 'VISUAL_CONTROL_ACTIVE_CATALOG_INVALID');
+    assert.equal(staleEnable.status, 503, JSON.stringify(staleEnable.body));
+    assert.equal(staleEnable.body.error.code, 'VISUAL_CATALOG_RECOVERY_REQUIRED');
   });
 
   const symlinkRoot = mkdtempSync(path.join(os.tmpdir(), 'galgame-visual-control-symlink-'));
@@ -2454,20 +3503,100 @@ function simpleUploadBody({ assetType, title, imageBase64, tagCodes, featureCode
 }
 
 async function testSimpleVisualPublishChapterThree() {
-  await testSimpleVisualPublishSuccessRestartAndIdempotency();
-  await testSimpleVisualPublishRollbackFailures();
+  await testSimplePublishFailClosedMatrix();
+}
+
+async function testSimplePublishFailClosedMatrix() {
+  const emptyService = createVisualAssetService({ adminToken: ADMIN_TOKEN, adminOrigins: [ORIGIN] });
+  await withServer(emptyService, async (baseUrl) => {
+    const result = await request(baseUrl, 'POST', '/v1/admin/visual/publish', { body: {} });
+    assert.equal(result.status, 409);
+    assert.equal(result.body.error.code, 'NO_ACTIVE_CATALOG');
+  });
+
+  for (const { schemaVersion, assetType, hasDraft, expectedCode } of [
+    { schemaVersion: CATALOG_SCHEMA_VERSION, assetType: 'character', hasDraft: true, expectedCode: 'CHANNELS_UNRESOLVED' },
+    { schemaVersion: CATALOG_SCHEMA_VERSION, assetType: 'scene', hasDraft: false, expectedCode: 'LEGACY_CATALOG_REQUIRES_MIGRATION' },
+    { schemaVersion: CATALOG_V2_SCHEMA_VERSION, assetType: 'character', hasDraft: false, expectedCode: null },
+    { schemaVersion: CATALOG_V2_SCHEMA_VERSION, assetType: 'scene', hasDraft: true, expectedCode: 'EXPLICIT_CATALOG_REQUIRED' },
+  ]) {
+    const fixture = await createSimplePublishFixture({ schemaVersion, assetType, hasDraft });
+    const service = createVisualAssetService({
+      adminToken: ADMIN_TOKEN, adminOrigins: [ORIGIN], assetStore: fixture.assetStore,
+      contentStore: fixture.contentStore, visualControlStore: fixture.visualControlStore,
+    });
+    await service.initialize();
+    await withServer(service, async (baseUrl) => {
+      const beforeAssets = await fixture.assetStore.listAssets();
+      const beforeCatalogs = await fixture.assetStore.listCatalogs();
+      const beforeActive = await fixture.assetStore.listActiveCatalogs();
+      const beforeControl = await fixture.visualControlStore.getControl();
+      const result = await request(baseUrl, 'POST', '/v1/admin/visual/publish', { body: {} });
+      if (expectedCode) {
+        assert.equal(result.status, expectedCode === 'VISUAL_CATALOG_RECOVERY_REQUIRED' ? 503 : 409, JSON.stringify(result.body));
+        assert.equal(result.body.error.code, expectedCode);
+      } else {
+        assert.equal(result.status, 200, JSON.stringify(result.body));
+        assert.equal(result.body.idempotent, true);
+        assert.deepEqual(result.body.visual.activeCatalog, beforeControl.activeCatalog);
+      }
+      assert.deepEqual(await fixture.assetStore.listAssets(), beforeAssets, 'simple publish never promotes or rewrites assets');
+      assert.deepEqual(await fixture.assetStore.listCatalogs(), beforeCatalogs, 'simple publish never creates or mutates catalogs');
+      assert.deepEqual(await fixture.assetStore.listActiveCatalogs(), beforeActive, 'simple publish never moves asset pointers');
+      assert.deepEqual(await fixture.visualControlStore.getControl(), beforeControl, 'simple publish never moves control pointer');
+    });
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+}
+
+async function createSimplePublishFixture({ schemaVersion, assetType, hasDraft }) {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'galgame-simple-publish-matrix-'));
+  const assetStore = new MemoryVisualAssetStore();
+  const contentStore = new MemoryContentStore();
+  const visualControlStore = new MemoryVisualControlStore();
+  const colorType = assetType === 'character' ? 6 : 2;
+  const content = await contentStore.put(makePng({ width: assetType === 'scene' ? 640 : 640, height: assetType === 'scene' ? 360 : 640, colorType }), PNG_MIME);
+  const asset = makeValidatedAssetRecord({
+    assetId: `asset_matrix_${assetType}`, assetType,
+    role: assetType === 'scene' ? 'background' : 'transparent-sprite',
+    width: 640, height: assetType === 'scene' ? 360 : 640,
+    assetContentSha256: content.hash,
+  });
+  await assetStore.saveAsset(asset);
+  const catalogSchemaVersion = schemaVersion;
+  const catalog = createCorePublishedCatalog([asset], { catalogId: `catalog_matrix_${schemaVersion === CATALOG_SCHEMA_VERSION ? 'legacy' : 'v2'}_${assetType}` });
+  if (catalogSchemaVersion === CATALOG_SCHEMA_VERSION) delete catalog.characterChannels;
+  catalog.schemaVersion = catalogSchemaVersion;
+  catalog.catalogHash = computeCatalogHash(catalog);
+  await assetStore.saveCatalog(catalog);
+  await assetStore.setActiveCatalog(catalog);
+  const pointer = { catalogId: catalog.catalogId, catalogRevision: catalog.catalogRevision, catalogHash: catalog.catalogHash };
+  await visualControlStore.setControl({
+    schemaVersion: VISUAL_CONTROL_SCHEMA_VERSION, enabled: true, activeCatalog: pointer,
+    updatedAt: '2026-09-10T00:00:00.000Z',
+  });
+  if (hasDraft) {
+    const draftContent = await contentStore.put(makePng({ width: 640, height: 360, colorType: 2, rgb: [22, 33, 44] }), PNG_MIME);
+    const draft = makeValidatedAssetRecord({ assetId: 'asset_matrix_draft_scene', assetType: 'scene', role: 'background', width: 640, height: 360, assetContentSha256: draftContent.hash });
+    draft.status = 'draft';
+    draft.assetMetadataHash = computeAssetMetadataHash(draft);
+    await assetStore.saveAsset(draft);
+  }
+  return { root, assetStore, contentStore, visualControlStore };
 }
 
 async function testSimpleVisualPublishSuccessRestartAndIdempotency() {
   const assetRoot = mkdtempSync(path.join(os.tmpdir(), 'galgame-simple-publish-assets-'));
   const contentRoot = mkdtempSync(path.join(os.tmpdir(), 'galgame-simple-publish-content-'));
   const controlRoot = mkdtempSync(path.join(os.tmpdir(), 'galgame-simple-publish-control-'));
+  const assetStore = new FileVisualAssetStore(assetRoot);
+  const visualControlStore = new FileVisualControlStore(controlRoot);
   const service = createVisualAssetService({
     adminToken: ADMIN_TOKEN,
     adminOrigins: [ORIGIN],
-    assetStore: new FileVisualAssetStore(assetRoot),
+    assetStore,
     contentStore: new FileContentStore(contentRoot),
-    visualControlStore: new FileVisualControlStore(controlRoot),
+    visualControlStore,
   });
   await withServer(service, async (baseUrl) => {
     const firstUploads = await uploadFiveSimpleVisualAssets(baseUrl, 'Publish Success');
@@ -2481,6 +3610,8 @@ async function testSimpleVisualPublishSuccessRestartAndIdempotency() {
     assert.equal(published.body.catalog.catalogRevision, 1);
     assert.equal(published.body.catalog.status, 'published');
     assert.equal(published.body.catalog.assetRefs.length, 5);
+    assert.equal(published.body.catalog.characterChannels.length, 1);
+    assert.equal(published.body.catalog.characterChannels[0].channel, 'character');
     assert.equal(published.body.visual.enabled, true);
     assert.deepEqual(published.body.visual.activeCatalog, {
       catalogId: published.body.catalog.catalogId,
@@ -2495,6 +3626,18 @@ async function testSimpleVisualPublishSuccessRestartAndIdempotency() {
     assert.equal(idempotent.body.catalog.catalogHash, published.body.catalog.catalogHash);
     assert.deepEqual(idempotent.body.visual.activeCatalog, published.body.visual.activeCatalog);
 
+    const originalCatalog = await assetStore.getCatalog(published.body.catalog.catalogId, 1);
+    const specialCatalog = { ...originalCatalog, characterChannels: [{ ...originalCatalog.characterChannels[0], channel: 'narrator' }] };
+    specialCatalog.catalogHash = computeCatalogHash(specialCatalog);
+    await assetStore.replaceCatalog(specialCatalog, originalCatalog.catalogHash);
+    await assetStore.setActiveCatalog(specialCatalog);
+    const currentControl = await visualControlStore.getControl();
+    await visualControlStore.setControl({
+      ...currentControl,
+      activeCatalog: { catalogId: specialCatalog.catalogId, catalogRevision: 1, catalogHash: specialCatalog.catalogHash },
+      updatedAt: '2026-08-03T00:00:00.000Z',
+    });
+
     const extraUpload = await uploadSimpleVisualAsset(baseUrl, {
       assetType: 'scene',
       title: 'Publish Success extra scene',
@@ -2505,6 +3648,7 @@ async function testSimpleVisualPublishSuccessRestartAndIdempotency() {
     assert.equal(second.body.published, true);
     assert.equal(second.body.idempotent, false);
     assert.equal(second.body.catalog.assetRefs.length, 6);
+    assert.equal(second.body.catalog.characterChannels[0].channel, 'narrator');
     const secondAssetKeys = second.body.catalog.assetRefs.map((ref) => `${ref.assetId}:${ref.assetVersion}`).sort();
     assert.deepEqual(secondAssetKeys.filter((key) => firstAssetKeys.includes(key)), firstAssetKeys);
     assert.ok(secondAssetKeys.includes(`${extraUpload.assetId}:${extraUpload.assetVersion}`));
@@ -2702,6 +3846,7 @@ async function testAssetUploadAndCatalogLifecycle() {
     })));
     assert.equal(catalog.unknownAssetRefs.length, 5);
     assert.equal(catalog.assetRefs.length, 5);
+    assert.deepEqual(catalog.characterChannels, [{ assetId: 'char_raven_rogue', assetVersion: 1, channel: 'character' }]);
 
     const publishAgain = await request(baseUrl, 'POST', '/v1/admin/catalogs/catalog_alpha/1/publish', { body: {} });
     assert.equal(publishAgain.status, 200);
@@ -2724,6 +3869,580 @@ async function testAssetUploadAndCatalogLifecycle() {
     const archiveDraft = await request(baseUrl, 'POST', '/v1/admin/catalogs/catalog_beta/1/archive', { body: {} });
     assert.equal(archiveDraft.status, 409);
   });
+}
+
+async function testCatalogChannelValidationAndRollback() {
+  const service = createVisualAssetService({ adminToken: ADMIN_TOKEN, adminOrigins: [ORIGIN] });
+  await withServer(service, async (baseUrl) => {
+    const sharedCharacterPixels = makePng({ colorType: 6, alpha: 0 });
+    const character = await upload(baseUrl, metadata({
+      assetId: 'asset_character_catalog_channel',
+      assetType: 'character',
+      role: 'transparent-sprite',
+      tagCodes: ['character.human'],
+      featureCodes: ['feature.transparent'],
+    }), sharedCharacterPixels);
+    assert.equal(character.status, 200, JSON.stringify(character.body));
+    const ref = { assetId: character.body.asset.assetId, assetVersion: character.body.asset.assetVersion };
+    const duplicatePixels = await upload(baseUrl, metadata({
+      assetId: 'asset_character_duplicate_channel_pixels',
+      assetType: 'character',
+      role: 'transparent-sprite',
+      tagCodes: ['character.human'],
+      featureCodes: ['feature.transparent'],
+    }), sharedCharacterPixels);
+    assert.equal(duplicatePixels.status, 200, JSON.stringify(duplicatePixels.body));
+    const duplicatePixelsRef = { assetId: duplicatePixels.body.asset.assetId, assetVersion: duplicatePixels.body.asset.assetVersion };
+    const draftBody = (catalogId, characterChannels) => ({
+      schemaVersion: CATALOG_DRAFT_SCHEMA_VERSION,
+      catalogId,
+      catalogRevision: 1,
+      assetRefs: [ref],
+      characterChannels,
+    });
+
+    const complete = await request(baseUrl, 'POST', '/v1/admin/catalogs/draft', {
+      body: draftBody('catalog_channel_valid', [{ ...ref, channel: 'narrator' }]),
+    });
+    assert.equal(complete.status, 200, JSON.stringify(complete.body));
+    assert.equal(complete.body.catalog.schemaVersion, CATALOG_V2_SCHEMA_VERSION);
+    assert.deepEqual(complete.body.catalog.characterChannels, [{ ...ref, channel: 'narrator' }]);
+    const changedChannel = { ...complete.body.catalog, characterChannels: [{ ...ref, channel: 'system' }] };
+    assert.notEqual(computeCatalogHash(changedChannel), complete.body.catalog.catalogHash);
+
+    const duplicate = await request(baseUrl, 'POST', '/v1/admin/catalogs/draft', {
+      body: draftBody('catalog_channel_duplicate', [{ ...ref, channel: 'character' }, { ...ref, channel: 'narrator' }]),
+    });
+    assert.equal(duplicate.status, 400);
+    assert.equal(duplicate.body.error.code, 'VISUAL_CATALOG_CHANNEL_DUPLICATE');
+
+    const missing = await request(baseUrl, 'POST', '/v1/admin/catalogs/draft', {
+      body: draftBody('catalog_channel_missing', []),
+    });
+    assert.equal(missing.status, 400);
+    assert.equal(missing.body.error.code, 'VISUAL_CATALOG_CHANNEL_MISSING');
+
+    const orphan = await request(baseUrl, 'POST', '/v1/admin/catalogs/draft', {
+      body: draftBody('catalog_channel_orphan', [{ assetId: 'asset_character_orphan', assetVersion: 1, channel: 'character' }]),
+    });
+    assert.equal(orphan.status, 400);
+    assert.equal(orphan.body.error.code, 'VISUAL_CATALOG_CHANNEL_ORPHAN');
+
+    const invalid = await request(baseUrl, 'POST', '/v1/admin/catalogs/draft', {
+      body: draftBody('catalog_channel_invalid', [{ ...ref, channel: 'narration' }]),
+    });
+    assert.equal(invalid.status, 400);
+    assert.equal(invalid.body.error.code, 'VISUAL_CATALOG_CHANNEL_INVALID');
+
+    const crossChannelDuplicatePixels = await request(baseUrl, 'POST', '/v1/admin/catalogs/draft', {
+      body: {
+        schemaVersion: CATALOG_DRAFT_SCHEMA_VERSION,
+        catalogId: 'catalog_channel_duplicate_pixels',
+        catalogRevision: 1,
+        assetRefs: [ref, duplicatePixelsRef],
+        characterChannels: [
+          { ...ref, channel: 'character' },
+          { ...duplicatePixelsRef, channel: 'narrator' },
+        ],
+      },
+    });
+    assert.equal(crossChannelDuplicatePixels.status, 400);
+    assert.equal(crossChannelDuplicatePixels.body.error.code, 'VISUAL_CATALOG_CHANNEL_CONTENT_CONFLICT');
+
+    const validated = await request(baseUrl, 'POST', '/v1/admin/catalogs/catalog_channel_valid/1/validate', { body: {} });
+    assert.equal(validated.status, 200, JSON.stringify(validated.body));
+    const published = await request(baseUrl, 'POST', '/v1/admin/catalogs/catalog_channel_valid/1/publish', { body: {} });
+    assert.equal(published.status, 200, JSON.stringify(published.body));
+    const archive = await request(baseUrl, 'POST', '/v1/admin/catalogs/catalog_channel_valid/1/archive', { body: {} });
+    assert.equal(archive.status, 200, JSON.stringify(archive.body));
+    assert.deepEqual(archive.body.catalog.characterChannels, [{ ...ref, channel: 'narrator' }]);
+    const rollback = await request(baseUrl, 'POST', '/v1/admin/catalogs/catalog_channel_valid/rollback', { body: { catalogRevision: 1 } });
+    assert.equal(rollback.status, 200, JSON.stringify(rollback.body));
+    assert.deepEqual(rollback.body.catalog.characterChannels, [{ ...ref, channel: 'narrator' }]);
+    assert.equal(rollback.body.catalog.catalogHash, archive.body.catalog.catalogHash);
+  });
+}
+
+async function testCatalogChannelDecisionIsolation() {
+  const service = createVisualAssetService({ adminToken: ADMIN_TOKEN, adminOrigins: [ORIGIN] });
+  await withServer(service, async (baseUrl) => {
+    const specs = [
+      { assetId: 'asset_character_aaa_narrator', channel: 'narrator', rgb: [80, 120, 160] },
+      { assetId: 'asset_character_aab_player', channel: 'player', rgb: [80, 120, 161] },
+      { assetId: 'asset_character_zzz_npc', channel: 'character', rgb: [80, 121, 160] },
+    ];
+    const uploadedAssets = [];
+    for (const spec of specs) {
+      const response = await upload(baseUrl, metadata({
+        assetId: spec.assetId,
+        assetType: 'character',
+        role: 'transparent-sprite',
+        tagCodes: ['character.human', 'character.androgynous'],
+        featureCodes: ['feature.transparent', 'feature.full-body'],
+      }), makePng({ width: 640, height: 640, colorType: 6, alpha: 0, rgb: spec.rgb, noise: true }));
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      uploadedAssets.push(response.body.asset);
+    }
+    const sceneUpload = await upload(baseUrl, metadata({
+      assetId: 'asset_scene_channel_legacy_forest',
+      assetType: 'scene',
+      role: 'background',
+      tagCodes: ['scene.forest'],
+      featureCodes: ['feature.dark'],
+    }), makePng({ width: 640, height: 360, colorType: 2, rgb: [32, 80, 45], noise: true }));
+    assert.equal(sceneUpload.status, 200, JSON.stringify(sceneUpload.body));
+    uploadedAssets.push(sceneUpload.body.asset);
+    const assetRefs = uploadedAssets.map((asset) => ({ assetId: asset.assetId, assetVersion: asset.assetVersion }));
+    const characterChannels = specs.map((spec) => ({ assetId: spec.assetId, assetVersion: 1, channel: spec.channel }));
+    const draft = await request(baseUrl, 'POST', '/v1/admin/catalogs/draft', {
+      body: { schemaVersion: CATALOG_DRAFT_SCHEMA_VERSION, catalogId: 'catalog_channel_candidates', catalogRevision: 1, assetRefs, characterChannels },
+    });
+    assert.equal(draft.status, 200, JSON.stringify(draft.body));
+    assert.equal((await request(baseUrl, 'POST', '/v1/admin/catalogs/catalog_channel_candidates/1/validate', { body: {} })).status, 200);
+    const published = await request(baseUrl, 'POST', '/v1/admin/catalogs/catalog_channel_candidates/1/publish', { body: {} });
+    assert.equal(published.status, 200, JSON.stringify(published.body));
+    const catalog = published.body.catalog;
+    const publishedAssets = [];
+    for (const asset of uploadedAssets) {
+      const response = await request(baseUrl, 'GET', `/v1/admin/assets/${asset.assetId}/1`);
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      publishedAssets.push(response.body.asset);
+    }
+
+    const entity = coreEntity('character', {
+      entityKey: 'entity_character_channeltest01',
+      displayLabel: 'Mira',
+      visibleAttributes: [
+        { code: 'character-explicit-name', value: 'Mira', confidenceBand: 'explicit' },
+        { code: 'character-explicit-species', value: 'human', confidenceBand: 'explicit' },
+        { code: 'character-explicit-gender-presentation', value: 'androgynous', confidenceBand: 'explicit' },
+      ],
+    });
+    const sceneEntity = coreEntity('scene', { entityKey: 'entity_scene_channelforest01' });
+    const projection = coreProjection({ entities: [entity, sceneEntity] });
+    const runtimeHint = {
+      schemaVersion: VISUAL_RUNTIME_HINTS_VERSION,
+      status: 'ready',
+      dictionaryVersion: DICTIONARY_VERSION,
+      dictionaryHash: DICTIONARY_HASH,
+      entities: [
+        { entityType: 'character', codes: ['character.human', 'character.androgynous'], confidence: 1, confidenceBand: 'explicit' },
+        { entityType: 'scene', codes: ['scene.forest'], confidence: 1, confidenceBand: 'explicit' },
+      ],
+    };
+    const corePlan = createCoreVisualCandidateDecisionPlan(coreDecisionPlanRequest({
+      assets: publishedAssets,
+      catalog,
+      projection,
+    }), { runtimeMode: true, runtimeHint, visibleContext: { recent: [] } });
+    assert.equal(corePlan.ok, true, JSON.stringify(corePlan));
+    assert.equal(corePlan.decisions.find((decision) => decision.entityType === 'character')?.assetId, 'asset_character_zzz_npc', JSON.stringify(corePlan.decisions));
+
+    const legacyCatalog = {
+      ...catalog,
+      schemaVersion: 'galgame.visual-asset-catalog.v1',
+    };
+    delete legacyCatalog.characterChannels;
+    legacyCatalog.catalogHash = computeCatalogHash(legacyCatalog);
+    const legacyPlan = createCoreVisualCandidateDecisionPlan(coreDecisionPlanRequest({
+      assets: publishedAssets,
+      catalog: legacyCatalog,
+      projection,
+    }), { runtimeMode: true, runtimeHint, visibleContext: { recent: [] } });
+    assert.equal(legacyPlan.ok, true, JSON.stringify(legacyPlan));
+    assert.equal(legacyPlan.decisions.find((decision) => decision.entityType === 'character')?.assetId, 'unknown_character');
+    assert.equal(legacyPlan.decisions.find((decision) => decision.entityType === 'scene')?.assetId, 'asset_scene_channel_legacy_forest');
+  });
+}
+
+async function testLegacyVisualMatchChannelIsolation() {
+  const projectionSecret = 'test-channel-visual-projection-secret';
+  const service = createVisualAssetService({
+    adminToken: ADMIN_TOKEN,
+    adminOrigins: [ORIGIN],
+    visualMatchPlayerOrigins: [ORIGIN],
+    visualProjectionSecret: projectionSecret,
+    bindingStore: new MemoryVisualBindingStore(),
+    projectionStubReader: async (projectionId) => {
+      assert.equal(projectionId, stub.projectionId);
+      return stub;
+    },
+  });
+  let stub;
+
+  await withServer(service, async (baseUrl) => {
+    const specs = [
+      { assetId: 'asset_character_aaa_narrator', channel: 'narrator', rgb: [80, 120, 160] },
+      { assetId: 'asset_character_aab_player', channel: 'player', rgb: [80, 120, 161] },
+      { assetId: 'asset_character_zzz_npc', channel: 'character', rgb: [80, 121, 160] },
+    ];
+    const uploaded = [];
+    for (const spec of specs) {
+      const result = await upload(baseUrl, metadata({
+        assetId: spec.assetId,
+        assetType: 'character',
+        role: 'transparent-sprite',
+        tagCodes: ['character.human', 'character.androgynous'],
+        featureCodes: ['feature.transparent', 'feature.full-body'],
+      }), makePng({ width: 640, height: 640, colorType: 6, alpha: 0, rgb: spec.rgb, noise: true }));
+      assert.equal(result.status, 200, JSON.stringify(result.body));
+      uploaded.push(result.body.asset);
+    }
+    const assetRefs = uploaded.map((asset) => ({ assetId: asset.assetId, assetVersion: asset.assetVersion }));
+    const characterChannels = specs.map((spec) => ({ assetId: spec.assetId, assetVersion: 1, channel: spec.channel }));
+    const draft = await request(baseUrl, 'POST', '/v1/admin/catalogs/draft', {
+      body: { schemaVersion: CATALOG_DRAFT_SCHEMA_VERSION, catalogId: 'vc_characterchannel01', catalogRevision: 1, assetRefs, characterChannels },
+    });
+    assert.equal(draft.status, 200, JSON.stringify(draft.body));
+    assert.equal((await request(baseUrl, 'POST', '/v1/admin/catalogs/vc_characterchannel01/1/validate', { body: {} })).status, 200);
+    const published = await request(baseUrl, 'POST', '/v1/admin/catalogs/vc_characterchannel01/1/publish', { body: {} });
+    assert.equal(published.status, 200, JSON.stringify(published.body));
+
+    const characterEntity = {
+      entityKey: 'entity_character_legacychannel01',
+      entityType: 'character',
+      displayLabel: 'Mira',
+      visibleAttributes: [
+        { code: 'character-explicit-name', value: 'Mira', confidenceBand: 'explicit' },
+        { code: 'character-explicit-species', value: 'human', confidenceBand: 'explicit' },
+        { code: 'character-explicit-gender-presentation', value: 'androgynous', confidenceBand: 'explicit' },
+      ],
+      confidenceBand: 'explicit',
+    };
+    stub = visualProjectionStub({
+      catalog: published.body.catalog,
+      overrides: {
+        projectionId: 'vvp_channelmatch001',
+        entities: [characterEntity],
+      },
+    });
+    const proof = signProjectionProof({ stub, secret: projectionSecret, overrides: { nonce: 'nonce_CHANNELMATCH0001' } });
+    const matched = await visualMatchRequestHttp(baseUrl, {
+      proof,
+      requestBody: visualMatchRequest({
+        requestId: 'req_CHANNELMATCH0001',
+        projectionId: stub.projectionId,
+        entityKey: characterEntity.entityKey,
+        entityType: 'character',
+        idempotencyKey: 'idem_CHANNEL_MATCH_0001',
+      }),
+    });
+    assert.equal(matched.status, 200, JSON.stringify(matched.body));
+    assert.equal(matched.body.ok, true);
+    assert.equal(matched.body.result.assetId, 'asset_character_zzz_npc');
+  });
+}
+
+async function testPlayerCatalogMigrationCli() {
+  const manifestPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'player-catalog-manifest.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  const targetPointer = {
+    catalogId: manifest.targetCatalogId,
+    catalogRevision: manifest.targetCatalogRevision,
+    catalogHash: `sha256:${'b'.repeat(64)}`,
+  };
+  const countsByType = Object.fromEntries(['scene', 'character', 'equipment', 'item', 'skill'].map((type) => [
+    type, manifest.entries.filter((entry) => entry.assetType === type).length,
+  ]));
+  const countsByChannel = Object.fromEntries(['character', 'player', 'narrator', 'system'].map((channel) => [
+    channel, manifest.entries.filter((entry) => entry.assetType === 'character' && entry.channel === channel).length,
+  ]));
+  const sourceRuntime = {
+    ok: true, serviceInstanceId: 'fixture-service', pid: 123, port: 8798,
+    activePointer: manifest.sourcePointer, activeCatalogHash: manifest.sourcePointer.catalogHash, journal: null,
+  };
+  const targetRuntime = {
+    ...sourceRuntime, activePointer: targetPointer, activeCatalogHash: targetPointer.catalogHash,
+    journal: { state: 'COMMITTED' },
+  };
+  const sourcePreview = {
+    ok: true, schemaVersion: 'galgame.visual-player-catalog-migration-preview.v1', idempotent: false,
+    oldPointer: manifest.sourcePointer, newPointer: targetPointer,
+    sourceCatalogHash: manifest.sourcePointer.catalogHash, targetCatalogHash: targetPointer.catalogHash,
+    sourceRefCount: 40, targetRefCount: manifest.entries.length, countsByType, countsByChannel,
+    duplicateContentCount: 0, excludedByReason: { NOT_ALLOWLISTED: 11 },
+  };
+  const targetPreview = { ...sourcePreview, idempotent: true, oldPointer: targetPointer, newPointer: targetPointer };
+  const jsonResponse = (payload) => ({ ok: true, status: 200, json: async () => payload });
+  const callFactory = ({ phase }) => {
+    let runtimeReads = 0;
+    let activations = 0;
+    let rollbacks = 0;
+    const calls = [];
+    const fetchImpl = async (url, options) => {
+      const parsed = new URL(url);
+      calls.push({ pathname: parsed.pathname, method: options.method, authorization: options.headers.authorization });
+      assert.equal(parsed.origin, 'http://127.0.0.1:8798');
+      assert.equal(options.headers.authorization, 'Bearer fixture-token');
+      if (parsed.pathname.endsWith('/runtime')) {
+        runtimeReads += 1;
+        if (phase === 'execute') return jsonResponse(runtimeReads === 1 ? sourceRuntime : targetRuntime);
+        if (phase === 'rollback') return jsonResponse(runtimeReads === 1 ? targetRuntime : { ...sourceRuntime, journal: { state: 'COMMITTED' } });
+        return jsonResponse(sourceRuntime);
+      }
+      if (parsed.pathname.endsWith('/preview')) {
+        return jsonResponse(phase === 'rollback' ? targetPreview : sourcePreview);
+      }
+      if (parsed.pathname.endsWith('/activate')) {
+        activations += 1;
+        return jsonResponse({ ok: true, oldPointer: manifest.sourcePointer, newPointer: targetPointer, catalogHash: targetPointer.catalogHash });
+      }
+      if (parsed.pathname.endsWith('/rollback')) {
+        rollbacks += 1;
+        const body = JSON.parse(options.body);
+        assert.deepEqual(body.expectedCurrentPointer, targetPointer);
+        assert.deepEqual(body.targetPointer, manifest.sourcePointer);
+        return jsonResponse({ ok: true, oldPointer: targetPointer, newPointer: manifest.sourcePointer });
+      }
+      throw new Error(`unexpected management route ${parsed.pathname}`);
+    };
+    return { fetchImpl, calls, get activations() { return activations; }, get rollbacks() { return rollbacks; } };
+  };
+
+  const previewApi = callFactory({ phase: 'preview' });
+  const previewResult = await runPlayerCatalogRebuild({ mode: 'preview', manifestPath, adminToken: 'fixture-token', fetchImpl: previewApi.fetchImpl });
+  assert.equal(previewResult.operation, 'preview');
+  assert.equal(previewApi.activations, 0);
+  assert.equal(previewApi.calls.some((call) => call.pathname.endsWith('/activate')), false);
+
+  const executeApi = callFactory({ phase: 'execute' });
+  const executeResult = await runPlayerCatalogRebuild({ mode: 'execute', manifestPath, adminToken: 'fixture-token', fetchImpl: executeApi.fetchImpl });
+  assert.equal(executeResult.operation, 'execute');
+  assert.equal(executeResult.runtime.journalState, 'COMMITTED');
+  assert.equal(executeApi.activations, 1);
+
+  const rollbackApi = callFactory({ phase: 'rollback' });
+  const rollbackResult = await runPlayerCatalogRebuild({ mode: 'rollback', manifestPath, adminToken: 'fixture-token', fetchImpl: rollbackApi.fetchImpl });
+  assert.equal(rollbackResult.operation, 'rollback');
+  assert.deepEqual(rollbackResult.runtime.activePointer, manifest.sourcePointer);
+  assert.equal(rollbackApi.rollbacks, 1);
+
+  const unsafeApi = callFactory({ phase: 'preview' });
+  await assert.rejects(() => runPlayerCatalogRebuild({
+    mode: 'preview', manifestPath, adminToken: 'fixture-token', baseUrl: 'https://example.com', fetchImpl: unsafeApi.fetchImpl,
+  }), /loopback/u);
+  assert.equal(unsafeApi.calls.length, 0);
+
+  const badCountsApi = callFactory({ phase: 'preview' });
+  const originalFetch = badCountsApi.fetchImpl;
+  badCountsApi.fetchImpl = async (url, options) => {
+    if (String(url).endsWith('/preview')) {
+      return jsonResponse({ ...sourcePreview, countsByChannel: { ...countsByChannel, system: 1 } });
+    }
+    return originalFetch(url, options);
+  };
+  await assert.rejects(() => runPlayerCatalogRebuild({
+    mode: 'preview', manifestPath, adminToken: 'fixture-token', fetchImpl: badCountsApi.fetchImpl,
+  }), /counts or required channel inventory/u);
+
+  const badIdempotentCountsApi = callFactory({ phase: 'rollback' });
+  const fetchIdempotent = badIdempotentCountsApi.fetchImpl;
+  badIdempotentCountsApi.fetchImpl = async (url, options) => {
+    if (String(url).endsWith('/preview')) {
+      return jsonResponse({ ...targetPreview, countsByType: { ...countsByType, scene: countsByType.scene + 1 } });
+    }
+    return fetchIdempotent(url, options);
+  };
+  await assert.rejects(() => runPlayerCatalogRebuild({
+    mode: 'preview', manifestPath, adminToken: 'fixture-token', fetchImpl: badIdempotentCountsApi.fetchImpl,
+  }), /counts or required channel inventory/u, 'idempotent previews are checked against the manifest counts too');
+}
+
+async function testSideArtImporterChannelMigration() {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'galgame-side-art-channel-test-'));
+  const assetsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'side-art-assets');
+  const manifestPath = path.join(assetsDir, 'manifest.json');
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    const narratorEntry = manifest.assets.find((entry) => entry.assetId === 'asset_curated_character-narrator-ink-emblem');
+    const playerEntry = manifest.assets.find((entry) => entry.assetId === 'asset_curated_player-neutral-compass');
+    assert.equal(narratorEntry.channel, 'narrator');
+    assert.equal(playerEntry.channel, 'player');
+    const ordinaryMappings = buildCharacterChannelsForMergedCatalog([
+      { assetId: narratorEntry.assetId, assetVersion: 1, assetType: 'character' },
+    ], { manifestAssets: [narratorEntry] });
+    assert.deepEqual(ordinaryMappings, [
+      { assetId: narratorEntry.assetId, assetVersion: 1, channel: 'narrator' },
+    ]);
+    assert.throws(() => buildCharacterChannelsForMergedCatalog([
+      { assetId: 'asset_character_unclassified', assetVersion: 1, assetType: 'character' },
+    ], { manifestAssets: [] }), /explicit channel is required/u);
+    assert.throws(() => buildCharacterChannelsForMergedCatalog([
+      { assetId: 'asset_manifest_conflict', assetVersion: 1, assetType: 'character' },
+    ], {
+      existingCatalog: {
+        schemaVersion: CATALOG_V2_SCHEMA_VERSION,
+        characterChannels: [{ assetId: 'asset_manifest_conflict', assetVersion: 1, channel: 'character' }],
+      },
+      manifestAssets: [{ assetId: 'asset_manifest_conflict', assetVersion: 1, assetType: 'character', channel: 'narrator' }],
+    }), /manifest channel conflicts with existing v2 channel/u);
+    assert.throws(() => buildCharacterChannelsForMergedCatalog([
+      { assetId: 'asset_manifest_version_mismatch', assetVersion: 2, assetType: 'character' },
+    ], {
+      existingCatalog: {
+        schemaVersion: 'galgame.visual-asset-catalog.v1',
+        assetRefs: [{ assetId: 'asset_manifest_version_mismatch', assetVersion: 2, assetType: 'character' }],
+      },
+      manifestAssets: [{ assetId: 'asset_manifest_version_mismatch', assetVersion: 1, assetType: 'character', channel: 'player' }],
+    }), /legacy character channel migration is required for asset_manifest_version_mismatch:2/u);
+    assert.throws(() => buildCharacterChannelsForMergedCatalog([
+      { assetId: 'asset_manifest_exact_version', assetVersion: 1, assetType: 'character' },
+    ], {
+      existingCatalog: {
+        schemaVersion: CATALOG_V2_SCHEMA_VERSION,
+        characterChannels: [{ assetId: 'asset_manifest_exact_version', assetVersion: 1, channel: 'character' }],
+      },
+      manifestAssets: [{ assetId: 'asset_manifest_exact_version', assetVersion: 2, assetType: 'character', channel: 'player' }],
+    }), /only supports character asset version 1/u);
+    assert.throws(() => buildCharacterChannelsForMergedCatalog([
+      { assetId: 'asset_v1_channel_overlap', assetVersion: 1, assetType: 'character' },
+    ], {
+      existingCatalog: {
+        schemaVersion: 'galgame.visual-asset-catalog.v1',
+        assetRefs: [{ assetId: 'asset_v1_channel_overlap', assetVersion: 1, assetType: 'character' }],
+      },
+      manifestAssets: [{ assetId: 'asset_v1_channel_overlap', assetVersion: 1, assetType: 'character', channel: 'player' }],
+      legacyCharacterChannels: [{ assetId: 'asset_v1_channel_overlap', assetVersion: 1, channel: 'character' }],
+    }), /legacy migration entry overlaps side-art manifest channel/u);
+    const migrationSource = {
+      schemaVersion: 'galgame.visual-asset-catalog.v1',
+      assetRefs: [{ assetId: 'asset_migration_validation', assetVersion: 1, assetType: 'character' }],
+    };
+    const migrationRef = { assetId: 'asset_migration_validation', assetVersion: 1, channel: 'character' };
+    assert.throws(() => buildCharacterChannelsForMergedCatalog(migrationSource.assetRefs, {
+      existingCatalog: migrationSource,
+      legacyCharacterChannels: [{ ...migrationRef, assetId: 'asset_migration_orphan' }],
+    }), /is not in the v1 source catalog/u);
+    assert.throws(() => buildCharacterChannelsForMergedCatalog(migrationSource.assetRefs, {
+      existingCatalog: migrationSource,
+      legacyCharacterChannels: [migrationRef, migrationRef],
+    }), /is duplicated/u);
+    assert.throws(() => buildCharacterChannelsForMergedCatalog(migrationSource.assetRefs, {
+      existingCatalog: migrationSource,
+      legacyCharacterChannels: [{ ...migrationRef, channel: 'unknown' }],
+    }), /is invalid/u);
+    assert.throws(() => buildCharacterChannelsForMergedCatalog(migrationSource.assetRefs, {
+      existingCatalog: migrationSource,
+      legacyCharacterChannels: [{ ...migrationRef, unexpected: true }],
+    }), /is invalid/u);
+
+    const rejectedDataDir = path.join(root, 'preflight-no-write');
+    const sentinelBytes = Buffer.from('preflight must leave this file byte-for-byte unchanged');
+    for (const relativePath of ['control/visual-control.json', 'metadata/sentinel.bin', 'content/sentinel.bin']) {
+      const fullPath = path.join(rejectedDataDir, relativePath);
+      mkdirSync(path.dirname(fullPath), { recursive: true });
+      writeFileSync(fullPath, sentinelBytes);
+    }
+    const missingChannelManifest = structuredClone(manifest);
+    delete missingChannelManifest.assets.find((entry) => entry.assetId === narratorEntry.assetId).channel;
+    const missingChannelManifestPath = path.join(root, 'missing-channel-manifest.json');
+    writeFileSync(missingChannelManifestPath, JSON.stringify(missingChannelManifest));
+    await assert.rejects(() => importSideArtAssets({
+      dataDir: rejectedDataDir, assetsDir, manifestPath: missingChannelManifestPath,
+    }), /explicit character channel is required/u);
+    assert.equal(existsSync(path.join(rejectedDataDir, '.visual-asset-service.lease.json')), false, 'preflight failure releases the exclusive data-root lease');
+    for (const relativePath of ['control/visual-control.json', 'metadata/sentinel.bin', 'content/sentinel.bin']) {
+      assert.deepEqual(readFileSync(path.join(rejectedDataDir, relativePath)), sentinelBytes);
+    }
+
+    const tamperedAssetsDir = path.join(root, 'tampered-assets');
+    mkdirSync(tamperedAssetsDir, { recursive: true });
+    const firstAsset = manifest.assets[0];
+    const tamperedBytes = Buffer.from(readFileSync(path.join(assetsDir, firstAsset.fileName)));
+    tamperedBytes[0] ^= 0xff;
+    writeFileSync(path.join(tamperedAssetsDir, firstAsset.fileName), tamperedBytes);
+    await assert.rejects(() => importSideArtAssets({
+      dataDir: rejectedDataDir, assetsDir: tamperedAssetsDir, manifestPath,
+    }), /file hash mismatch/u);
+    assert.equal(existsSync(path.join(rejectedDataDir, '.visual-asset-service.lease.json')), false, 'asset validation failure releases the exclusive data-root lease');
+    for (const relativePath of ['control/visual-control.json', 'metadata/sentinel.bin', 'content/sentinel.bin']) {
+      assert.deepEqual(readFileSync(path.join(rejectedDataDir, relativePath)), sentinelBytes);
+    }
+
+    let firstImportSettled = false;
+    const firstImportPromise = importSideArtAssets({ dataDir: root, assetsDir, manifestPath }).finally(() => { firstImportSettled = true; });
+    const firstAssetPath = path.join(root, 'metadata', 'assets', `${manifest.assets[0].assetId}-1.json`);
+    for (let attempt = 0; attempt < 10_000 && !existsSync(firstAssetPath) && !firstImportSettled; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    assert.equal(existsSync(firstAssetPath), true, 'the import has passed preflight and begun writing while holding its lease');
+    assert.equal(existsSync(path.join(root, '.visual-asset-service.lease.json')), true, 'the importer lease remains held during asset writes');
+    await assert.rejects(() => acquireVisualServiceDataRootLease(root, { host: '127.0.0.1', port: 8798 }),
+      (error) => error?.code === 'VISUAL_DATA_ROOT_IN_USE', 'the service and importer compete on the same exclusive lease');
+    const firstImport = await firstImportPromise;
+    assert.equal(existsSync(path.join(root, '.visual-asset-service.lease.json')), false, 'the import releases its lease after all catalog writes complete');
+    assert.equal(firstImport.ok, true);
+    assert.equal(firstImport.catalog.schemaVersion, CATALOG_V2_SCHEMA_VERSION);
+    assert.deepEqual(firstImport.catalog.characterChannels, [
+      { assetId: narratorEntry.assetId, assetVersion: 1, channel: 'narrator' },
+      { assetId: playerEntry.assetId, assetVersion: 1, channel: 'player' },
+    ]);
+
+    const assetStore = new FileVisualAssetStore(path.join(root, 'metadata'));
+    const controlStore = new FileVisualControlStore(path.join(root, 'control'));
+    const contentStore = new FileContentStore(path.join(root, 'content'));
+    const sourceV2 = await assetStore.getCatalog(firstImport.catalog.catalogId, 1);
+    const narratorBefore = await assetStore.getAsset(narratorEntry.assetId, 1);
+    const npcPng = makePng({ colorType: 2, rgb: [41, 73, 109] });
+    const npcContent = await contentStore.put(npcPng, PNG_MIME);
+    const npc = {
+      ...narratorBefore,
+      assetId: 'asset_character_legacy_npc',
+      assetContentSha256: npcContent.hash,
+      title: 'Legacy NPC retained during migration',
+      updatedAt: '2026-10-02T00:00:00.000Z',
+    };
+    npc.assetMetadataHash = computeAssetMetadataHash(npc);
+    await assetStore.saveAsset(npc);
+    const sourceV1 = {
+      ...sourceV2,
+      schemaVersion: 'galgame.visual-asset-catalog.v1',
+      catalogId: 'catalog_side_art_legacy_source',
+      assetRefs: [...sourceV2.assetRefs, assetToCoreCatalogRef(npc)],
+    };
+    delete sourceV1.characterChannels;
+    sourceV1.catalogHash = computeCatalogHash(sourceV1);
+    await assetStore.saveCatalog(sourceV1);
+    await assetStore.setActiveCatalog(sourceV1);
+    const control = await controlStore.getControl();
+    await controlStore.setControl({
+      ...control,
+      enabled: true,
+      activeCatalog: { catalogId: sourceV1.catalogId, catalogRevision: 1, catalogHash: sourceV1.catalogHash },
+      updatedAt: '2026-10-02T00:00:00.000Z',
+    });
+    const sourceCatalogBefore = structuredClone(await assetStore.getCatalog(sourceV1.catalogId, 1));
+    const npcBefore = structuredClone(await assetStore.getAsset(npc.assetId, 1));
+    const narratorAssetBefore = structuredClone(await assetStore.getAsset(narratorEntry.assetId, 1));
+
+    assert.throws(() => buildCharacterChannelsForMergedCatalog(sourceV1.assetRefs, {
+      existingCatalog: sourceV1,
+      manifestAssets: manifest.assets,
+    }), /legacy character channel migration is required/u);
+    const migrationManifest = {
+      ...manifest,
+      legacyCharacterChannels: [
+        { assetId: npc.assetId, assetVersion: 1, channel: 'character' },
+      ],
+    };
+    const migrationManifestPath = path.join(root, 'migration-manifest.json');
+    writeFileSync(migrationManifestPath, JSON.stringify(migrationManifest));
+
+    const migratedImport = await importSideArtAssets({ dataDir: root, assetsDir, manifestPath: migrationManifestPath });
+    assert.equal(migratedImport.ok, true);
+    assert.equal(migratedImport.catalog.schemaVersion, CATALOG_V2_SCHEMA_VERSION);
+    assert.deepEqual(migratedImport.catalog.characterChannels, [
+      { assetId: narratorEntry.assetId, assetVersion: 1, channel: 'narrator' },
+      { assetId: playerEntry.assetId, assetVersion: 1, channel: 'player' },
+      { assetId: npc.assetId, assetVersion: 1, channel: 'character' },
+    ]);
+    assert.deepEqual(await assetStore.getCatalog(sourceV1.catalogId, 1), sourceCatalogBefore);
+    assert.deepEqual(await assetStore.getAsset(npc.assetId, 1), npcBefore);
+    assert.deepEqual(await assetStore.getAsset(narratorEntry.assetId, 1), narratorAssetBefore);
+    assert.notEqual(migratedImport.catalog.catalogId, sourceV1.catalogId);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 async function testCorePublishedCatalogReads() {
@@ -2749,6 +4468,7 @@ async function testCorePublishedCatalogReads() {
           assetId: result.body.asset.assetId,
           assetVersion: result.body.asset.assetVersion,
         })),
+        characterChannels: [{ assetId: 'character_core_read', assetVersion: 1, channel: 'character' }],
       },
     });
     assert.equal(draft.status, 200, JSON.stringify(draft.body));
@@ -2823,10 +4543,11 @@ async function testCoreVisualContextRoute() {
 
     const disabled = await context();
     assert.equal(disabled.status, 200, JSON.stringify(disabled.body));
-    assert.deepEqual(Object.keys(disabled.body).sort(), ['activeCatalog', 'contextHash', 'enabled', 'ok', 'schemaVersion', 'source', 'sourceVersion', 'visualProfile'].sort());
+    assert.deepEqual(Object.keys(disabled.body).sort(), ['activeCatalog', 'characterChannels', 'contextHash', 'enabled', 'ok', 'schemaVersion', 'source', 'sourceVersion', 'visualProfile'].sort());
     assert.equal(disabled.body.schemaVersion, VISUAL_CORE_CONTEXT_RESPONSE_VERSION);
     assert.equal(disabled.body.enabled, false);
     assert.equal(disabled.body.activeCatalog, null);
+    assert.deepEqual(disabled.body.characterChannels, []);
     assert.equal(disabled.body.visualProfile, null);
     assert.equal(disabled.headers.get('cache-control'), 'no-store');
     assert.equal(disabled.headers.get('access-control-allow-origin'), CORE_DEFAULT_ORIGIN);
@@ -2887,13 +4608,32 @@ async function testCoreVisualContextRoute() {
     const postRejected = await context('/v1/core/visual-context', {}, 'POST');
     assert.equal(postRejected.status, 405);
     assert.equal(postRejected.body.error.code, 'VISUAL_CORE_CONTEXT_METHOD_NOT_ALLOWED');
-    const optionsRejected = await context('/v1/core/visual-context', {}, 'OPTIONS');
-    assert.equal(optionsRejected.status, 405);
-    assert.equal(optionsRejected.body.error.code, 'VISUAL_CORE_CONTEXT_METHOD_NOT_ALLOWED');
+    const contextOptions = await fetch(`${baseUrl}/v1/core/visual-context`, {
+      method: 'OPTIONS',
+      headers: {
+        origin: CORE_DEFAULT_ORIGIN,
+        'access-control-request-method': 'GET',
+        'access-control-request-private-network': 'true',
+      },
+    });
+    assert.equal(contextOptions.status, 204);
+    assert.equal(contextOptions.headers.get('access-control-allow-origin'), CORE_DEFAULT_ORIGIN);
+    assert.equal(contextOptions.headers.get('access-control-allow-private-network'), 'true');
 
     const uploadResponse = await upload(baseUrl, metadata({ assetId: 'scene_context_route' }), makePng({ colorType: 2 }));
     assert.equal(uploadResponse.status, 200, JSON.stringify(uploadResponse.body));
-    const catalog = await publishCatalog(baseUrl, 'catalog_context_route', 1, [{ assetId: 'scene_context_route', assetVersion: 1 }]);
+    const characterResponse = await upload(baseUrl, metadata({
+      assetId: 'asset_character_context_route',
+      assetType: 'character',
+      role: 'transparent-sprite',
+      tagCodes: ['character.human'],
+      featureCodes: ['feature.transparent'],
+    }), makePng({ colorType: 6, alpha: 128 }));
+    assert.equal(characterResponse.status, 200, JSON.stringify(characterResponse.body));
+    const catalog = await publishCatalog(baseUrl, 'catalog_context_route', 1, [
+      { assetId: 'scene_context_route', assetVersion: 1 },
+      { assetId: 'asset_character_context_route', assetVersion: 1 },
+    ], [{ assetId: 'asset_character_context_route', assetVersion: 1, channel: 'character' }]);
     await visualControlStore.setControl({
       schemaVersion: VISUAL_CONTROL_SCHEMA_VERSION,
       enabled: true,
@@ -2909,10 +4649,14 @@ async function testCoreVisualContextRoute() {
       catalogHash: catalog.catalogHash,
     });
     assert.deepEqual(active.body.visualProfile, createGlobalDisplayVisualProfile(active.body.activeCatalog));
+    assert.deepEqual(active.body.characterChannels, [
+      { assetId: 'asset_character_context_route', assetVersion: 1, channel: 'character' },
+    ]);
     assert.equal(active.body.contextHash, hashDigest(canonicalJson({
       schemaVersion: active.body.schemaVersion,
       enabled: active.body.enabled,
       activeCatalog: active.body.activeCatalog,
+      characterChannels: active.body.characterChannels,
       visualProfile: active.body.visualProfile,
       source: active.body.source,
       sourceVersion: active.body.sourceVersion,
@@ -2932,13 +4676,8 @@ async function testCoreVisualContextRoute() {
     const response = await fetch(`${baseUrl}/v1/core/visual-context`, {
       headers: { origin: CORE_DEFAULT_ORIGIN, accept: 'application/json' },
     });
-    assert.equal(response.status, 500);
-    assert.equal(response.headers.get('cache-control'), 'no-store');
-    assert.deepEqual(await response.json(), {
-      ok: false,
-      schemaVersion: VISUAL_CORE_CONTEXT_RESPONSE_VERSION,
-      error: { code: 'VISUAL_CORE_CONTEXT_INVALID' },
-    });
+    assert.equal(response.status, 503, 'invalid startup control keeps every route behind the recovery gate');
+    assert.deepEqual(await response.json(), { ok: false, error: { code: 'VISUAL_CATALOG_RECOVERY_REQUIRED' } });
   });
 }
 
@@ -2960,7 +4699,7 @@ async function testRuntimeVisualDecisionV2() {
   let catalog;
   let asset;
   await withServer(uploadService, async (baseUrl) => {
-    const uploaded = await upload(baseUrl, metadata({ assetId: 'asset_scene_runtime_v2', tagCodes: ['scene.forest'], featureCodes: [] }), makePng({ colorType: 2 }));
+    const uploaded = await upload(baseUrl, metadata({ assetId: 'asset_scene_runtime_v2', tagCodes: ['scene.forest'], featureCodes: [] }), makePng({ width: 640, height: 360, colorType: 2, noise: true }));
     assert.equal(uploaded.status, 200, JSON.stringify(uploaded.body));
     asset = uploaded.body.asset;
     catalog = await publishCatalog(baseUrl, 'catalog_runtime_v2', 1, [{ assetId: asset.assetId, assetVersion: asset.assetVersion }]);
@@ -3005,13 +4744,33 @@ async function testRuntimeVisualDecisionV2() {
       catalogId: catalog.catalogId,
       catalogRevision: catalog.catalogRevision,
       catalogHash: catalog.catalogHash,
-      matcherVersion: 'vs-runtime-2',
-      scorerVersion: 'vs-runtime-scorer-v2',
+      matcherVersion: 'vs-runtime-3',
+      scorerVersion: 'vs-runtime-scorer-v3',
       usesLlm: false,
       understandingStatus: 'unavailable',
       errorCode: 'RUNTIME_NOT_CONFIGURED',
       decisions: [],
     });
+    const symbolProjection = coreProjection({
+      sourceMessageIndex: current.index,
+      sourceMessageHash: currentHash,
+      entities: [coreEntity('equipment', {
+        entityKey: 'entity_equipment_runtime_symbol01',
+        displayLabel: 'Longsword +1',
+        visibleAttributes: [{ code: 'equipment-visible-label', value: 'Longsword +1', confidenceBand: 'explicit' }],
+      })],
+    });
+    const symbolLabelResponse = await request(baseUrl, 'POST', '/v1/core/visual-decisions', {
+      token: null,
+      origin: CORE_DEFAULT_ORIGIN,
+      body: {
+        ...body,
+        requestId: 'req_RUNTIME_V2_SYMBOL_0001',
+        projection: symbolProjection,
+        expectedProjectionHash: symbolProjection.projectionHash,
+      },
+    });
+    assert.equal(symbolLabelResponse.status, 200, `symbol-bearing display labels must pass runtime validation: ${JSON.stringify(symbolLabelResponse.body)}`);
     const fallbackProjection = coreProjection({
       sourceMessageIndex: current.index,
       sourceMessageHash: currentHash,
@@ -3114,19 +4873,35 @@ async function testRuntimeVisualDecisionV2() {
     assert.equal(mismatched.status, 400, JSON.stringify(mismatched.body));
     assert.equal(mismatched.body.errorCode, 'VISUAL_SOURCE_HASH_MISMATCH');
     assert.equal(analyzerCalls, 1);
+    const logCanary = 'VISUAL_LOG_CANARY_NOT_A_REAL_SECRET';
+    const rejectedRequestLogs = [];
+    const originalConsoleWarn = console.warn;
+    console.warn = (...parts) => rejectedRequestLogs.push(parts.map(String).join(' '));
 
     const unknownField = await fetch(`${baseUrl}/v1/core/visual-decisions`, {
       method: 'POST',
       headers: { origin: CORE_DEFAULT_ORIGIN, 'content-type': 'application/json' },
-      body: JSON.stringify({ ...body, requestId: 'req_RUNTIME_V2_BAD_0002', notAllowed: true }),
+      body: JSON.stringify({ ...body, requestId: 'req_RUNTIME_V2_BAD_0002', [logCanary]: true }),
     });
     assert.equal(unknownField.status, 400);
     assert.deepEqual(await unknownField.json(), {
       schemaVersion: 'galgame.visual-core-visual-decisions-error.v1',
       ok: false,
       requestId: 'req_RUNTIME_V2_BAD_0002',
-      errorCode: 'VISUAL_REQUEST_INVALID',
+      errorCode: 'VISUAL_REQUEST_UNKNOWN_FIELD',
     });
+    console.warn = originalConsoleWarn;
+    assert.equal(rejectedRequestLogs.length, 1);
+    assert.match(rejectedRequestLogs[0], /"validationCode":"VISUAL_ASSET_UNKNOWN_FIELD"/);
+    assert.equal(rejectedRequestLogs.join('\n').includes(logCanary), false, 'request-controlled unknown field names never enter diagnostics');
+
+    const oversized = await fetch(`${baseUrl}/v1/core/visual-decisions`, {
+      method: 'POST',
+      headers: { origin: CORE_DEFAULT_ORIGIN, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...body, requestId: 'req_RUNTIME_V2_BAD_0003', padding: 'x'.repeat(17 * 1024) }),
+    });
+    assert.equal(oversized.status, 400);
+    assert.equal((await oversized.json()).errorCode, 'VISUAL_REQUEST_SIZE_LIMIT');
   });
 
   let providerRequest = null;
@@ -3386,7 +5161,7 @@ async function testAnthropicMessagesTextAdapter() {
       title: 'Anthropic runtime scene',
       tagCodes: [],
       featureCodes: [],
-    }), makePng({ colorType: 2 }));
+    }), makePng({ width: 640, height: 360, colorType: 2, noise: true }));
     assert.equal(uploaded.status, 200, JSON.stringify(uploaded.body));
     catalog = await publishCatalog(baseUrl, 'catalog_runtime_anthropic', 1, [{
       assetId: uploaded.body.asset.assetId,
@@ -3696,10 +5471,12 @@ async function testCoreVisualDecisionRoute() {
         origin: CORE_DEFAULT_ORIGIN,
         'access-control-request-method': 'POST',
         'access-control-request-headers': 'content-type',
+        'access-control-request-private-network': 'true',
       },
     });
     assert.equal(optionsResponse.status, 204);
     assert.equal(optionsResponse.headers.get('access-control-allow-origin'), CORE_DEFAULT_ORIGIN);
+    assert.equal(optionsResponse.headers.get('access-control-allow-private-network'), 'true');
 
     const optionsResponse8000 = await fetch(`${baseUrl}/v1/core/visual-decisions`, {
       method: 'OPTIONS',
@@ -4512,6 +6289,119 @@ async function testCoreDeterministicMatcherHelpers() {
   assert.equal(offlineForestPlan.ok, true, JSON.stringify(offlineForestPlan));
   assert.equal(offlineForestPlan.decisions[0].assetId, 'asset_scene_offline_forest');
   assert.ok(offlineForestPlan.decisions[0].score > 60, JSON.stringify(offlineForestPlan));
+
+  const failedCharacterAnalysis = {
+    schemaVersion: 'galgame.visual-asset-analysis.v2',
+    status: 'failed',
+    description: '',
+    tagCodes: [],
+    attributeCodes: [],
+    confidence: 0,
+    analyzerVersion: 'test-analysis-unavailable-v1',
+    errorCode: 'ANALYZER_REQUEST_INVALID',
+    dictionaryVersion: DICTIONARY_VERSION,
+    dictionaryHash: DICTIONARY_HASH,
+  };
+  const createCuratedFailedCharacter = (assetId) => makeValidatedAssetRecord({
+    assetId,
+    assetType: 'character',
+    role: 'transparent-sprite',
+    tagCodes: ['character.undead', 'character.androgynous'],
+    featureCodes: ['feature.transparent', 'feature.full-body'],
+    analysisStatus: 'failed',
+    analysis: structuredClone(failedCharacterAnalysis),
+  });
+  const failedCharacterAssets = [createCuratedFailedCharacter('asset_character_curated_failed_single')];
+  const failedCharacterCatalog = createCorePublishedCatalog(failedCharacterAssets);
+  const failedCharacterProjection = coreProjection({
+    entities: [coreEntity('character', {
+      entityKey: 'entity_character_curated_failed01',
+      displayLabel: '骷髅卫兵',
+      visibleAttributes: [
+        { code: 'character-explicit-name', value: '骷髅卫兵', confidenceBand: 'explicit' },
+        { code: 'character-explicit-species', value: '骷髅', confidenceBand: 'explicit' },
+        { code: 'character-explicit-gender-presentation', value: 'androgynous', confidenceBand: 'explicit' },
+      ],
+    })],
+  });
+  const failedCharacterPlan = createCoreVisualCandidateDecisionPlan(coreDecisionPlanRequest({
+    assets: failedCharacterAssets,
+    catalog: failedCharacterCatalog,
+    projection: failedCharacterProjection,
+  }), {
+    runtimeMode: true,
+    runtimeHint: {
+      status: 'ready',
+      entities: [{ entityType: 'character', codes: ['character.undead', 'character.androgynous'], confidence: 0.95, confidenceBand: 'explicit' }],
+    },
+    visibleContext: { recent: [] },
+  });
+  assert.equal(failedCharacterPlan.ok, true, JSON.stringify(failedCharacterPlan));
+  assert.equal(failedCharacterPlan.decisions[0].assetId, 'asset_character_curated_failed_single');
+  assert.ok(failedCharacterPlan.decisions[0].score >= 60);
+  const failedCharacterWithoutRuntimePlan = createCoreVisualCandidateDecisionPlan(coreDecisionPlanRequest({
+    assets: failedCharacterAssets,
+    catalog: failedCharacterCatalog,
+    projection: failedCharacterProjection,
+  }), {
+    runtimeMode: true,
+    runtimeHint: { status: 'unavailable', entities: [] },
+    visibleContext: { recent: [] },
+  });
+  assert.equal(failedCharacterWithoutRuntimePlan.ok, true, JSON.stringify(failedCharacterWithoutRuntimePlan));
+  assert.equal(failedCharacterWithoutRuntimePlan.decisions[0].assetId, 'asset_character_curated_failed_single');
+  assert.ok(failedCharacterWithoutRuntimePlan.decisions[0].score >= 60);
+
+  const tiedCharacterAssets = [
+    createCuratedFailedCharacter('asset_character_curated_failed_tie_a'),
+    createCuratedFailedCharacter('asset_character_curated_failed_tie_b'),
+  ];
+  const tiedCharacterCatalog = createCorePublishedCatalog(tiedCharacterAssets);
+  const tiedCharacterPlan = createCoreVisualCandidateDecisionPlan(coreDecisionPlanRequest({
+    assets: tiedCharacterAssets,
+    catalog: tiedCharacterCatalog,
+    projection: failedCharacterProjection,
+  }), {
+    runtimeMode: true,
+    runtimeHint: { status: 'unavailable', entities: [] },
+    visibleContext: { recent: [] },
+  });
+  assert.equal(tiedCharacterPlan.ok, true, JSON.stringify(tiedCharacterPlan));
+  assert.equal(tiedCharacterPlan.decisions[0].assetId, 'unknown_character');
+  assert.ok(tiedCharacterPlan.decisions[0].reasonCodes.includes('ambiguous-appearance-capped'));
+
+  const thumbnailScene = makeValidatedAssetRecord({
+    assetId: 'asset_scene_thumbnail_must_not_match',
+    assetType: 'scene',
+    role: 'background',
+    width: 160,
+    height: 90,
+    tagCodes: ['scene.forest'],
+    analysis: {
+      schemaVersion: 'galgame.visual-asset-analysis.v2',
+      status: 'ready',
+      description: 'forest scene thumbnail',
+      tagCodes: ['scene.forest'],
+      attributeCodes: ['feature.dark'],
+      confidence: 0.95,
+      analyzerVersion: 'test-thumbnail-v1',
+      errorCode: null,
+      dictionaryVersion: DICTIONARY_VERSION,
+      dictionaryHash: DICTIONARY_HASH,
+    },
+  });
+  const thumbnailCatalog = createCorePublishedCatalog([thumbnailScene]);
+  const thumbnailProjection = coreProjection({ entities: [coreEntity('scene', { entityKey: 'entity_scene_thumbnail001' })] });
+  const thumbnailPlan = createCoreVisualCandidateDecisionPlan(coreDecisionPlanRequest({
+    assets: [thumbnailScene],
+    catalog: thumbnailCatalog,
+    projection: thumbnailProjection,
+  }), {
+    runtimeMode: true,
+    runtimeHint: { status: 'unavailable', entities: [] },
+  });
+  assert.equal(thumbnailPlan.ok, true, JSON.stringify(thumbnailPlan));
+  assert.equal(thumbnailPlan.decisions[0].assetId, 'unknown_scene');
 
   const characterNoAppearance = createCoreVisualCandidateDecisionPlan(coreDecisionPlanRequest({
     assets,
@@ -5642,7 +7532,9 @@ function candidateDecisionInput(overrides = {}) {
     catalogId: catalog.catalogId,
     catalogRevision: catalog.catalogRevision,
     catalogHash: catalog.catalogHash,
+    catalogSchemaVersion: catalog.schemaVersion,
     catalogAssetRefs: catalog.assetRefs,
+    catalogAssetChannels: catalog.schemaVersion === CATALOG_V2_SCHEMA_VERSION ? catalog.characterChannels : [],
     dictionaryVersion: String(DICTIONARY_VERSION),
     dictionaryHash: DICTIONARY_HASH,
     candidates,
@@ -5980,11 +7872,14 @@ function clonePublishedAssetStore({ asset, catalog }) {
 
 function createCandidateCatalog(assets) {
   const catalog = {
-    schemaVersion: 'galgame.visual-asset-catalog.v1',
+    schemaVersion: CATALOG_V2_SCHEMA_VERSION,
     catalogId: 'vc_catalog1234',
     catalogRevision: 1,
     status: 'published',
     assetRefs: assets.map(assetToCandidateCatalogRef),
+    characterChannels: assets
+      .filter((asset) => asset.assetType === 'character')
+      .map((asset) => ({ assetId: asset.assetId, assetVersion: asset.assetVersion, channel: 'character' })),
     unknownAssetRefs: Object.values(BUILTIN_UNKNOWN_ASSETS).map(assetToCandidateCatalogRef),
     dictionaryVersion: DICTIONARY_VERSION,
     dictionaryHash: DICTIONARY_HASH,
@@ -5999,11 +7894,14 @@ function createCandidateCatalog(assets) {
 
 function createCorePublishedCatalog(assets, overrides = {}) {
   const catalog = {
-    schemaVersion: 'galgame.visual-asset-catalog.v1',
+    schemaVersion: CATALOG_V2_SCHEMA_VERSION,
     catalogId: 'catalog_core_match',
     catalogRevision: 1,
     status: 'published',
     assetRefs: assets.map(assetToCoreCatalogRef),
+    characterChannels: assets
+      .filter((asset) => asset.assetType === 'character')
+      .map((asset) => ({ assetId: asset.assetId, assetVersion: asset.assetVersion, channel: 'character' })),
     unknownAssetRefs: Object.values(BUILTIN_UNKNOWN_ASSETS).map(assetToCoreCatalogRef),
     dictionaryVersion: DICTIONARY_VERSION,
     dictionaryHash: DICTIONARY_HASH,
@@ -6088,10 +7986,12 @@ function coreCandidateDecisionInputForLegacyValidator({ assets, catalog, entity 
     catalogId: catalog.catalogId,
     catalogRevision: catalog.catalogRevision,
     catalogHash: catalog.catalogHash,
+    catalogSchemaVersion: catalog.schemaVersion,
     catalogAssetRefs: [...catalog.assetRefs, ...catalog.unknownAssetRefs].map((ref) => ({
       ...ref,
       catalogRefHash: hashDigest(canonicalJson(ref)),
     })),
+    catalogAssetChannels: catalog.schemaVersion === CATALOG_V2_SCHEMA_VERSION ? catalog.characterChannels : [],
     dictionaryVersion: String(DICTIONARY_VERSION),
     dictionaryHash: DICTIONARY_HASH,
     candidates: assets
@@ -6207,8 +8107,8 @@ function makeValidatedAssetRecord(overrides = {}) {
     licenseCode: 'cc0',
     sourceLabel: '',
     canonicalMime: PNG_MIME,
-    width: 1,
-    height: 1,
+    width: overrides.width || (assetType === 'scene' ? 640 : assetType === 'character' ? 1024 : 1),
+    height: overrides.height || (assetType === 'scene' ? 360 : assetType === 'character' ? 1536 : 1),
     hasAlpha: true,
     transparentPixel: true,
     assetContentSha256: overrides.assetContentSha256 || BUILTIN_UNKNOWN_ASSETS.equipment.assetContentSha256,
@@ -6241,7 +8141,7 @@ function hashDigest(value) {
   return `sha256:${createHash('sha256').update(String(value)).digest('hex')}`;
 }
 
-function makePng({ width = 1, height = 1, colorType = 2, rgb = [10, 20, 30], alpha = 255, extraChunks = [], corruptIdat = false } = {}) {
+function makePng({ width = 1, height = 1, colorType = 2, rgb = [10, 20, 30], alpha = 255, extraChunks = [], corruptIdat = false, noise = false } = {}) {
   const channels = colorType === 6 ? 4 : 3;
   const rowBytes = width * channels;
   const scanlines = Buffer.alloc((rowBytes + 1) * height);
@@ -6250,9 +8150,15 @@ function makePng({ width = 1, height = 1, colorType = 2, rgb = [10, 20, 30], alp
     scanlines[rowStart] = 0;
     for (let x = 0; x < width; x += 1) {
       const p = rowStart + 1 + x * channels;
-      scanlines[p] = rgb[0];
-      scanlines[p + 1] = rgb[1];
-      scanlines[p + 2] = rgb[2];
+      let variation = 0;
+      if (noise) {
+        let mixed = Math.imul(x + 1, 0x45d9f3b) ^ Math.imul(y + 1, 0x119de1f3);
+        mixed = Math.imul(mixed ^ (mixed >>> 16), 0x45d9f3b);
+        variation = (mixed ^ (mixed >>> 16)) & 0xff;
+      }
+      scanlines[p] = (rgb[0] + variation) & 0xff;
+      scanlines[p + 1] = (rgb[1] + (noise ? (variation * 3) % 251 : 0)) & 0xff;
+      scanlines[p + 2] = (rgb[2] + (noise ? (variation * 7) % 251 : 0)) & 0xff;
       if (channels === 4) scanlines[p + 3] = alpha;
     }
   }
@@ -6463,7 +8369,7 @@ async function testOpenAiChatCompletionsTextAdapter() {
       title: 'OpenAI runtime scene',
       tagCodes: [],
       featureCodes: [],
-    }), makePng({ colorType: 2, rgb: [21, 22, 23] }));
+    }), makePng({ width: 640, height: 360, colorType: 2, rgb: [21, 22, 23], noise: true }));
     assert.equal(uploaded.status, 200, JSON.stringify(uploaded.body));
     catalog = await publishCatalog(baseUrl, 'catalog_runtime_openai', 1, [{
       assetId: uploaded.body.asset.assetId,

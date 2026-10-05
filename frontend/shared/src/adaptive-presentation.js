@@ -158,6 +158,39 @@ export function extractAdaptivePresentationFromText(text, options = {}) {
     return extractAdaptivePresentation([{ text, messageIndex: options.messageIndex ?? 0, chatId: options.chatId || '' }], options);
 }
 
+// Reuse the established field parsers, but keep equipment and item sections
+// separate for the HUD. These are display records, never an inventory engine.
+export function extractHudPresentationFromText(text, {
+    profile = createDefaultAdaptivePresentationProfile(), chatId = '', messageIndex = 0,
+} = {}) {
+    const normalized = normalizeAdaptivePresentationProfile(profile);
+    if (!validateAdaptivePresentationProfile(normalized).valid || !normalized.extractionPolicy.allowBuiltinPatterns) return [];
+    const message = { chatId, messageIndex };
+    const visible = sanitizeVisibleText(text, MAX_ADAPTIVE_VISIBLE_TEXT_LENGTH);
+    const itemLabels = INVENTORY_SECTION_LABELS.filter((label) => ['Inventory', 'Items', '背包', '物品', '道具'].includes(label));
+    const equipmentLabels = INVENTORY_SECTION_LABELS.filter((label) => !itemLabels.includes(label));
+    const candidates = [
+        ['equipment', 'inventory', extractInventory(visible, message, equipmentLabels)],
+        ['inventory', 'inventory', extractInventory(visible, message, itemLabels)],
+        ['abilities', 'abilities', extractAbilities(visible, message)],
+    ];
+    const records = [];
+    for (const [module, enabledModule, result] of candidates) {
+        if (!result || !isModuleEnabled(normalized, enabledModule)
+            || result.confidence < normalized.extractionPolicy.confidenceThreshold
+            || !validateAdaptiveExtractionResult(result).valid) continue;
+        const items = result.values.items || result.values.abilities || [];
+        // An unfinished heading is not an empty-state statement.
+        if (!items.length) continue;
+        const explicitEmpty = items.every((item) => ['无', '空', 'none', 'empty', '[]'].includes(String(item.label || '').trim().toLowerCase()));
+        const values = explicitEmpty
+            ? { ...result.values, items: [], abilities: [], groups: [] }
+            : result.values;
+        records.push({ ...result, module, values, explicitEmpty });
+    }
+    return records;
+}
+
 function runBuiltinExtractors(text, message, profile) {
     const results = [];
     const push = (result) => {
@@ -308,8 +341,8 @@ function extractTurnOrder(lines) {
     };
 }
 
-function extractInventory(text, message) {
-    const rawEntries = collectInventoryEntries(text, INVENTORY_SECTION_LABELS);
+function extractInventory(text, message, labels = INVENTORY_SECTION_LABELS) {
+    const rawEntries = collectInventoryEntries(text, labels);
     if (!rawEntries.length) {
         return null;
     }

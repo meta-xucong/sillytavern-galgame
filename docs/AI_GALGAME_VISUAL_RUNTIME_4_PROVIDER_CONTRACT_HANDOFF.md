@@ -2,7 +2,7 @@
 
 > 用途：向 Provider 负责人索取可执行的输出合同，并决定本地适配器是否需要修改。
 >
-> 当前状态：Doubao OpenAI-compatible 合同已从本机 `alchemy_video_OS` reference-analysis 实现和脱敏实时响应确认；本地适配器已完成。真实 ST/bridge/catalog 仍需单独验收。
+> 当前状态：Doubao OpenAI-compatible 合同已从 reference-analysis 实现和脱敏实时响应确认；本地适配器已完成。真实 ST/bridge/catalog 仍需单独验收。
 >
 > 本文保留原交接模板，同时在第 9 节记录已确认的 Doubao 合同和脱敏实测证据；第 9 节优先于模板中的待确认描述。
 
@@ -294,13 +294,13 @@ Provider 方完成交接后，主线只写以下一种结论：
 
 ## 9. 已确认的 Doubao 合同（2026-09-26）
 
-本节是当前实现的权威合同记录，覆盖前文的 Anthropic 模板。Provider 是本机
-`alchemy_video_OS` 项目的 reference-analysis 使用的 OpenAI-compatible endpoint；视觉服务只
+本节是当前实现的权威合同记录，覆盖前文的 Anthropic 模板。Provider 是本地私有配置中
+reference-analysis 使用的 OpenAI-compatible endpoint；视觉服务只
 读取配置元数据并在 child process 内传递密钥。
 
 ### 9.1 配置来源
 
-- 默认文件：`D:\AI\alchemy_video_OS\.env.local`。
+- 默认文件：仓库根目录的私有 `.env.local`；可通过 `GALGAME_VISUAL_PROVIDER_ENV_FILE` 覆盖。
 - 可用环境覆盖：`GALGAME_VISUAL_PROVIDER_ENV_FILE`。
 - 读取字段：`REFERENCE_VISION_BASE_URL`、`REFERENCE_VISION_MODEL`、`REFERENCE_VISION_API_KEY`。
 - 当前脱敏确认值：host=`aiself.vip`，model=`doubao-seed-2-0-lite-260428`，base path=`/v1`。

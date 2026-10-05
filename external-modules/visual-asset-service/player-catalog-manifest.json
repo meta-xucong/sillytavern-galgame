@@ -1,0 +1,274 @@
+{
+  "schemaVersion": "galgame.visual-player-catalog-manifest.v1",
+  "sourcePointer": {
+    "catalogId": "catalog_simple_ce914e3ceb54",
+    "catalogRevision": 1,
+    "catalogHash": "sha256:73645ec49c73848f251158c39ff713ad3f243c3ec417e348559efdb7bbbd3153"
+  },
+  "targetCatalogId": "galgame_player_catalog_20261002",
+  "targetCatalogRevision": 1,
+  "createdAt": "2026-10-02T00:00:00.000Z",
+  "entries": [
+    {
+      "assetId": "asset_curated_character-man-dwarf-real",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:2dae71ad15991158152dae3bc9bfad2295b8bc4982f9cbcb31f6d769aa54bcfa",
+      "assetMetadataHash": "sha256:288bddf7814410f8ed0773e5a98b10306ecbffec5e50cd53767843e975cceb69",
+      "assetType": "character",
+      "channel": "character",
+      "approvalReason": "Reviewed full-body dwarf ally with explicit dwarf and armor taxonomy."
+    },
+    {
+      "assetId": "asset_curated_character-woman-elf-real",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:01cffdc5125062df66f73fda0d720f681000f0451c5aedf87d12d0f902a0e4cb",
+      "assetMetadataHash": "sha256:0cb3a65bbd6c6caed776d919fe20d996b60ab8e4f72f6e750ba63ef7f5ac87d4",
+      "assetType": "character",
+      "channel": "character",
+      "approvalReason": "Reviewed full-body elf mage with explicit elf and mage taxonomy."
+    },
+    {
+      "assetId": "asset_curated_character-woman-mage",
+      "assetVersion": 2,
+      "assetContentSha256": "sha256:f2f915bca8d7cf2848967945a8017d1f0d6ae684e1c90da8de1ac55b2e289a36",
+      "assetMetadataHash": "sha256:634a73289c0826a95106bf4a2601fada22db0dcbb4b28f9d2417adba40560654",
+      "assetType": "character",
+      "channel": "character",
+      "approvalReason": "Required by the published Dungeon Master manifest for its canonical mage character binding."
+    },
+    {
+      "assetId": "asset_curated_character-woman-rogue-real",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:d3023a0aa07dd7590cdb74d2c324486744f592c1ef00d9ea81cf38a4f14fec19",
+      "assetMetadataHash": "sha256:34d56885997430d1927a980508fb87830b5a92465cb4edb5dca9a2641a97a0c1",
+      "assetType": "character",
+      "channel": "character",
+      "approvalReason": "Reviewed full-body human rogue with explicit human and rogue taxonomy."
+    },
+    {
+      "assetId": "asset_character_1d3962f3379f",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:058f968cce40ff324194b659db8ee4ee13529b06a61a0a5635f88efab3a312bb",
+      "assetMetadataHash": "sha256:7ac007680807ed98caa9c74add38abfd0e88de8675dc0c03f95cf4fe309aa86e",
+      "assetType": "character",
+      "channel": "character",
+      "approvalReason": "Reviewed unique full-body undead skeleton image with closed undead taxonomy."
+    },
+    {
+      "assetId": "asset_character_2184b41676f8",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:ecc8b4b57ed2dc1022324b63f3bee749d96f682ec65f55abfa6033847e50c06b",
+      "assetMetadataHash": "sha256:4a0776b87bcbd5d40cacdc7e19e5408f14b024b208e9cf7c9d0104b9fe58ebcd",
+      "assetType": "character",
+      "channel": "character",
+      "approvalReason": "Reviewed unique full-body enemy archer with rogue and feminine taxonomy."
+    },
+    {
+      "assetId": "asset_character_37883c3ff1bf",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:2d19143eda0ed10c06f11463811eab69e2e2e1b0bda9f5f07694daefafcb5ab5",
+      "assetMetadataHash": "sha256:71321f48bd3c4118a1e486e45759eda5b084bb22722d35b81168db0d51a323b7",
+      "assetType": "character",
+      "channel": "character",
+      "approvalReason": "Reviewed unique full-body goblin scout with beastkin taxonomy."
+    },
+    {
+      "assetId": "asset_character_43ffce793aca",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:a53969128dfaee2195a98421ba8403db3c5a106206c91e6b96f1ceb80be93867",
+      "assetMetadataHash": "sha256:e0b5c4f5c3465ba7bf9f261775dc08b32879aec07a40ead520a52da9aa5a56eb",
+      "assetType": "character",
+      "channel": "character",
+      "approvalReason": "Reviewed unique full-body enemy bandit with closed rogue taxonomy."
+    },
+    {
+      "assetId": "asset_character_4d4468320413",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:c22d8ea9a11ab9b5ecdd805b8584d6a5e9f6715482a286d93e749f11c2aee2e8",
+      "assetMetadataHash": "sha256:da4acb51d3abe6d66c53ffcbbeb36a1be98e8def4afad3c4aeb6312881a230c8",
+      "assetType": "character",
+      "channel": "character",
+      "approvalReason": "Reviewed unique full-body zombie image with closed undead taxonomy."
+    },
+    {
+      "assetId": "asset_character_638a6b0c9483",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:891853cebf843953c54bac52afa76542f77fe00307f8014db379c1c297404a11",
+      "assetMetadataHash": "sha256:5d73a1f657aa265c882f8f5b57bf31ca99f56523651bbcb08e430a1c83f43215",
+      "assetType": "character",
+      "channel": "character",
+      "approvalReason": "Reviewed unique full-body goblin image with closed beastkin taxonomy."
+    },
+    {
+      "assetId": "asset_character_6613acfe6d94",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:011488dbe9c704a8eb1bb7bdbb3fac8ea4d7c4f8939abd8427a816f7ae84e0e4",
+      "assetMetadataHash": "sha256:4fcd61856452cf7aa5e0018758f4853e7cf88044cef2d9a725d1ba8a99c8ffe1",
+      "assetType": "character",
+      "channel": "character",
+      "approvalReason": "Reviewed unique full-body armored enemy captain with closed taxonomy."
+    },
+    {
+      "assetId": "asset_character_c62f1754f758",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:45591b2abadd8c1dced55eae615c13ef87dccb4a3e5988cf3baaef46fa77c75c",
+      "assetMetadataHash": "sha256:f95bcfffdb49abfe03ed3d2cd553967a020a8559e32b21c6e219da95e2b135d9",
+      "assetType": "character",
+      "channel": "character",
+      "approvalReason": "Reviewed unique full-body skeleton archer with closed undead taxonomy."
+    },
+    {
+      "assetId": "asset_character_c7b7f1884eda",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:30de89a0b45bb144f13f3b52f3a268137f17fe94aa21c6f2cdb0739430ae6721",
+      "assetMetadataHash": "sha256:2ae55569d324140c09ac247307b7b9dcb6946622ccf6c2260f61f76b211d35a6",
+      "assetType": "character",
+      "channel": "character",
+      "approvalReason": "Reviewed unique full-body enemy guard with closed armored taxonomy."
+    },
+    {
+      "assetId": "asset_character_c8b0644fef0a",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:919d3f3502c9bd53df0aa05be4029844bade2d1cb3c4d85ea2fb2a62ecfcf453",
+      "assetMetadataHash": "sha256:3330018e17389a8a2558d13435faefb303c574c6dfe84603677402d1fff8cffd",
+      "assetType": "character",
+      "channel": "character",
+      "approvalReason": "Reviewed unique full-body orc image with closed beastkin taxonomy."
+    },
+    {
+      "assetId": "asset_curated_character-narrator-ink-emblem",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:e4f4042832df4972a6160bc0b6437f4ea52b91e36ead2d88dd301d2115168dd3",
+      "assetMetadataHash": "sha256:376e634cc37c445da671705a72f8ab482d7e10e43fd6183b855ee0af674114b4",
+      "assetType": "character",
+      "channel": "narrator",
+      "approvalReason": "Dedicated neutral ink and constellation emblem reserved for narration."
+    },
+    {
+      "assetId": "asset_curated_player-neutral-compass",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:092b4edbb82e11f5ddcb6f30beeca9bd647ab4181bb924697157f5ddcee2130d",
+      "assetMetadataHash": "sha256:164522f9cedab6ecbfd6285c3e5dfabf80f15ef74f884d436b53bdbabc9154f5",
+      "assetType": "character",
+      "channel": "player",
+      "approvalReason": "Dedicated neutral compass emblem reserved for the player viewpoint."
+    },
+    {
+      "assetId": "asset_curated_scene-city-day-real",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:539c45e1aa644b18c03a10650eb7a752399a3691e76079d5e2ab68dedae73b84",
+      "assetMetadataHash": "sha256:0208c288419c8aa39a3367fa3d46bc393134ad6b39048c3df74e6fcfdcef98c2",
+      "assetType": "scene",
+      "channel": null,
+      "approvalReason": "Reviewed real city market background at stage-ready dimensions."
+    },
+    {
+      "assetId": "asset_curated_scene-dungeon-corridor-night-real",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:d1b6effde5d1aaeabf379cb3e60dc3f353e481cc42a48795e57c762fafd5325a",
+      "assetMetadataHash": "sha256:6093c456be7e15bce108a42189fe4895567a1e8ebb706d1df7039c5027033cf9",
+      "assetType": "scene",
+      "channel": null,
+      "approvalReason": "Reviewed real dungeon corridor background at stage-ready dimensions."
+    },
+    {
+      "assetId": "asset_curated_scene-dungeon-day-real",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:224aa4969ac959f1b10d8e02075049d908c2cd6b5e35b9d57b4f4355ca382421",
+      "assetMetadataHash": "sha256:7bd2c01e0d87af111b731795270daa31c4731f8c3594cf8986de673478ce9c37",
+      "assetType": "scene",
+      "channel": null,
+      "approvalReason": "Reviewed real rune library background at stage-ready dimensions."
+    },
+    {
+      "assetId": "asset_curated_scene-dungeon-night-real",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:1509ef21470a25065000796c679298c532c7decedad7599a9ea5d559471a7bcc",
+      "assetMetadataHash": "sha256:c73d30cd3e3d32a80baa01dec1f2ae2041e10d36faee43f913b56b7b097fd7dd",
+      "assetType": "scene",
+      "channel": null,
+      "approvalReason": "Reviewed real dungeon entrance background at stage-ready dimensions."
+    },
+    {
+      "assetId": "asset_curated_scene-forest-day-real",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:f62c7e4883370f8558e290c9a279cfe8171dd188477796c4068c3e64e32953ef",
+      "assetMetadataHash": "sha256:a453e3afd4b6154eeb6ba5e8bb2928a5e56d359c680687eb1666ee4ad5ee1ca2",
+      "assetType": "scene",
+      "channel": null,
+      "approvalReason": "Reviewed real ruined forest background at stage-ready dimensions."
+    },
+    {
+      "assetId": "asset_curated_scene-tavern-day-real",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:2bcbffabab11d30d145a3d39e6e1948ec254635861a89a56935f00c64bfb57a7",
+      "assetMetadataHash": "sha256:dae1d127836e47ebf063ca901ccbf7e275ad1902143a786a9d60dd6b40039925",
+      "assetType": "scene",
+      "channel": null,
+      "approvalReason": "Reviewed real adventurer tavern background at stage-ready dimensions."
+    },
+    {
+      "assetId": "asset_side_equipment_arcane_sword",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:b7a42ab842fd16c46c3f3a5586bbb427b2e8445bac25895dd902c5bb165755f6",
+      "assetMetadataHash": "sha256:b6426d6b35ffdf06fac1504c419874b8fca08a4ebc9c9c59568343e891185966",
+      "assetType": "equipment",
+      "channel": null,
+      "approvalReason": "Reviewed unique arcane moonblade icon for player inventory presentation."
+    },
+    {
+      "assetId": "asset_side_equipment_teal_armor",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:61114a51bd57a7c4410500abac962615481266f76fad4625f8b1df8107aa339f",
+      "assetMetadataHash": "sha256:b63590df45677dc5ea150bd82d9a0ef69130ccb7266dd09c875c20d11153594b",
+      "assetType": "equipment",
+      "channel": null,
+      "approvalReason": "Reviewed unique teal armor icon for player inventory presentation."
+    },
+    {
+      "assetId": "asset_side_item_healing_potion",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:220c1906508789ab4ea510b14fc98aeab08f6b28cccaba7f04c4e349d603ffc0",
+      "assetMetadataHash": "sha256:6629dcb8878f807fd8736f443a422f71bc066d61e38c5e47e02fdd8b029a6907",
+      "assetType": "item",
+      "channel": null,
+      "approvalReason": "Reviewed unique healing tonic icon for player inventory presentation."
+    },
+    {
+      "assetId": "asset_side_item_treasure_map",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:663efb2d5ad7b713c384b9fa3ba6aa8b4bcc228608eb090b8771d183a4d5aae4",
+      "assetMetadataHash": "sha256:270b21cc6761caeffb55511e628ed9307537ea20af6a95c72c7477762a116c58",
+      "assetType": "item",
+      "channel": null,
+      "approvalReason": "Reviewed unique treasure chart icon for player inventory presentation."
+    },
+    {
+      "assetId": "asset_side_skill_arcane_grimoire",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:0290396c17b2d845b620aa1c4e0fa0bb77e41ecb5910ca98f38d04e0e8132d0d",
+      "assetMetadataHash": "sha256:7b588e27286fd5c7255584b6aef5ab3d8999bef00ea9f306291f5d37d294f88f",
+      "assetType": "skill",
+      "channel": null,
+      "approvalReason": "Reviewed unique arcane grimoire icon for player inventory presentation."
+    },
+    {
+      "assetId": "asset_side_skill_shadow_knife",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:0c23ee11b8ae8f5d78b73c97f1a034b5f43c6375ff7ca3cd28ca9d4d074f9f50",
+      "assetMetadataHash": "sha256:96c8574c19340e760383680b1a64df275d83311363fc00c4816d20ab0bec41fb",
+      "assetType": "skill",
+      "channel": null,
+      "approvalReason": "Reviewed unique shadow knife icon for player inventory presentation."
+    },
+    {
+      "assetId": "asset_character_8e5132df0905",
+      "assetVersion": 1,
+      "assetContentSha256": "sha256:23d3bb72ad64f3d8c0536caaa0727aba24d78f6f804a57ec5f869821a19fb596",
+      "assetMetadataHash": "sha256:21eced0c5c74a06fc71df25c673f98bfc910583dd5b63d42e04209499ccd4675",
+      "assetType": "character",
+      "channel": "character",
+      "approvalReason": "Required by the published Dungeon Master manifest as the default character portrait for unbound speakers."
+    }
+  ]
+}

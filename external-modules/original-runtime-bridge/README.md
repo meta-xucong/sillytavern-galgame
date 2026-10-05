@@ -9,12 +9,15 @@ It does not compose prompts, read character/world-book bodies, call bottom model
 For this repository's local Galgame setup, prefer the root script:
 
 ```powershell
-.\StartGalgameServices.cmd
+.\external-modules\process-supervisor\launchers\StartGalgameServices.cmd
 ```
 
 It starts the config service and this bridge with the same local proof secret,
-points both services at `http://127.0.0.1:8001`, and replaces stale local
-bridge/config-service processes before starting fresh ones.
+targets an already-running SillyTavern instance at `http://127.0.0.1:8001`,
+and replaces stale local bridge/config-service processes before starting fresh
+ones. For the complete local stack, use
+`external-modules/process-supervisor/launchers/Start_Galgame_All.bat`, which
+starts SillyTavern at port 8000 and configures its services for that instance.
 
 ```powershell
 $env:SILLYTAVERN_BASE_URL = 'http://127.0.0.1:8001'
@@ -66,6 +69,14 @@ Allowed:
 - Return original chat snapshots for Galgame display.
 - Verify signed release/Arc/target/chat binding proofs and reject expired, replayed, forged, arbitrary, or cross-target requests.
 - Stop safely through `/v1/stop`, request original runtime stop for pending generation, return explicit `forced` / `stopMode` / `pendingTaskFailed` diagnostics on timeout, fail the in-flight request instead of returning a fabricated success, then reject new generation tasks until the process is restarted.
+
+The process supervisor uses `/v1/shutdown-gate` to acquire a 60-second owner
+lease before shutting down the fixed service allowlist. During a long shutdown,
+it renews through `POST /v1/shutdown-gate/renew` with the same `gateId` and
+`galgame.original-runtime-shutdown-gate.v1` protocol. Renewals are accepted only
+for the current, unexpired owner while no generation or stop request is
+admitted. Lease loss causes the supervisor to cancel its shutdown executor and
+fail closed; it never releases a lease whose ownership could not be confirmed.
 
 Forbidden:
 

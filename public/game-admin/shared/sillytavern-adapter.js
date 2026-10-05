@@ -2,7 +2,7 @@ import {
     getActiveSillyTavernBindings,
     sanitizeText,
     summarizeSillyTavernBindings,
-} from './protocol.js?v=auto-fdcc7c7c5302';
+} from './protocol.js?v=auto-e34cf3849e79';
 
 export const SILLYTAVERN_ENDPOINTS = Object.freeze({
     csrf: '/csrf-token',
@@ -20,6 +20,7 @@ export const SILLYTAVERN_CHAT_ENDPOINTS = Object.freeze({
 
 export const ORIGINAL_RUNTIME_BRIDGE_ENDPOINTS = Object.freeze({
     health: '/health',
+    llmHealth: '/v1/llm-health',
     generateReply: '/v1/generate-reply',
 });
 
@@ -359,6 +360,21 @@ export class SillyTavernOriginalChatBridge {
         return this.loadBoundChat(manifest, { preferSeed: false, signal });
     }
 
+    async hasLatestBoundChat(manifest, signal) {
+        const character = getPrimaryBoundCharacter(manifest);
+        if (!character.avatar) {
+            return false;
+        }
+        const chats = await this.listCharacterChats(character, signal);
+        const seedId = getBoundChatSeedId(manifest);
+        const seed = seedId ? findChatById(chats, seedId) : null;
+        const selected = pickLatestArcChat(chats, {
+            arcId: getManifestRuntimeArcId(manifest),
+            seedId,
+        }) || seed || (!seedId ? pickLatestChat(chats) : null);
+        return Boolean(selected);
+    }
+
     async loadSpecificBoundChat(manifest, fileName, signal) {
         const character = getPrimaryBoundCharacter(manifest);
         if (!character.avatar || !fileName) {
@@ -620,6 +636,24 @@ export class OriginalRuntimeBridgeClient {
         return response.json();
     }
 
+    async llmHealthCheck(signal) {
+        if (!this.isConfigured()) {
+            return { ok: false, errorCode: 'ORIGINAL_RUNTIME_BRIDGE_UNCONFIGURED' };
+        }
+        const response = await this.fetchImpl(this.url(ORIGINAL_RUNTIME_BRIDGE_ENDPOINTS.llmHealth), {
+            method: 'POST',
+            cache: 'no-cache',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ protocolVersion: 'galgame.llm-health.v1' }),
+            signal,
+        });
+        const result = await response.json().catch(() => null);
+        if (!result || result.protocolVersion !== 'galgame.llm-health.v1') {
+            return { ok: false, errorCode: 'LLM_HEALTH_RESPONSE_INVALID' };
+        }
+        return { ...result, ok: response.ok && result.ok === true };
+    }
+
     async generateReply({ manifest, release = null, snapshot, bridgeProof = null, signal, timeoutMs = this.timeoutMs } = {}) {
         if (!this.isConfigured()) {
             throw new Error('ORIGINAL_RUNTIME_BRIDGE_UNCONFIGURED');
@@ -661,6 +695,9 @@ export class OriginalRuntimeBridgeClient {
         }
 
         const rawChat = normalizeRawChat(data.rawChat);
+        const runtimeGenerationSettings = data.diagnostics?.runtimeGenerationSettings || {};
+        const runtimeProvider = sanitizeText(runtimeGenerationSettings.provider || '', 40).toLowerCase();
+        const runtimeModel = sanitizeText(runtimeGenerationSettings.model || '', 120);
         return {
             ok: true,
             mode: 'sillytavern-original-runtime-bridge',
@@ -676,6 +713,8 @@ export class OriginalRuntimeBridgeClient {
             diagnostics: {
                 unchanged: Boolean(data.unchanged),
                 elapsedMs: Number(data.elapsedMs || 0),
+                ...(runtimeProvider ? { runtimeProvider } : {}),
+                ...(runtimeModel ? { runtimeModel } : {}),
             },
         };
     }
@@ -982,30 +1021,6 @@ const VISUAL_PROJECTION_LABEL_ATTRIBUTE_CODES = Object.freeze({
     skill: 'skill-visible-label',
 });
 
-// Natural-language scene hints stay deliberately small and deterministic.
-// They are presentation evidence only: the original chat text remains the
-// source of truth, and hidden reasoning/status blocks have already been
-// removed by formatVisualNovelDisplayText before this table is consulted.
-const NATURAL_SCENE_HINT_PATTERNS = Object.freeze([
-    // Specific place names are checked before the broader place families so a
-    // visible paragraph can move the stage away from a previously mentioned
-    // tavern or city. The category deliberately reuses the published scene
-    // vocabulary; it is a visual hint, not a new story/location schema.
-    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:绿瓶药房|药房|药店|诊所)/gu, category: '室内' },
-    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:旧钟楼|钟楼|礼拜堂|灰境前厅|前厅|地下遗迹|石室|洞窟|山洞|祭坛|墓室|塔楼内部)/gu, category: '地牢' },
-    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:营地|村庄|战场|海岸|海边|海滩|山谷|荒地|桥头|城门外)/gu, category: '室外' },
-    // Tavern-like places in the curated catalog are city interiors. Include
-    // both normalized labels so the matcher gets a specific scene.city
-    // overlap instead of stopping at generic scene.interior.
-    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:酒馆|客栈|旅店|酒吧|酒窖)/gu, category: '室内 城市' },
-    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:神殿|圣殿|教堂|圣堂|图书馆|书库|档案室|宫殿|城堡|房间|大厅|工坊|铁匠铺)/gu, category: '室内' },
-    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:地下室|地窖|地牢|迷宫)/gu, category: '地牢' },
-    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:城市的?中心区|市中心|城中心|城区|街道|广场|集市|市场|港口|码头|城市)/gu, category: '城市' },
-    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:森林|树林|林地|丛林)/gu, category: '森林' },
-    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:废墟|遗迹|古迹)/gu, category: '废墟' },
-    { pattern: /(?:[\p{Script=Han}A-Za-z0-9·]{0,12})(?:道路|街巷|野外|旷野|城外)/gu, category: '室外' },
-]);
-
 const CORE_VISUAL_DISPLAY_LABEL_TYPES = new Map([
     ...VISUAL_PROJECTION_LABEL_TYPES,
     ['角色', 'character'],
@@ -1058,6 +1073,7 @@ export function normalizeOriginalVisibleChatMessages(chat, { maxTextLength = MAX
             speaker: sanitizeText(message.name || (message.is_user ? 'Player' : 'Character'), 160),
             role,
             isUser: Boolean(message.is_user),
+            characterIdentity: message.characterIdentity || null,
             text,
             sentAt: sanitizeText(message.send_date || '', 120),
         });
@@ -1104,6 +1120,13 @@ function createVisibleMessageEntityHints(message, {
     // must never create a scene or character hint.
     const text = formatVisualNovelDisplayText(message?.text || '').slice(0, MAX_VISIBLE_CHAT_TEXT_LENGTH);
     const speaker = sanitizeText(message?.speaker || '', 160);
+    const characterIdentity = message?.characterIdentity && typeof message.characterIdentity === 'object'
+        ? message.characterIdentity
+        : null;
+    const stableCharacterSeed = sanitizeText(
+        characterIdentity?.characterId || characterIdentity?.id || characterIdentity?.avatar || characterIdentity?.name || '',
+        160,
+    );
     const seenSeeds = new Set();
     const pushEntity = (entity) => {
         const dedupeKey = `${entity.entityType}:${entity.entityKeySeed}`;
@@ -1118,7 +1141,7 @@ function createVisibleMessageEntityHints(message, {
         && !isNonCharacterVisualLabel(speaker)
         && !(mergeCurrentSpeakerCharacterAppearance && isNarratorSpeaker(speaker))
         ? {
-            entityKeySeed: speaker,
+            entityKeySeed: stableCharacterSeed || speaker,
             entityType: 'character',
             displayLabel: speaker.slice(0, 80),
             visibleAttributes: [
@@ -1139,22 +1162,6 @@ function createVisibleMessageEntityHints(message, {
             ? resolveCoreCharacterLabelAttributeCode
             : null,
     });
-    // Some original replies describe the current place in ordinary prose
-    // instead of emitting a `场景:` row. Add at most one deterministic hint,
-    // using the last explicit place phrase as the current location. This is
-    // intentionally skipped when the reply already contains a labeled scene
-    // so an authored label keeps precedence and no competing backgrounds are
-    // created for one visible message.
-    if (!labelEntities.some((entity) => entity.entityType === 'scene')) {
-        const actionProjection = extractSuggestedActionsFromOriginalText(text);
-        const sceneSourceText = actionProjection.suggestedActions.length >= 2
-            ? actionProjection.displayText
-            : text;
-        const naturalScene = extractNaturalSceneHint(sceneSourceText, message?.index);
-        if (naturalScene) {
-            labelEntities.push(naturalScene);
-        }
-    }
     if (mergeCurrentSpeakerCharacterAppearance) {
         const characterLabels = uniqueEntitiesBySeed(labelEntities.filter((entity) => entity.entityType === 'character'));
         const characterLabelAttributes = characterLabels.flatMap((entity) => entity.visibleAttributes || []);
@@ -1276,67 +1283,6 @@ function extractExplicitVisualProjectionLabelEntities(text, messageIndex, {
     return entities;
 }
 
-function extractNaturalSceneHint(text, messageIndex) {
-    const source = String(text || '');
-    const matches = [];
-    for (const { pattern, category } of NATURAL_SCENE_HINT_PATTERNS) {
-        pattern.lastIndex = 0;
-        for (const match of source.matchAll(pattern)) {
-            const rawLabel = normalizeNaturalSceneHintLabel(match[0]);
-            if (!rawLabel) continue;
-            const end = (Number.isInteger(match.index) ? match.index : 0) + match[0].length;
-            const followingText = source.slice(end, end + 8);
-            // A place word inside an item/name (for example `酒馆钥匙` or
-            // `森林地图`) is not a stage location by itself.
-            const nearbyText = source.slice(Math.max(0, end - 16), end + 8);
-            if (
-                /^(?:钥匙|地图|徽章|牌子|传闻|老板|账本|标记)/u.test(followingText)
-                || (/(?:钥匙|地图|徽章|牌子|传闻|老板|账本|标记)/u.test(nearbyText)
-                    && !/(?:走进|进入|来到|位于|处于|回到|返回|前往|离开|穿过|在|从|向)/u.test(nearbyText))
-            ) continue;
-            matches.push({
-                index: Number.isInteger(match.index) ? match.index : 0,
-                end,
-                label: rawLabel,
-                category,
-            });
-        }
-    }
-    if (!matches.length) return null;
-
-    // At one visible-message boundary, the final place phrase is the best
-    // approximation of the current stage. Prefer the longest phrase at the
-    // same offset so `城市的中心区` wins over the generic `城市` match.
-    matches.sort((left, right) => left.end - right.end || right.label.length - left.label.length);
-    const lastEnd = matches.reduce((max, item) => Math.max(max, item.end), -1);
-    const latestAtEnd = matches.filter((item) => item.end === lastEnd)
-        .sort((left, right) => right.label.length - left.label.length)[0];
-    const latest = latestAtEnd || matches.at(-1);
-    const value = `${latest.label}（${latest.category}）`;
-    return {
-        entityKeySeed: `${messageIndex ?? ''}:scene:natural:${latest.label}`,
-        entityType: 'scene',
-        displayLabel: latest.label.slice(0, 80),
-        visibleAttributes: [{
-            code: 'scene-location-kind',
-            value: value.slice(0, 160),
-            confidenceBand: 'explicit',
-        }],
-        confidenceBand: 'explicit',
-    };
-}
-
-function normalizeNaturalSceneHintLabel(value) {
-    let label = String(value || '').replace(/^[\s，。！？；：、]+|[\s，。！？；：、]+$/gu, '');
-    // The bounded prefix in the patterns may include a narration verb. Keep
-    // the actual place noun while retaining descriptive modifiers such as
-    // `光辉神殿` in `光辉神殿酒馆`.
-    label = label.replace(/^(?:现在|当前|目前)/u, '');
-    label = label.replace(/^.*?(?:走进|进入|来到|位于|处于|回到|返回|前往|离开|穿过|(?<!现)在|从|向)/u, '');
-    label = label.replace(/^(?:那座|那间|这座|这间|一家|一间|一个|附近的|旁边的)/u, '');
-    return label.trim().slice(-48);
-}
-
 function resolveCoreCharacterLabelAttributeCode(rawLabel, type) {
     if (type !== 'character') return null;
     if (['性别', '性别表现', 'gender', 'gender presentation'].includes(rawLabel)) {
@@ -1454,29 +1400,106 @@ export function createVisualNovelDisplaySegments(value, {
         '',
     );
     const segmentedDisplayText = splitInferredInlineNarrativeDialogues(connectorMergedText, knownSpeakerMap);
-    let lastSpeaker = role === 'player' ? '你' : fallbackName;
-    return segmentedDisplayText
+    let sourceCursor = 0;
+    const segments = segmentedDisplayText
         .split(/\n{2,}/)
         .map((paragraph) => paragraph.trim())
         .filter((paragraph) => paragraph && !isPunctuationOnlyVisualNovelSegment(paragraph))
         .map((paragraph, index) => {
             const segment = classifyVisualNovelSegment(paragraph, {
                 fallbackSpeaker: fallbackName,
-                lastSpeaker,
                 role,
                 knownSpeakerMap,
             });
-            if (segment.speaker && segment.type !== 'narration') {
-                lastSpeaker = segment.speaker;
-            }
+            const startUtf16 = displayText.indexOf(paragraph, sourceCursor);
+            const sourceSpan = startUtf16 < 0
+                ? null
+                : {
+                    start: Array.from(displayText.slice(0, startUtf16)).length,
+                    end: Array.from(displayText.slice(0, startUtf16 + paragraph.length)).length,
+                };
+            if (startUtf16 >= 0) sourceCursor = startUtf16 + paragraph.length;
             return {
                 index,
                 ...segment,
+                sourceSpan,
+                sourceText: sourceSpan ? Array.from(displayText).slice(sourceSpan.start, sourceSpan.end).join('') : paragraph,
             };
         });
+    return applyQuotedDialogueSpeakerContinuity(segments);
 }
 
-function classifyVisualNovelSegment(text, { fallbackSpeaker, lastSpeaker, role, knownSpeakerMap }) {
+export function applyQuotedDialogueSpeakerContinuity(segments) {
+    let carry = null;
+    return (Array.isArray(segments) ? segments : []).map((sourceSegment) => {
+        const segment = { ...sourceSegment };
+        const raw = String(segment.sourceText ?? segment.text ?? '');
+        const identityRef = segment.identityRef;
+        const hasIdentity = identityRef?.type && identityRef.type !== 'unknown' && identityRef.id;
+
+        if (carry && ['unattributed-dialogue', 'narration'].includes(segment.type)) {
+            const scanned = scanDialogueQuoteState(raw, carry.stack);
+            if (scanned.reliable && raw.trim()) {
+                segment.type = 'dialogue';
+                segment.speaker = carry.speaker;
+                segment.identityRef = carry.identityRef;
+                segment.speakerContinuation = true;
+                carry = scanned.stack.length
+                    ? { ...carry, stack: scanned.stack }
+                    : null;
+                return segment;
+            }
+            carry = null;
+            return segment;
+        }
+
+        if (segment.type === 'dialogue' && hasIdentity && !segment.speakerContinuation) {
+            const scanned = scanDialogueQuoteState(raw, []);
+            carry = scanned.reliable && scanned.stack.length
+                ? { speaker: segment.speaker, identityRef: { ...identityRef }, stack: scanned.stack }
+                : null;
+        } else {
+            carry = null;
+        }
+        return segment;
+    });
+}
+
+function scanDialogueQuoteState(value, initialStack = []) {
+    const pairs = new Map([['“', '”'], ['「', '」'], ['『', '』'], ['‘', '’'], ['｢', '｣']]);
+    const closers = new Set(pairs.values());
+    const chars = Array.from(String(value || ''));
+    const stack = [...initialStack];
+    let escapedSlashCount = 0;
+    for (let index = 0; index < chars.length; index += 1) {
+        const char = chars[index];
+        if (char === '\\') {
+            escapedSlashCount += 1;
+            continue;
+        }
+        const escaped = escapedSlashCount % 2 === 1;
+        escapedSlashCount = 0;
+        if (char === '"') {
+            if (escaped) continue;
+            if (stack.at(-1) === '"') stack.pop();
+            else stack.push('"');
+            continue;
+        }
+        if (escaped) continue;
+        if (pairs.has(char)) {
+            stack.push(pairs.get(char));
+            continue;
+        }
+        if (closers.has(char)) {
+            if (stack.at(-1) !== char) return { reliable: false, stack: [] };
+            stack.pop();
+        }
+    }
+    if (escapedSlashCount % 2 === 1) return { reliable: false, stack: [] };
+    return { reliable: true, stack };
+}
+
+function classifyVisualNovelSegment(text, { fallbackSpeaker, role, knownSpeakerMap }) {
     if (role === 'player') {
         return {
             type: 'player',
@@ -1529,9 +1552,11 @@ function classifyVisualNovelSegment(text, { fallbackSpeaker, lastSpeaker, role, 
         && !isNonDialogueLabel(namedDialogueSpeaker)
         && isTrustedVisualDialogueSpeaker(namedDialogueSpeaker, knownSpeakerMap, fallbackSpeaker);
     if (namedDialogue && namedDialogue[2]?.trim() && namedDialogueIsTrusted) {
+        const knownSpeaker = knownSpeakerMap.get(normalizeKnownSpeaker(namedDialogueSpeaker));
         return {
             type: 'dialogue',
-            speaker: sanitizeText(knownSpeakerMap.get(normalizeKnownSpeaker(namedDialogueSpeaker)) || fallbackSpeaker || namedDialogueSpeaker, 80),
+            speaker: sanitizeText(knownSpeaker?.displayName || knownSpeaker || fallbackSpeaker || namedDialogueSpeaker, 80),
+            ...(knownSpeaker?.identityRef ? { identityRef: knownSpeaker.identityRef } : {}),
             text: namedDialogue[2].trim(),
         };
     }
@@ -1548,17 +1573,10 @@ function classifyVisualNovelSegment(text, { fallbackSpeaker, lastSpeaker, role, 
                 text,
             };
         }
-        const quoteSpeaker = sanitizeText(lastSpeaker || fallbackSpeaker || '', 80);
-        if (isNarratorSpeaker(quoteSpeaker)) {
-            return {
-                type: 'narration',
-                speaker: '旁白',
-                text,
-            };
-        }
         return {
-            type: 'dialogue',
-            speaker: quoteSpeaker || '角色',
+            type: 'unattributed-dialogue',
+            speaker: '未识别',
+            identityRef: { type: 'unknown' },
             text,
         };
     }
@@ -1597,7 +1615,11 @@ function createKnownSpeakerMap(values) {
             if (!normalized || isNarratorSpeaker(normalized) || /^(?:你|玩家|player|user|系统|system)$/iu.test(normalized)) {
                 continue;
             }
-            map.set(normalized, sanitizeText(displayName, 80));
+            const identityRef = typeof value === 'object' && value !== null && value.characterKey
+                ? { type: 'published', id: String(value.characterKey) }
+                : null;
+            const entry = { displayName: sanitizeText(displayName, 80), identityRef };
+            map.set(normalized, entry);
         }
     }
     return map;
@@ -1616,7 +1638,8 @@ function matchKnownNarrativeDialogue(text, knownSpeakerMap) {
     if (!(knownSpeakerMap instanceof Map) || !knownSpeakerMap.size) return null;
     const ordered = [...knownSpeakerMap.keys()].sort((left, right) => right.length - left.length);
     for (const normalizedName of ordered) {
-        const displayName = knownSpeakerMap.get(normalizedName);
+        const entry = knownSpeakerMap.get(normalizedName);
+        const displayName = entry?.displayName || entry;
         const escaped = normalizedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const boundary = /^[A-Za-z0-9_-]+$/u.test(normalizedName) ? '(?![A-Za-z0-9_-])' : '';
         const match = text.match(new RegExp(`^[“「『"]?${escaped}${boundary}\\s*(.{1,48}?)\\s*[：:]\\s*([“"「『][\\s\\S]*(?:[”"」』]|$))$`, 'iu'));
@@ -1624,6 +1647,7 @@ function matchKnownNarrativeDialogue(text, knownSpeakerMap) {
         return {
             type: 'dialogue',
             speaker: displayName,
+            ...(entry?.identityRef ? { identityRef: entry.identityRef } : {}),
             text: match[2].trim(),
         };
     }

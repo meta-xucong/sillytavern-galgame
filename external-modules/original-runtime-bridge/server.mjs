@@ -6,6 +6,7 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import WebSocket from 'ws';
+import { waitForOriginalGenerationCompletion } from './generation-lifecycle.mjs';
 
 const moduleRoot = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(moduleRoot, '..', '..');
@@ -13,6 +14,8 @@ const DEFAULT_PORT = 8795;
 const DEFAULT_TIMEOUT_MS = 180000;
 const DEFAULT_PROVIDER_RETRY_DELAYS_MS = [2000, 6000];
 const DEFAULT_PENDING_STALE_AFTER_MS = 240000;
+const CDP_EVALUATION_GRACE_MS = 45000;
+const CHROME_EXIT_TIMEOUT_MS = 5000;
 const MAX_BRIDGE_VISIBLE_TEXT_LENGTH = 16000;
 const DEFAULT_CLAUDE_SETTINGS_PATH = path.join(repoRoot, 'data', 'default-user', 'OpenAI Settings', 'Default.json');
 
@@ -43,13 +46,31 @@ export function createOriginalRuntimeBridgeServer({
     authToken = process.env.GALGAME_BRIDGE_TOKEN || process.env.GALGAME_BRIDGE_AUTH_TOKEN || '',
     proofSecret = process.env.GALGAME_BRIDGE_PROOF_SECRET || '',
     logger = console,
+    providerSettingsReader = readRuntimeProviderSettings,
+    fetchImpl = globalThis.fetch,
+    llmHealthTimeoutMs = 20_000,
+    shutdownGateTtlMs = 60_000,
+    now = () => Date.now(),
 } = {}) {
     const auth = createBridgeAuthConfig({ host, authToken });
     const proofVerifier = createBridgeProofVerifier({ proofSecret });
     const runtimeBridge = runtime || new BrowserOriginalRuntimeBridge({ logger });
+    let shutdownGateId = '';
+    let shutdownGateExpiresAt = 0;
+    let generationAdmissions = 0;
+    let stopAdmissions = 0;
+
+    const refreshShutdownGate = () => {
+        if (shutdownGateId && now() >= shutdownGateExpiresAt) {
+            shutdownGateId = '';
+            shutdownGateExpiresAt = 0;
+        }
+        return Boolean(shutdownGateId);
+    };
 
     const server = createServer(async (request, response) => {
         try {
+            refreshShutdownGate();
             applyCors(request, response, allowedOrigins);
             if (request.method === 'OPTIONS') {
                 response.writeHead(204);
@@ -71,38 +92,183 @@ export function createOriginalRuntimeBridgeServer({
                     ok: false,
                     errorCode: sanitizeErrorCode(error),
                 }));
+                const status = {
+                    ...runtimeBridge.getStatus?.(),
+                    shutdownGate: Boolean(shutdownGateId),
+                    ready: !shutdownGateId && resolveBridgeReady(health, runtimeBridge.getStatus?.()),
+                    ...(shutdownGateId ? { connectionState: 'shutdown-gated' } : {}),
+                };
                 sendJson(response, 200, {
                     // `ok` means the bridge can accept a new generation.  Keep
                     // transport reachability separate so a stale/pending or
                     // stopped browser session is never reported as healthy.
-                    ok: resolveBridgeReady(health, runtimeBridge.getStatus?.()),
+                    ok: !shutdownGateId && resolveBridgeReady(health, status),
                     mode: 'sillytavern-original-runtime-bridge',
                     originalRuntime: 'browser-generate',
                     authRequired: auth.required,
                     proofRequired: proofVerifier.required,
-                    ...runtimeBridge.getStatus?.(),
+                    proofConfigured: proofVerifier.configured,
+                    ...status,
                     ...health,
-                    ok: resolveBridgeReady(health, runtimeBridge.getStatus?.()),
+                    shutdownGate: Boolean(shutdownGateId),
+                    ready: !shutdownGateId && resolveBridgeReady(health, status),
+                    ...(shutdownGateId ? { connectionState: 'shutdown-gated' } : {}),
+                    ok: !shutdownGateId && resolveBridgeReady(health, status),
                 });
+                return;
+            }
+
+            if (request.method === 'POST' && url.pathname === '/v1/shutdown-gate') {
+                const body = await readJsonBody(request).catch(() => null);
+                if (!body || body.protocolVersion !== 'galgame.original-runtime-shutdown-gate.v1'
+                    || body.action !== 'acquire'
+                    || Object.keys(body).some((key) => !['protocolVersion', 'action'].includes(key))) {
+                    sendJson(response, 400, { ok: false, errorCode: 'BRIDGE_SHUTDOWN_GATE_PROTOCOL_INVALID' });
+                    return;
+                }
+                const status = runtimeBridge.getStatus?.() || {};
+                if (shutdownGateId || generationAdmissions > 0 || stopAdmissions > 0 || status.pending || status.stale || status.stopping || runtimeBridge.isStopping?.()) {
+                    sendJson(response, 409, { ok: false, errorCode: 'BRIDGE_SHUTDOWN_GATE_BUSY' });
+                    return;
+                }
+                shutdownGateId = randomUUID();
+                shutdownGateExpiresAt = now() + Math.max(1_000, Number(shutdownGateTtlMs) || 60_000);
+                sendJson(response, 200, {
+                    ok: true,
+                    protocolVersion: 'galgame.original-runtime-shutdown-gate.v1',
+                    gateId: shutdownGateId,
+                    pending: false,
+                    stale: false,
+                    stopping: false,
+                    shutdownGate: true,
+                });
+                return;
+            }
+
+            if (request.method === 'POST' && url.pathname === '/v1/shutdown-gate/renew') {
+                const body = await readJsonBody(request).catch(() => null);
+                if (!body || body.protocolVersion !== 'galgame.original-runtime-shutdown-gate.v1'
+                    || body.action !== 'renew' || typeof body.gateId !== 'string'
+                    || Object.keys(body).some((key) => !['protocolVersion', 'action', 'gateId'].includes(key))) {
+                    sendJson(response, 400, { ok: false, errorCode: 'BRIDGE_SHUTDOWN_GATE_PROTOCOL_INVALID' });
+                    return;
+                }
+                refreshShutdownGate();
+                if (!shutdownGateId || body.gateId !== shutdownGateId) {
+                    sendJson(response, 409, { ok: false, errorCode: 'BRIDGE_SHUTDOWN_GATE_MISMATCH' });
+                    return;
+                }
+                const status = runtimeBridge.getStatus?.() || {};
+                if (generationAdmissions > 0 || stopAdmissions > 0 || status.pending || status.stale || status.stopping || runtimeBridge.isStopping?.()) {
+                    sendJson(response, 409, { ok: false, errorCode: 'BRIDGE_SHUTDOWN_GATE_BUSY' });
+                    return;
+                }
+                shutdownGateExpiresAt = now() + Math.max(1_000, Number(shutdownGateTtlMs) || 60_000);
+                sendJson(response, 200, {
+                    ok: true,
+                    protocolVersion: 'galgame.original-runtime-shutdown-gate.v1',
+                    gateId: shutdownGateId,
+                    renewed: true,
+                    shutdownGate: true,
+                });
+                return;
+            }
+
+            if (request.method === 'POST' && url.pathname === '/v1/shutdown-gate/release') {
+                const body = await readJsonBody(request).catch(() => null);
+                if (!body || body.protocolVersion !== 'galgame.original-runtime-shutdown-gate.v1'
+                    || body.action !== 'release' || typeof body.gateId !== 'string'
+                    || Object.keys(body).some((key) => !['protocolVersion', 'action', 'gateId'].includes(key))) {
+                    sendJson(response, 400, { ok: false, errorCode: 'BRIDGE_SHUTDOWN_GATE_PROTOCOL_INVALID' });
+                    return;
+                }
+                if (!shutdownGateId || body.gateId !== shutdownGateId) {
+                    sendJson(response, 409, { ok: false, errorCode: 'BRIDGE_SHUTDOWN_GATE_MISMATCH' });
+                    return;
+                }
+                const status = runtimeBridge.getStatus?.() || {};
+                if (generationAdmissions > 0 || stopAdmissions > 0 || status.pending || status.stale || status.stopping || runtimeBridge.isStopping?.()) {
+                    sendJson(response, 409, { ok: false, errorCode: 'BRIDGE_SHUTDOWN_GATE_BUSY' });
+                    return;
+                }
+                shutdownGateId = '';
+                shutdownGateExpiresAt = 0;
+                sendJson(response, 200, { ok: true, protocolVersion: 'galgame.original-runtime-shutdown-gate.v1', released: true });
+                return;
+            }
+
+            if (request.method === 'POST' && url.pathname === '/v1/llm-health') {
+                const origin = typeof request.headers.origin === 'string' ? request.headers.origin : '';
+                if (origin && !allowedOrigins.includes('*') && !allowedOrigins.includes(origin)) {
+                    sendJson(response, 403, {
+                        protocolVersion: 'galgame.llm-health.v1',
+                        ok: false,
+                        errorCode: 'LLM_HEALTH_ORIGIN_NOT_ALLOWED',
+                    });
+                    return;
+                }
+                if (!String(request.headers['content-type'] || '').toLowerCase().startsWith('application/json')) {
+                    sendJson(response, 415, {
+                        protocolVersion: 'galgame.llm-health.v1',
+                        ok: false,
+                        errorCode: 'LLM_HEALTH_CONTENT_TYPE_REQUIRED',
+                    });
+                    return;
+                }
+                const body = await readJsonBody(request).catch(() => null);
+                if (body?.protocolVersion !== 'galgame.llm-health.v1') {
+                    sendJson(response, 400, {
+                        protocolVersion: 'galgame.llm-health.v1',
+                        ok: false,
+                        errorCode: 'LLM_HEALTH_PROTOCOL_INVALID',
+                    });
+                    return;
+                }
+                const result = await probeConfiguredLlm({
+                    settings: providerSettingsReader(),
+                    fetchImpl,
+                    timeoutMs: llmHealthTimeoutMs,
+                });
+                sendJson(response, result.ok ? 200 : 503, result);
                 return;
             }
 
             if (request.method === 'POST' && url.pathname === '/v1/stop') {
-                const body = await readJsonBody(request).catch(() => ({}));
-                const stopped = await runtimeBridge.stop?.({
-                    reason: 'operator-request',
-                    timeoutMs: clampStopTimeout(body.timeoutMs || body.stopTimeoutMs),
-                });
-                sendJson(response, 200, {
-                    ok: true,
-                    mode: 'sillytavern-original-runtime-bridge',
-                    ...stopped,
-                    ...runtimeBridge.getStatus?.(),
-                });
+                if (shutdownGateId) {
+                    sendJson(response, 409, { ok: false, errorCode: 'BRIDGE_SHUTDOWN_IN_PROGRESS' });
+                    return;
+                }
+                // Reserve the stop operation before reading its body. Otherwise
+                // gate acquisition can overtake a slow request body and close
+                // the bridge while this admitted stop is still in flight.
+                stopAdmissions += 1;
+                try {
+                    const body = await readJsonBody(request).catch(() => ({}));
+                    if (shutdownGateId) {
+                        sendJson(response, 409, { ok: false, errorCode: 'BRIDGE_SHUTDOWN_IN_PROGRESS' });
+                        return;
+                    }
+                    const stopped = await runtimeBridge.stop?.({
+                        reason: 'operator-request',
+                        timeoutMs: clampStopTimeout(body.timeoutMs || body.stopTimeoutMs),
+                    });
+                    sendJson(response, 200, {
+                        ok: true,
+                        mode: 'sillytavern-original-runtime-bridge',
+                        ...stopped,
+                        ...runtimeBridge.getStatus?.(),
+                    });
+                } finally {
+                    stopAdmissions = Math.max(0, stopAdmissions - 1);
+                }
                 return;
             }
 
             if (request.method === 'POST' && url.pathname === '/v1/generate-reply') {
+                if (shutdownGateId) {
+                    sendJson(response, 503, { ok: false, errorCode: 'BRIDGE_SHUTDOWN_IN_PROGRESS' });
+                    return;
+                }
                 if (runtimeBridge.isStopping?.()) {
                     sendJson(response, 503, {
                         ok: false,
@@ -122,6 +288,8 @@ export function createOriginalRuntimeBridgeServer({
                     });
                     return;
                 }
+                generationAdmissions += 1;
+                try {
                 const body = await readJsonBody(request);
                 const validation = validateGenerateRequest(body, proofVerifier);
                 if (!validation.ok) {
@@ -152,6 +320,9 @@ export function createOriginalRuntimeBridgeServer({
                     },
                 });
                 return;
+                } finally {
+                    generationAdmissions = Math.max(0, generationAdmissions - 1);
+                }
             }
 
             sendJson(response, 404, {
@@ -172,6 +343,63 @@ export function createOriginalRuntimeBridgeServer({
         void (runtimeBridge.stop?.({ reason: 'server-close' }) || runtimeBridge.close?.());
     });
     return server;
+}
+
+export async function probeConfiguredLlm({ settings = {}, fetchImpl = globalThis.fetch, timeoutMs = 20_000, now = () => Date.now() } = {}) {
+    const startedAt = now();
+    const provider = String(settings.provider || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 40).toLowerCase();
+    const model = String(settings.model || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 120);
+    const baseUrl = String(settings.reverseProxy || '').trim().replace(/\/+$/, '');
+    const token = String(settings.proxyPassword || '');
+    const result = (ok, errorCode = '') => ({
+        protocolVersion: 'galgame.llm-health.v1',
+        ok,
+        provider,
+        model,
+        checkedAt: new Date(now()).toISOString(),
+        latencyMs: Math.max(0, now() - startedAt),
+        errorCode,
+    });
+    if (provider !== 'claude') return result(false, 'LLM_PROVIDER_NOT_CLAUDE');
+    if (!model || !baseUrl || !token) return result(false, 'LLM_PROVIDER_SETTINGS_INCOMPLETE');
+    if (typeof fetchImpl !== 'function') return result(false, 'LLM_FETCH_UNAVAILABLE');
+
+    let endpoint;
+    try {
+        endpoint = new URL(`${baseUrl}/messages`);
+        if (endpoint.protocol !== 'https:') return result(false, 'LLM_PROXY_HTTPS_REQUIRED');
+    } catch {
+        return result(false, 'LLM_PROXY_URL_INVALID');
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), Math.max(250, Number(timeoutMs) || 20_000));
+    try {
+        const response = await fetchImpl(endpoint, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                'anthropic-version': '2023-06-01',
+                'x-api-key': token,
+            },
+            body: JSON.stringify({
+                model,
+                max_tokens: 8,
+                messages: [{ role: 'user', content: 'Reply with OK.' }],
+            }),
+            signal: controller.signal,
+        });
+        const payload = await response.json().catch(() => null);
+        const hasText = Array.isArray(payload?.content)
+            && payload.content.some((item) => item?.type === 'text' && String(item.text || '').trim());
+        if (!response.ok) return result(false, `LLM_UPSTREAM_HTTP_${response.status}`);
+        if (!hasText) return result(false, 'LLM_UPSTREAM_EMPTY_RESPONSE');
+        return result(true);
+    } catch (error) {
+        return result(false, controller.signal.aborted ? 'LLM_UPSTREAM_TIMEOUT' : 'LLM_UPSTREAM_UNREACHABLE');
+    } finally {
+        clearTimeout(timeout);
+    }
 }
 
 export class BrowserOriginalRuntimeBridge {
@@ -333,8 +561,33 @@ export class BrowserOriginalRuntimeBridge {
             providerSettings: readRuntimeProviderSettings(),
             timeoutMs: clampTimeout(timeoutMs),
         };
-        const result = await this.evaluate(generateInOriginalRuntimeExpression(payload), payload.timeoutMs + 90000);
+        let result;
+        try {
+            // The in-page lifecycle already bounds generation and chat readback.
+            // Leave enough time for those errors to cross CDP, but do not keep a
+            // stuck renderer pending for another arbitrary 90 seconds.
+            result = await this.evaluate(generateInOriginalRuntimeExpression(payload), payload.timeoutMs + CDP_EVALUATION_GRACE_MS);
+        } catch (error) {
+            if (error?.code === 'CDP_EVALUATION_TIMEOUT') {
+                this.stopping = true;
+                try {
+                    await this.close();
+                    // The timed-out reply remains a failure. The next explicit
+                    // retry reloads the exact original chat before Generate().
+                    this.stopping = false;
+                } catch (closeError) {
+                    this.logger.warn?.('[original-runtime-bridge] timed-out browser exit was not confirmed', {
+                        errorCode: sanitizeErrorCode(closeError),
+                    });
+                }
+            }
+            throw error;
+        }
         if (!result?.ok) {
+            if (result?.errorCode === 'ORIGINAL_GENERATION_STOP_UNCONFIRMED') {
+                this.stopping = true;
+                await this.close();
+            }
             const error = new Error(result?.errorCode || 'ORIGINAL_RUNTIME_GENERATE_FAILED');
             error.code = result?.errorCode;
             error.details = {
@@ -417,15 +670,22 @@ export class BrowserOriginalRuntimeBridge {
         return result.result?.value;
     }
 
-    close() {
+    async close() {
+        const chrome = this.chrome;
         if (this.targetId && this.browser) {
             void this.browser.send('Target.closeTarget', { targetId: this.targetId }).catch(() => {});
         }
-        this.chrome?.kill();
         this.chrome = null;
         this.browser = null;
         this.targetId = null;
         this.sessionId = null;
+        if (!chrome || chrome.exitCode !== null || chrome.signalCode !== null) return;
+
+        const exited = waitForChildExit(chrome, CHROME_EXIT_TIMEOUT_MS);
+        chrome.kill();
+        if (!await exited) {
+            throw createBridgeError('BRIDGE_CHROME_EXIT_UNCONFIRMED');
+        }
     }
 
     async stop({ timeoutMs = 15000 } = {}) {
@@ -453,7 +713,7 @@ export class BrowserOriginalRuntimeBridge {
             }));
             await this.queue.catch(() => {});
         }
-        this.close();
+        await this.close();
         this.pendingTask = null;
         this.queue = Promise.resolve();
         return {
@@ -485,7 +745,7 @@ export class BrowserOriginalRuntimeBridge {
     }
 }
 
-function generateInOriginalRuntimeExpression(payload) {
+export function generateInOriginalRuntimeExpression(payload) {
     return `(async () => {
         const payload = ${JSON.stringify(payload)};
         const startedAt = Date.now();
@@ -692,6 +952,26 @@ function generateInOriginalRuntimeExpression(payload) {
             const rawChat = await response.json();
             return Array.isArray(rawChat) ? rawChat : [];
         };
+        const resolveCharacterIdentity = (message) => {
+            if (!message || message.is_user) return null;
+            const ctx = globalThis.SillyTavern?.getContext?.();
+            const characters = Array.isArray(ctx?.characters) ? ctx.characters : [];
+            const activeId = Number.isInteger(ctx?.characterId) ? ctx.characterId : Number(ctx?.characterId);
+            const active = Number.isInteger(activeId) ? characters[activeId] : null;
+            const matched = active || characters.find((character) => sanitizeText(character?.name || '', 160) === sanitizeText(message.name || '', 160)) || null;
+            const speaker = sanitizeText(message.name || '', 160);
+            const matchedId = Number.isInteger(activeId) && active === matched
+                ? activeId
+                : characters.indexOf(matched);
+            const avatar = sanitizeText(matched?.avatar || '', 240);
+            const name = sanitizeText(matched?.name || speaker, 160);
+            if (!matched && !speaker && !avatar) return null;
+            return {
+                characterId: matchedId >= 0 ? matchedId : '',
+                avatar,
+                name,
+            };
+        };
         const snapshot = (rawChat, chatId = targetChatId) => {
             const messagesRaw = stripHeader(rawChat);
             return {
@@ -703,6 +983,7 @@ function generateInOriginalRuntimeExpression(payload) {
                         id: 'original-runtime-message-' + index,
                         speaker: sanitizeText(message.name || (message.is_user ? 'Player' : 'Character'), 160),
                         role: message.is_user ? 'player' : 'character',
+                        characterIdentity: resolveCharacterIdentity(message),
                         text: sanitizeText(message.extra?.display_text || message.mes, 16000),
                         sentAt: sanitizeText(message.send_date || '', 120),
                     })),
@@ -1086,8 +1367,21 @@ function generateInOriginalRuntimeExpression(payload) {
                 applyCharacterPrimaryWorldIsolation();
             }, 100);
             const readTargetReplyStatus = async () => {
+                const assertTarget = () => {
+                    if (normalizeChatId(globalThis.SillyTavern.getContext().getCurrentChatId?.() || '') !== targetChatId) {
+                        throw Object.assign(new Error('ORIGINAL_TARGET_CHAT_BINDING_LOST'), { code: 'ORIGINAL_TARGET_CHAT_BINDING_LOST', fatal: true });
+                    }
+                };
+                assertTarget();
                 const targetRawChat = await readTargetRawChat();
+                assertTarget();
                 const targetMessages = stripHeader(targetRawChat);
+                if (targetMessages.length < beforeCount || targetBeforeMessages.some((item, index) => (
+                    item.mes !== targetMessages[index]?.mes
+                    || Boolean(item.is_user) !== Boolean(targetMessages[index]?.is_user)
+                ))) {
+                    throw Object.assign(new Error('ORIGINAL_TARGET_CHAT_CHANGED'), { code: 'ORIGINAL_TARGET_CHAT_CHANGED', fatal: true });
+                }
                 const last = targetMessages.at(-1);
                 if (!(targetMessages.length > beforeCount && last && !last.is_user && !last.is_system)) {
                     return null;
@@ -1096,77 +1390,15 @@ function generateInOriginalRuntimeExpression(payload) {
                     ? { type: 'ready', rawChat: targetRawChat }
                     : { type: 'empty', rawChat: targetRawChat };
             };
-            const waitForTargetReply = async (timeoutMs, errorCode) => {
-                const end = Date.now() + timeoutMs;
-                while (Date.now() < end) {
-                    let status = null;
-                    try {
-                        status = await readTargetReplyStatus();
-                    } catch {
-                        await delay(500);
-                        continue;
-                    }
-                    if (status?.type === 'ready') {
-                        return status.rawChat;
-                    }
-                    if (status?.type === 'empty') {
-                        const trimmedRawChat = await trimTrailingEmptyOriginalReply(status.rawChat);
-                        throw Object.assign(new Error('ORIGINAL_EMPTY_REPLY'), {
-                            code: 'ORIGINAL_EMPTY_REPLY',
-                            diagnostics: {
-                                ...runtimeState(),
-                                ...runtimeReloadDiagnostics(),
-                                openedFromChatId,
-                                targetBefore: summarizeRawChat(targetBeforeRawChat),
-                                targetAfter: summarizeRawChat(trimmedRawChat),
-                            },
-                        });
-                    }
-                    await delay(500);
-                }
-                throw Object.assign(new Error(errorCode), { code: errorCode });
-            };
             applyCharacterPrimaryWorldIsolation();
             resetDuringGenerateWorldInfoEvents();
-            const generation = ctx.generate('normal', { automatic_trigger: false })
-                .then(() => ({ type: 'generation-finished' }))
-                .catch((error) => ({ type: 'generation-error', error }));
-            const replyWritten = waitForTargetReply(payload.timeoutMs, 'ORIGINAL_GENERATE_TIMEOUT')
-                .then((rawChat) => ({ type: 'reply-written', rawChat }))
-                .catch((error) => ({ type: 'reply-error', error }));
-            const generationResult = await Promise.race([
-                generation,
-                replyWritten,
-                delay(payload.timeoutMs).then(() => ({ type: 'timeout' })),
-            ]);
-            if (generationResult.type === 'timeout') {
-                const targetAfterTimeout = await readTargetRawChat().catch(() => []);
-                ctx.stopGeneration?.();
-                throw Object.assign(new Error('ORIGINAL_GENERATE_TIMEOUT'), {
-                    code: 'ORIGINAL_GENERATE_TIMEOUT',
-                    diagnostics: {
-                        ...runtimeState(),
-                        ...runtimeReloadDiagnostics(),
-                        openedFromChatId,
-                        targetBefore: summarizeRawChat(targetBeforeRawChat),
-                        targetAfter: summarizeRawChat(targetAfterTimeout),
-                    },
-                });
-            }
-            if (generationResult.type === 'generation-error') {
-                throw generationResult.error;
-            }
-            if (generationResult.type === 'reply-error') {
-                ctx.stopGeneration?.();
-                throw generationResult.error;
-            }
-            let finalRawChat = generationResult.rawChat || null;
-            if (generationResult.type === 'generation-finished') {
-                finalRawChat = await waitForTargetReply(30000, 'ORIGINAL_REPLY_NOT_WRITTEN');
-            } else {
-                await waitFor(() => !stModule.isGenerating?.(), 15000, 'ORIGINAL_GENERATION_FINALIZE_TIMEOUT').catch(() => {});
-                finalRawChat = await readTargetRawChat();
-            }
+            const finalRawChat = await (${waitForOriginalGenerationCompletion.toString()})({
+                generate: () => ctx.generate('normal', { automatic_trigger: false }),
+                readReply: readTargetReplyStatus,
+                stopGeneration: () => ctx.stopGeneration?.(),
+                timeoutMs: payload.timeoutMs,
+                readbackTimeoutMs: 30000,
+            });
             worldInfoEventWindow = 'postGenerate';
 
             const currentSnapshot = snapshot(finalRawChat, targetChatId);
@@ -1440,6 +1672,7 @@ function createBridgeProofVerifier({ proofSecret, now = () => Date.now() } = {})
     const usedNonces = new Map();
     return {
         required: true,
+        configured: Boolean(secret),
         verify(proof, { requestId } = {}) {
             if (!secret) {
                 return {
@@ -1618,8 +1851,6 @@ function parseAllowedOrigins(value) {
         return [
             'http://127.0.0.1:8000',
             'http://localhost:8000',
-            'http://127.0.0.1:8001',
-            'http://localhost:8001',
         ];
     }
     return String(value).split(',').map((item) => item.trim()).filter(Boolean);
@@ -1891,6 +2122,27 @@ function canListen(port) {
 function delay(ms) {
     return new Promise((resolve) => {
         setTimeout(resolve, ms);
+    });
+}
+
+function waitForChildExit(child, timeoutMs) {
+    if (!child || child.exitCode !== null || child.signalCode !== null) {
+        return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+        let settled = false;
+        let timer;
+        const finish = (didExit) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            child.removeListener('exit', onExit);
+            resolve(didExit);
+        };
+        const onExit = () => finish(true);
+        child.once('exit', onExit);
+        timer = setTimeout(() => finish(false), Math.max(1, timeoutMs));
+        if (child.exitCode !== null || child.signalCode !== null) finish(true);
     });
 }
 

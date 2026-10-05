@@ -55,6 +55,9 @@ export const VISUAL_RUNTIME_MESSAGE_ROLES = Object.freeze(['player', 'character'
 export function normalizeVisualRuntimeMessage(message, { maxTextLength = 4000 } = {}) {
     if (!isPlainObject(message)) return null;
     const keys = Object.keys(message).sort();
+    const allowedKeys = ['characterIdentity', 'index', 'role', 'speaker', 'text'];
+    if (!keys.every((key) => allowedKeys.includes(key))) return null;
+    if (!['index', 'role', 'speaker', 'text'].every((key) => keys.includes(key))) return null;
     if (keys.join('\u0000') !== ['index', 'role', 'speaker', 'text'].sort().join('\u0000')) return null;
     if (!Number.isSafeInteger(message.index) || message.index < 0) return null;
     if (!VISUAL_RUNTIME_MESSAGE_ROLES.includes(message.role)) return null;
@@ -66,6 +69,7 @@ export function normalizeVisualRuntimeMessage(message, { maxTextLength = 4000 } 
         role: message.role,
         speaker: message.speaker,
         text: message.text.normalize('NFC'),
+        ...(message.characterIdentity && typeof message.characterIdentity === 'object' ? { characterIdentity: message.characterIdentity } : {}),
     };
 }
 export const VISUAL_ATTRIBUTE_CODES = Object.freeze([

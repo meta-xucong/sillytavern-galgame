@@ -14,6 +14,7 @@ const DEFAULT_SERVICE_NAMES = Object.freeze([
     'configService',
     'runtimeBridge',
     'visualService',
+    'llm',
     'generation',
 ]);
 
@@ -53,9 +54,13 @@ export class ConnectionHealthMonitor {
         const snapshot = clone(this.state);
         const now = this.now();
         for (const service of Object.values(snapshot.services)) {
-            service.stale = !service.checkedAt || now - service.checkedAt > this.intervalMs * 2;
+            const staleAfterMs = service === snapshot.services.llm ? this.intervalMs * 30 : this.intervalMs * 2;
+            service.stale = !service.checkedAt || now - service.checkedAt > staleAfterMs;
         }
-        if (snapshot.overall === 'up' && Object.values(snapshot.services).some((service) => service.stale && service.checkedAt)) {
+        // LLM freshness is intentionally user-triggered to avoid background
+        // paid probes. An expired result is unknown, not evidence of an
+        // outage; only an explicit failed probe should degrade overall health.
+        if (snapshot.overall === 'up' && Object.entries(snapshot.services).some(([name, service]) => name !== 'generation' && name !== 'llm' && service.stale && service.checkedAt)) {
             snapshot.overall = 'degraded';
         }
         return snapshot;
@@ -133,7 +138,7 @@ export class ConnectionHealthMonitor {
         if (signal?.aborted) controller.abort();
         this.probeController = controller;
         const operation = Promise.all(DEFAULT_SERVICE_NAMES
-            .filter((name) => name !== 'generation')
+            .filter((name) => name !== 'generation' && name !== 'llm')
             .map((name) => this.#probeService(name, controller.signal)))
             .then((results) => {
                 if (epoch !== this.probeEpoch || controller.signal.aborted) {
@@ -210,6 +215,29 @@ export class ConnectionHealthMonitor {
             services: { ...this.state.services, generation: next },
             overall: summarizeOverall({ ...this.state.services, generation: next }),
         };
+        this.#emit();
+        return this.getSnapshot();
+    }
+
+    recordLlmCheck({ ok, provider = '', model = '', latencyMs = 0, errorCode = '', checkedAt = this.now() } = {}) {
+        const previous = this.state.services.llm || createServiceState();
+        const success = ok === true;
+        const checkedAtMs = Number.isFinite(Number(checkedAt)) ? Number(checkedAt) : (Date.parse(checkedAt) || this.now());
+        const next = {
+            ...previous,
+            status: success ? 'up' : 'down',
+            ok: success,
+            checkedAt: checkedAtMs,
+            latencyMs: toFiniteNumber(latencyMs),
+            errorCode: success ? '' : sanitize(errorCode || 'LLM_UNAVAILABLE', 120),
+            details: { provider: sanitize(provider, 40), model: sanitize(model, 120) },
+            consecutiveFailures: success ? 0 : Number(previous.consecutiveFailures || 0) + 1,
+            consecutiveSuccesses: success ? Number(previous.consecutiveSuccesses || 0) + 1 : 0,
+            lastSuccessAt: success ? checkedAtMs : previous.lastSuccessAt,
+            lastFailureAt: success ? previous.lastFailureAt : checkedAtMs,
+        };
+        const services = { ...this.state.services, llm: next };
+        this.state = { ...this.state, services, overall: summarizeOverall(services) };
         this.#emit();
         return this.getSnapshot();
     }
@@ -325,7 +353,9 @@ function summarizeOverall(services, { generationPending = false } = {}) {
     // from request readiness; the UI already exposes `pending` as "生成中".
     // A stale bridge or a recorded generation failure still degrades normally.
     const states = Object.entries(services)
-        .filter(([name, service]) => name !== 'generation' || service.status !== 'unknown')
+        .filter(([name, service]) => name === 'generation'
+            ? service.status !== 'unknown'
+            : name === 'llm' ? service.status !== 'unknown' : true)
         .map(([, service]) => ['idle', 'pending'].includes(service.status) ? 'up' : service.status);
     if (states.every((status) => status === 'up')) return 'up';
     if (states.some((status) => status === 'down')) return states.some((status) => status === 'up') ? 'degraded' : 'down';

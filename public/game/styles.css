@@ -473,6 +473,23 @@ button:disabled {
     backdrop-filter: blur(14px);
 }
 
+.presentation-party-roster {
+    display: flex;
+    align-items: baseline;
+    gap: 0.65rem;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.14));
+    border-radius: 0.7rem;
+    color: var(--text-color, #e9e5df);
+    background: rgba(15, 20, 28, 0.72);
+    font-size: 0.88rem;
+}
+
+.presentation-party-roster strong {
+    flex: 0 0 auto;
+    color: var(--accent-color, #c8a86b);
+}
+
 .adaptive-status-belt.template-romance-social {
     border-color: rgba(230, 110, 122, 0.26);
     background:
@@ -582,7 +599,7 @@ button:disabled {
 }
 
 .adaptive-hud-button {
-    grid-template-columns: minmax(132px, 0.24fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 0.24fr) minmax(0, 1fr);
     align-items: center;
     gap: 10px 14px;
     padding: 11px 14px 12px 17px;
@@ -670,7 +687,7 @@ button:disabled {
 
 .rpg-hud-grid {
     display: grid;
-    grid-template-columns: minmax(104px, 1.15fr) repeat(4, minmax(76px, 0.74fr)) minmax(160px, 1.35fr);
+    grid-template-columns: minmax(0, 1.15fr) repeat(4, minmax(0, 0.74fr)) minmax(0, 1.35fr);
     gap: 7px;
 }
 
@@ -973,25 +990,29 @@ button:disabled {
 
 .adaptive-detail-main {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
     align-items: baseline;
     gap: 10px;
 }
 
 .adaptive-detail-label {
+    min-width: 0;
     margin: 0;
     color: #241a11;
     font-size: 0.92rem;
     font-weight: 700;
     line-height: 1.45;
+    overflow-wrap: anywhere;
 }
 
 .adaptive-detail-value {
+    min-width: 0;
     margin: 0;
     color: #7c5430;
     font-size: 0.82rem;
     font-weight: 800;
     text-align: right;
+    overflow-wrap: anywhere;
 }
 
 .adaptive-detail-original,
@@ -1835,3 +1856,12 @@ html[data-motion="off"] * {
         height: 150px;
     }
 }
+
+/* Text evidence remains readable even when no matching icon exists. */
+.visual-icon-summary { max-width: 100%; font-size: 0.65rem; line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.hud-record-source { font-size: 0.85rem; line-height: 1.5; opacity: 0.8; }
+
+.visual-icon { width: 76px; }
+.visual-icon-source { font-size: 0.6rem; line-height: 1.2; opacity: 0.7; }
+.visual-icon-source[hidden] { display: none; }
+@media (max-width: 760px) { .visual-icon { width: 72px; } }

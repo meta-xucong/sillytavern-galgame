@@ -66,6 +66,51 @@ test('unstarted generation does not mark healthy transport as degraded', async (
     assert.equal(snapshot.overall, 'up');
 });
 
+test('LLM is checked on demand, participates in overall health, and keeps secrets out of diagnostics', async () => {
+    const monitor = createConnectionHealthMonitor({
+        probes: {
+            sillyTavern: async () => ({ ok: true }),
+            configService: async () => ({ ok: true }),
+            runtimeBridge: async () => ({ ok: true, connectionState: 'idle' }),
+            visualService: async () => ({ ok: true }),
+            llm: async () => assert.fail('The LLM check must not run on heartbeat.'),
+        },
+    });
+    const first = await monitor.probeNow({ reason: 'heartbeat' });
+    assert.equal(first.overall, 'up');
+    assert.equal(first.services.llm.status, 'unknown');
+    const down = monitor.recordLlmCheck({ ok: false, provider: 'claude', model: 'claude-sonnet-4-6', errorCode: 'LLM_UPSTREAM_HTTP_503' });
+    assert.equal(down.overall, 'degraded');
+    assert.equal(down.services.llm.status, 'down');
+    const recovered = monitor.recordLlmCheck({ ok: true, provider: 'claude', model: 'claude-sonnet-4-6', checkedAt: new Date().toISOString() });
+    assert.equal(recovered.services.llm.status, 'up');
+    assert.equal(recovered.services.llm.details.provider, 'claude');
+    assert.equal(JSON.stringify(recovered).includes('token'), false);
+    assert.equal(recovered.overall, 'up');
+});
+
+test('an expired on-demand LLM check is unknown, not a transport outage', async () => {
+    let now = 10_000;
+    const monitor = createConnectionHealthMonitor({
+        intervalMs: 100,
+        now: () => now,
+        probes: {
+            sillyTavern: async () => ({ ok: true }),
+            configService: async () => ({ ok: true }),
+            runtimeBridge: async () => ({ ok: true, connectionState: 'idle' }),
+            visualService: async () => ({ ok: true }),
+        },
+    });
+    await monitor.probeNow({ reason: 'heartbeat' });
+    monitor.recordLlmCheck({ ok: true, provider: 'claude', model: 'claude-sonnet-4-6' });
+    now += 30_001;
+    await monitor.probeNow({ reason: 'heartbeat-after-llm-expiry' });
+    const snapshot = monitor.getSnapshot();
+    assert.equal(snapshot.services.llm.stale, true);
+    assert.equal(snapshot.services.llm.status, 'up');
+    assert.equal(snapshot.overall, 'up');
+});
+
 test('an active generation keeps healthy transport status up', async () => {
     const monitor = createConnectionHealthMonitor({
         probes: {

@@ -1,6 +1,12 @@
 @echo off
+for %%I in ("%~dp0..\..\..") do set "GALGAME_ROOT=%%~fI"
+if /i not "%~1"=="--galgame-hidden-child" (
+  wscript.exe //B //NoLogo "%GALGAME_ROOT%\external-modules\process-supervisor\run-hidden.vbs" "%~f0" --galgame-hidden-child
+  exit /b 0
+)
+shift
 setlocal
-cd /d "%~dp0"
+cd /d "%GALGAME_ROOT%"
 set "HOST=127.0.0.1"
 set "PORT=8791"
 set "SILLYTAVERN_BASE_URL=http://127.0.0.1:8001"
@@ -19,6 +25,5 @@ if not defined GALGAME_BRIDGE_PROOF_SECRET (
   echo GALGAME_BRIDGE_PROOF_SECRET is empty; config service not started.
   exit /b 1
 )
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'node*' -and $_.CommandLine -like '*external-modules/game-config-service/server.mjs*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
-start "" /min cmd /c "node external-modules/game-config-service/server.mjs > .codex-longrun\galgame-config-service.out.log 2> .codex-longrun\galgame-config-service.err.log"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%GALGAME_ROOT%\external-modules\process-supervisor\StartGalgameHiddenNode.ps1" -Service configService
 endlocal

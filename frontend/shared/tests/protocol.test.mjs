@@ -7,6 +7,7 @@ import {
     createAdaptivePresentationProfileHash,
     createMediaIdempotencyKey,
     findArcBinding,
+    getSpecialVisualChannelAssetKeys,
     getAdaptivePresentationProfileForArc,
     getAssetUrl,
     getDefaultArcId,
@@ -50,13 +51,18 @@ const visualBindingManifest = {
         defaults: {
             characterAssetId: 'asset_character_8e5132df0905',
             narratorAssetId: 'asset_character_3946efea1eb5',
-            playerAssetId: 'asset_character_8e5132df0905',
-            systemAssetId: 'asset_character_3946efea1eb5',
+            playerAssetId: 'asset_curated_player-neutral-compass',
+            systemAssetId: 'asset_character_aabbccddee12',
         },
     },
 };
 const visualBindingStatus = validateVisualCharacterBindings(visualBindingManifest);
 assert.equal(visualBindingStatus.valid, true, visualBindingStatus.errors.join('\\n'));
+assert.deepEqual(getSpecialVisualChannelAssetKeys(visualBindingManifest), [
+    'asset_character_3946efea1eb5:1',
+    'asset_character_aabbccddee12:1',
+    'asset_curated_player-neutral-compass:1',
+], 'special channel asset keys include player, narrator, and system resources');
 const curatedVisualBindingManifest = {
     ...visualBindingManifest,
     visualBindings: {
@@ -83,6 +89,75 @@ const curatedPlayerBindingStatus = validateVisualCharacterBindings({
     },
 });
 assert.equal(curatedPlayerBindingStatus.valid, true, curatedPlayerBindingStatus.errors.join('\\n'));
+const systemCharacterDefaultConflict = validateVisualCharacterBindings({
+    ...visualBindingManifest,
+    visualBindings: {
+        ...visualBindingManifest.visualBindings,
+        defaults: {
+            ...visualBindingManifest.visualBindings.defaults,
+            systemAssetId: visualBindingManifest.visualBindings.defaults.characterAssetId,
+        },
+    },
+});
+assert.equal(systemCharacterDefaultConflict.valid, false);
+assert.match(systemCharacterDefaultConflict.errors.join('\\n'), /reuses an asset reserved for the character channel/);
+assert.equal(
+    resolveVisualCharacterBinding(visualBindingManifest, { name: '你', role: 'player' }).assetId,
+    'asset_curated_player-neutral-compass',
+    'player uses its dedicated channel asset',
+);
+assert.equal(
+    resolveVisualCharacterBinding(visualBindingManifest, { name: '皮帕', role: 'player' }).assetId,
+    'asset_curated_player-neutral-compass',
+    'an any/character binding cannot cross into the player channel',
+);
+assert.equal(
+    resolveVisualCharacterBinding(visualBindingManifest, { name: '皮帕', role: 'narrator' }).assetId,
+    'asset_character_3946efea1eb5',
+    'an any/character binding cannot cross into the narrator channel',
+);
+assert.equal(
+    resolveVisualCharacterBinding({
+        ...visualBindingManifest,
+        visualBindings: {
+            ...visualBindingManifest.visualBindings,
+            defaults: { ...visualBindingManifest.visualBindings.defaults, playerAssetId: undefined },
+        },
+    }, { name: '你', role: 'player' }),
+    null,
+    'player never falls back to a generic character default',
+);
+const playerAssetPoolConflict = {
+    ...visualBindingManifest,
+    id: 'player-asset-pool-conflict',
+    visualBindings: {
+        ...visualBindingManifest.visualBindings,
+        characterPool: [{
+            characterKey: 'Neutral NPC', aliases: [],
+            assetId: 'asset_curated_player-neutral-compass', assetVersion: 1, channel: 'character',
+        }],
+    },
+};
+const playerAssetPoolConflictStatus = validateVisualCharacterBindings(playerAssetPoolConflict);
+assert.equal(playerAssetPoolConflictStatus.valid, false);
+assert.match(playerAssetPoolConflictStatus.errors.join('\\n'), /player-only|dedicated player\/narrator\/system/);
+assert.equal(
+    resolveVisualCharacterBinding(playerAssetPoolConflict, { name: 'Neutral NPC', role: 'character' }),
+    null,
+    'an invalid player asset is not returned by an exact pool match',
+);
+assert.equal(
+    resolveVisualCharacterBinding({
+        ...playerAssetPoolConflict,
+        id: 'player-asset-pool-unknown-conflict',
+        visualBindings: {
+            ...playerAssetPoolConflict.visualBindings,
+            characterPool: [{ characterKey: 'Neutral NPC', aliases: [], assetId: 'asset_curated_player-neutral-compass', channel: 'character' }],
+        },
+    }, { name: 'Unknown NPC', role: 'character' }),
+    null,
+    'invalid pool fallback cannot allocate a dedicated player asset',
+);
 assert.equal(
     resolveVisualCharacterBinding(visualBindingManifest, { name: '皮帕', role: 'character' }).assetId,
     'asset_character_1b4268f70a37',
@@ -128,6 +203,20 @@ const pooledVisualBindingManifest = {
 };
 const pooledVisualBindingStatus = validateVisualCharacterBindings(pooledVisualBindingManifest);
 assert.equal(pooledVisualBindingStatus.valid, true, pooledVisualBindingStatus.errors.join('\\n'));
+const arcPlayerAssetPoolConflict = {
+    ...pooledVisualBindingManifest,
+    arcs: DEMO_SCENARIO.arcs.map((arc, index) => index === 0
+        ? {
+            ...arc,
+            visualBindings: {
+                defaults: { playerAssetId: 'asset_character_7ab26f70c123' },
+            },
+        }
+        : arc),
+};
+const arcPlayerAssetPoolConflictStatus = validateScenarioManifest(arcPlayerAssetPoolConflict);
+assert.equal(arcPlayerAssetPoolConflictStatus.valid, false);
+assert.match(arcPlayerAssetPoolConflictStatus.errors.join('\\n'), /dedicated player\/narrator\/system asset/);
 const crossListDuplicateStatus = validateVisualCharacterBindings({
     ...pooledVisualBindingManifest,
     visualBindings: {

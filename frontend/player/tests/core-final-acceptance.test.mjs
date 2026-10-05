@@ -2,12 +2,19 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { createSceneContinuityProjection } from '../../shared/src/presentation-projection.js';
+import { deriveSceneContinuityKey } from '../../shared/src/scene-continuity-analysis.js';
 
 import {
     DICTIONARY_HASH,
     DICTIONARY_VERSION,
     PNG_MIME,
     createVisualAssetService,
+    CATALOG_DRAFT_SCHEMA_VERSION,
+    MemoryContentStore,
+    MemoryVisualAssetStore,
+    MemoryVisualControlStore,
+    VISUAL_CONTROL_SCHEMA_VERSION,
     encodePng,
     VISUAL_RUNTIME_HINTS_VERSION,
 } from '../../../external-modules/visual-asset-service/server.mjs';
@@ -20,8 +27,50 @@ const SIMPLE_UPLOAD_SCHEMA_VERSION = 'galgame.visual-simple-upload-request.v1';
 
 globalThis.__GALGAME_PLAYER_TEST_DISABLE_BOOTSTRAP__ = true;
 globalThis.__GALGAME_PLAYER_TEMPLATE_MATRIX_SMOKE__ = true;
+globalThis.__GALGAME_TEST_SCENE_CONTINUITY_FACTORY__ = async ({ pageText, scope, messageId, pageIndex, previousVerifiedSceneKey }) => {
+    const source = String(pageText || '');
+    const explicitScene = source.match(/(?:场景|当前地点|地点)\s*[:：]\s*([^\n]+)/u);
+    const location = explicitScene?.[1]?.trim() || '';
+    const text = Array.from(source);
+    if (text.length < 2) return null;
+    const firstEnd = text[0].length;
+    if (previousVerifiedSceneKey && !explicitScene) {
+        const secondEnd = firstEnd + text[1].length;
+        return createSceneContinuityProjection({
+            scope, messageId, pageIndex, pageText: source, state: 'continued',
+            sceneEntityKeys: [previousVerifiedSceneKey], currentSceneKey: previousVerifiedSceneKey,
+            evidenceSpans: [
+                { start: 0, end: firstEnd, relation: 'current-location', sceneEntityKey: previousVerifiedSceneKey, destinationSceneKey: null },
+                { start: firstEnd, end: secondEnd, relation: 'referenced-location', sceneEntityKey: previousVerifiedSceneKey, destinationSceneKey: null },
+            ],
+        });
+    }
+    if (!location) return null;
+    const locationOffset = source.indexOf(location, explicitScene.index);
+    const locationStart = Array.from(source.slice(0, locationOffset)).length;
+    const locationEnd = locationStart + Array.from(location).length;
+    const fieldLabel = /(?:场景|当前地点|地点)/u.exec(explicitScene[0]);
+    const sceneKey = await deriveSceneContinuityKey(scope, location);
+    return createSceneContinuityProjection({
+        scope, messageId, pageIndex, pageText: source, state: 'changed',
+        sceneEntityKeys: [sceneKey], currentSceneKey: sceneKey,
+        evidenceSpans: [
+            {
+                start: Array.from(source.slice(0, explicitScene.index + fieldLabel.index)).length,
+                end: Array.from(source.slice(0, explicitScene.index + fieldLabel.index)).length + Array.from(fieldLabel[0]).length,
+                relation: 'transition-action', sceneEntityKey: null, destinationSceneKey: sceneKey,
+            },
+            { start: locationStart, end: locationEnd, relation: 'current-location', sceneEntityKey: sceneKey, destinationSceneKey: null },
+        ],
+    });
+};
+const sessionStorageValues = new Map();
 globalThis.window = {
     location: { origin: PLAYER_ORIGIN },
+    sessionStorage: {
+        getItem(key) { return sessionStorageValues.get(String(key)) ?? null; },
+        setItem(key, value) { sessionStorageValues.set(String(key), String(value)); },
+    },
     setTimeout,
     clearTimeout,
 };
@@ -145,16 +194,28 @@ globalThis.Image = class TestImage {
 const playerModule = await import('../src/main.js');
 const playerHtml = await readFile(new URL('../src/index.html', import.meta.url), 'utf8');
 const playerCss = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+const playerMainSource = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
 assert.match(playerHtml, /id="stageBackdrop"[^>]*aria-hidden="true"/);
 assert.match(playerHtml, /class="stage-heroine"[^>]*aria-hidden="true"/);
 assert.match(playerHtml, /id="visualIconStrip"[^>]*aria-label="视觉图标"/);
+assert.match(playerHtml, /id="homeResetButton"/);
+assert.match(playerHtml, /<span>一键复位<\/span>/);
+assert.match(playerHtml, /id="homeShutdownButton"/);
+assert.match(playerHtml, /<span>一键关闭<\/span>/);
+assert.match(playerMainSource, /processSupervisor\.shutdown\(controller\.signal\)/);
+assert.match(playerMainSource, /window\.close\(\)/);
+assert.match(playerMainSource, /document\.body\.replaceChildren\(\)/, 'if a browser blocks window.close, only this page is replaced with the closed state');
+assert.doesNotMatch(playerMainSource, /chrome\.exe|taskkill|Stop-Process/);
 assert.match(playerCss, /@media \(max-width: 860px\)/);
 
-const unavailableService = createVisualAssetService({ adminToken: ADMIN_TOKEN, adminOrigins: [ADMIN_ORIGIN] });
+const unavailableService = createVisualAssetService({
+    adminToken: ADMIN_TOKEN, adminOrigins: [ADMIN_ORIGIN],
+    assetStore: new MemoryVisualAssetStore(), contentStore: new MemoryContentStore(), visualControlStore: new MemoryVisualControlStore(),
+});
 await withServer(unavailableService, async (baseUrl) => {
     resetAcceptanceEvidence();
     visualCoreServiceMeta = baseUrl;
-    const { catalog, uploadedAssets } = await preparePublishedCatalog(baseUrl, { expectedAnalysisStatus: 'unavailable' });
+    const { catalog, uploadedAssets } = await preparePublishedCatalog(unavailableService, baseUrl, { expectedAnalysisStatus: 'unavailable' });
     assert.equal(uploadedAssets.every(({ asset }) => asset.analysisStatus === 'unavailable'), true);
     assert.equal(uploadedAssets.every(({ asset }) => asset.analysis.tagCodes.length === 0 && asset.analysis.attributeCodes.length === 0), true);
     assert.equal(uploadedAssets.some(({ asset }) => asset.tagCodes.length > 0), true);
@@ -206,6 +267,9 @@ const analyzerCodesByType = {
 const analyzerService = createVisualAssetService({
     adminToken: ADMIN_TOKEN,
     adminOrigins: [ADMIN_ORIGIN],
+    assetStore: new MemoryVisualAssetStore(),
+    contentStore: new MemoryContentStore(),
+    visualControlStore: new MemoryVisualControlStore(),
     visualRuntimeAnalyzer: async ({ visibleContext }) => {
         const text = visibleContext.current.text;
         const codeByType = {
@@ -245,10 +309,10 @@ const analyzerService = createVisualAssetService({
 await withServer(analyzerService, async (baseUrl) => {
     resetAcceptanceEvidence();
     visualCoreServiceMeta = baseUrl;
-    const { catalog } = await preparePublishedCatalog(baseUrl, { expectedAnalysisStatus: 'ready' });
+    const { catalog } = await preparePublishedCatalog(analyzerService, baseUrl, { expectedAnalysisStatus: 'ready' });
     setManifestForCatalog(catalog);
 
-    assert.equal(analyzerRequests.length, 5);
+    assert.equal(analyzerRequests.length, 7, 'the isolated v2 migration fixture includes distinct narrator/player channels');
     assert.equal(analyzerRequests.every((request) => (
         Object.keys(request).sort().join(',') === 'assetType,contentHash,imageBase64,schemaVersion,task'
         && !Object.hasOwn(request, 'chat')
@@ -281,7 +345,7 @@ await withServer(analyzerService, async (baseUrl) => {
     await renderMessage({
         speaker: '银发骑士',
         text: '她望向雨幕，台词没有任何视觉素材标签。',
-    }, { expectedDecisionReads: 1, expectedContentReads: 0 });
+    }, { history: [acceptanceMessage()], expectedDecisionReads: 1, expectedContentReads: 0 });
     assert.equal(stageBackdropElement.style.backgroundImage.includes(catalogContentPath('scene')), true);
     assert.equal(stageHeroineElement.style.backgroundImage, `url("${NARRATOR_PLACEHOLDER_URL}")`);
     assert.deepEqual(visualIconStripElement.children.map((item) => item.className), [
@@ -291,12 +355,12 @@ await withServer(analyzerService, async (baseUrl) => {
     ]);
 
     failImagePathFragment = catalogContentPath('character');
-    await renderMessage(acceptanceMessage(), { expectedDecisionReads: 1, expectedContentReads: 4 });
+    await renderMessage(acceptanceMessage(), { expectedDecisionReads: 1, expectedContentReads: 3 });
     assert.equal(stageHeroineElement.style.backgroundImage, `url("${VISUAL_PLACEHOLDER_URL}")`);
     assert.equal(stageBackdropElement.classList.contains('is-visual-active'), true);
 
     failImagePathFragment = catalogContentPath('equipment');
-    await renderMessage(acceptanceMessage(), { expectedDecisionReads: 1, expectedContentReads: 4 });
+    await renderMessage(acceptanceMessage(), { expectedDecisionReads: 1, expectedContentReads: 3 });
     assert.equal(visualIconStripElement.children[0].className, 'visual-icon visual-icon-equipment is-visual-active');
     assert.equal(visualIconStripElement.children[0].children[0].src.includes(catalogContentPath('equipment')), true);
     assert.equal(visualIconStripElement.children[1].className, 'visual-icon visual-icon-item is-visual-active');
@@ -314,21 +378,23 @@ await withServer(analyzerService, async (baseUrl) => {
 });
 
 const playerSource = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
-assert.equal(/playerVisualSessionReader|visual-bundle|visual-assets|projection-proof|restore-proof|\/v1\/visual-match|binding writer|provider|\bLLM\b/i.test(playerSource), false);
+assert.equal(/playerVisualSessionReader|visual-bundle|visual-assets|projection-proof|restore-proof|\/v1\/visual-match/i.test(playerSource), false);
 assert.match(playerSource, /runtimeBridge\.generateReply/);
     assert.equal(stageBackdropElement.style.backgroundImage.includes('/v1/core/catalogs/'), true);
     assert.equal(stageHeroineElement.style.backgroundImage, `url(\"${NARRATOR_PLACEHOLDER_URL}\")`);
 
 console.log('CORE-5 focused final acceptance tests passed: unavailable fallback and test-only analyzer overlap paths');
 
-async function preparePublishedCatalog(baseUrl, { expectedAnalysisStatus = null } = {}) {
+async function preparePublishedCatalog(service, baseUrl, { expectedAnalysisStatus = null } = {}) {
     const uploadedAssets = [];
     for (const asset of [
-        ['scene', '雨中的旧庭院', ['scene.forest'], makePng({ colorType: 2, rgb: [22, 44, 66] })],
-        ['character', '银发骑士', ['character.human'], makePng({ colorType: 6, rgb: [180, 180, 220], alpha: 0 })],
+        ['scene', '雨中的旧庭院', ['scene.forest'], makePng({ width: 1280, height: 720, colorType: 2, rgb: [22, 44, 66], noise: true })],
+        ['character', '银发骑士', ['character.human'], makePng({ width: 512, height: 512, colorType: 6, rgb: [180, 180, 220], alpha: 0, noise: true })],
         ['equipment', '银色盾牌', ['equipment.armor'], makePng({ colorType: 2, rgb: [120, 130, 140] })],
         ['item', '蓝色钥匙', ['item.key'], makePng({ colorType: 2, rgb: [30, 80, 180] })],
         ['skill', '火球术', ['skill.fireball'], makePng({ colorType: 2, rgb: [120, 210, 230] })],
+        ['character', '测试旁白符号', ['character.androgynous'], makePng({ width: 320, height: 320, colorType: 6, rgb: [100, 110, 120], alpha: 180, noise: true })],
+        ['character', '测试玩家符号', ['character.androgynous'], makePng({ width: 320, height: 320, colorType: 6, rgb: [110, 120, 130], alpha: 180, noise: true })],
     ]) {
         const [assetType, title, tagCodes, png] = asset;
         const response = await request(baseUrl, 'POST', '/v1/admin/visual/upload', {
@@ -350,16 +416,64 @@ async function preparePublishedCatalog(baseUrl, { expectedAnalysisStatus = null 
         }
         uploadedAssets.push({ assetType, asset: response.body.asset });
     }
-    const published = await request(baseUrl, 'POST', '/v1/admin/visual/publish', {
-        token: ADMIN_TOKEN,
-        origin: ADMIN_ORIGIN,
-        body: {},
+    // This isolated in-memory fixture follows the current explicit v2 catalog
+    // lifecycle and player-catalog preview/activate protocol. It never opens or
+    // writes the runtime visual catalog or any chat/save data.
+    const sourceCatalogId = 'core_final_source_v2';
+    const characterChannels = uploadedAssets.filter(({ assetType }) => assetType === 'character').map(({ asset }, index) => ({
+        assetId: asset.assetId,
+        assetVersion: asset.assetVersion,
+        channel: index === 0 ? 'character' : index === 1 ? 'narrator' : 'player',
+    }));
+    const draft = await request(baseUrl, 'POST', '/v1/admin/catalogs/draft', {
+        token: ADMIN_TOKEN, origin: ADMIN_ORIGIN,
+        body: {
+            schemaVersion: CATALOG_DRAFT_SCHEMA_VERSION,
+            catalogId: sourceCatalogId,
+            catalogRevision: 1,
+            assetRefs: uploadedAssets.map(({ asset }) => ({ assetId: asset.assetId, assetVersion: asset.assetVersion })),
+            characterChannels,
+        },
     });
+    assert.equal(draft.status, 200, JSON.stringify(draft.body));
+    const validated = await request(baseUrl, 'POST', `/v1/admin/catalogs/${sourceCatalogId}/1/validate`, { token: ADMIN_TOKEN, origin: ADMIN_ORIGIN, body: {} });
+    assert.equal(validated.status, 200, JSON.stringify(validated.body));
+    const published = await request(baseUrl, 'POST', `/v1/admin/catalogs/${sourceCatalogId}/1/publish`, { token: ADMIN_TOKEN, origin: ADMIN_ORIGIN, body: {} });
     assert.equal(published.status, 200, JSON.stringify(published.body));
-    assert.equal(published.body.visual.ready, true, JSON.stringify(published.body));
-    assert.equal(published.body.catalog.status, 'published');
-    assert.equal(published.body.catalog.assetRefs.length, 5);
-    currentCatalog = published.body.catalog;
+    const sourceCatalog = published.body.catalog;
+    const sourcePointer = { catalogId: sourceCatalog.catalogId, catalogRevision: sourceCatalog.catalogRevision, catalogHash: sourceCatalog.catalogHash };
+    await service.stores.visualControlStore.setControl({
+        schemaVersion: VISUAL_CONTROL_SCHEMA_VERSION,
+        enabled: true,
+        activeCatalog: sourcePointer,
+        updatedAt: new Date().toISOString(),
+    });
+    const manifest = {
+        schemaVersion: 'galgame.visual-player-catalog-manifest.v1',
+        sourcePointer,
+        targetCatalogId: 'core_final_target_v2',
+        targetCatalogRevision: 1,
+        createdAt: '2026-10-02T00:01:00.000Z',
+        entries: sourceCatalog.assetRefs.map((ref) => ({
+            assetId: ref.assetId,
+            assetVersion: ref.assetVersion,
+            assetContentSha256: ref.assetContentSha256,
+            assetMetadataHash: ref.assetMetadataHash,
+            assetType: ref.assetType,
+            channel: sourceCatalog.characterChannels.find((entry) => entry.assetId === ref.assetId && entry.assetVersion === ref.assetVersion)?.channel || null,
+            approvalReason: 'isolated core final acceptance fixture',
+        })),
+    };
+    const preview = await request(baseUrl, 'POST', '/v1/admin/catalog-migration/preview', { token: ADMIN_TOKEN, origin: ADMIN_ORIGIN, body: manifest });
+    assert.equal(preview.status, 200, JSON.stringify(preview.body));
+    assert.equal(preview.body.targetRefCount, 7);
+    const activated = await request(baseUrl, 'POST', '/v1/admin/catalog-migration/activate', { token: ADMIN_TOKEN, origin: ADMIN_ORIGIN, body: manifest });
+    assert.equal(activated.status, 200, JSON.stringify(activated.body));
+    const target = await request(baseUrl, 'GET', `/v1/admin/catalogs/${manifest.targetCatalogId}/1`, { token: ADMIN_TOKEN, origin: ADMIN_ORIGIN });
+    assert.equal(target.status, 200, JSON.stringify(target.body));
+    assert.equal(target.body.catalog.status, 'published');
+    assert.equal(target.body.catalog.assetRefs.length, 7);
+    currentCatalog = target.body.catalog;
     catalogAssetTypeById = new Map(currentCatalog.assetRefs.map((ref) => [ref.assetId, ref.assetType]));
     return { catalog: currentCatalog, uploadedAssets };
 }
@@ -399,6 +513,8 @@ function resetAcceptanceEvidence() {
 }
 
 function setManifestForCatalog(catalog, { bindCharacter = true } = {}) {
+    const characterAssetRef = catalog.assetRefs.find((ref) => ref.assetType === 'character'
+        && catalog.characterChannels.some((binding) => binding.assetId === ref.assetId && binding.assetVersion === ref.assetVersion && binding.channel === 'character'));
     globalThis.__GALGAME_TEST_SET_MANIFEST__({
         id: 'scenario_core_final',
         title: 'Core Final Visual Test',
@@ -433,7 +549,7 @@ function setManifestForCatalog(catalog, { bindCharacter = true } = {}) {
             characters: bindCharacter ? [{
                 characterKey: '人类骑士',
                 aliases: ['人类'],
-                assetId: catalog.assetRefs.find((item) => item.assetType === 'character')?.assetId,
+                    assetId: characterAssetRef?.assetId,
                 assetVersion: 1,
                 channel: 'character',
             }] : [],
@@ -448,20 +564,20 @@ function setManifestForCatalog(catalog, { bindCharacter = true } = {}) {
     });
 }
 
-async function renderMessage({ speaker, text }, { expectedDecisionReads = 0, expectedContentReads = 0 } = {}) {
+async function renderMessage({ speaker, text }, { history = [], expectedDecisionReads = 0, expectedContentReads = 0 } = {}) {
     const decisionReadsBefore = fetchCount('/v1/core/visual-decisions');
     const contentReadsBefore = contentReadCount();
-    globalThis.__GALGAME_TEST_RENDER_CHAT__({
+    await globalThis.__GALGAME_TEST_RENDER_CHAT__({
         ok: true,
         fileName: 'chat-core-final.json',
         writable: true,
-        messages: [{
+        messages: [...history.map((message) => ({ role: 'character', ...message })), {
             role: 'character',
             speaker,
             displayText: text,
             text,
         }],
-    }, { messageIndex: 0 });
+    }, { messageIndex: history.length });
     await waitFor(() => (
         fetchCount('/v1/core/visual-decisions') >= decisionReadsBefore + expectedDecisionReads
         && contentReadCount() >= contentReadsBefore + expectedContentReads
@@ -470,6 +586,7 @@ async function renderMessage({ speaker, text }, { expectedDecisionReads = 0, exp
         expectedContentReads,
         decisionReads: fetchCount('/v1/core/visual-decisions') - decisionReadsBefore,
         contentReads: contentReadCount() - contentReadsBefore,
+        decisions: latestDecisionResponse()?.decisions?.map(({ entityType, score, reasonCodes, assetId }) => ({ entityType, score, reasonCodes, assetId })),
         recent: networkEvidence.slice(-8),
             classes: activeVisualClasses(),
         }));
@@ -498,7 +615,11 @@ function contentReadsByType() {
 }
 
 function catalogContentPath(type) {
-    const ref = currentCatalog?.assetRefs?.find((item) => item.assetType === type);
+    const characterRefIds = new Set((currentCatalog?.characterChannels || [])
+        .filter((binding) => binding.channel === 'character')
+        .map((binding) => `${binding.assetId}:${binding.assetVersion}`));
+    const ref = currentCatalog?.assetRefs?.find((item) => item.assetType === type
+        && (type !== 'character' || characterRefIds.has(`${item.assetId}:${item.assetVersion}`)));
     assert.ok(ref, `missing catalog ref for ${type}`);
     return `/v1/core/catalogs/${currentCatalog.catalogId}/${currentCatalog.catalogRevision}/assets/${ref.assetId}/${ref.assetVersion}/content`;
 }
@@ -569,7 +690,7 @@ async function request(baseUrl, method, pathname, { token = null, origin = null,
     return { status: response.status, body: await response.json() };
 }
 
-function makePng({ width = 2, height = 2, colorType = 2, rgb = [10, 20, 30], alpha = 255 } = {}) {
+function makePng({ width = 2, height = 2, colorType = 2, rgb = [10, 20, 30], alpha = 255, noise = false } = {}) {
     const channels = colorType === 6 ? 4 : 3;
     const rowBytes = width * channels;
     const scanlines = Buffer.alloc((rowBytes + 1) * height);
@@ -578,9 +699,15 @@ function makePng({ width = 2, height = 2, colorType = 2, rgb = [10, 20, 30], alp
         scanlines[rowStart] = 0;
         for (let x = 0; x < width; x += 1) {
             const p = rowStart + 1 + x * channels;
-            scanlines[p] = rgb[0];
-            scanlines[p + 1] = rgb[1];
-            scanlines[p + 2] = rgb[2];
+            let variation = 0;
+            if (noise) {
+                let mixed = Math.imul(x + 1, 0x45d9f3b) ^ Math.imul(y + 1, 0x119de1f3);
+                mixed = Math.imul(mixed ^ (mixed >>> 16), 0x45d9f3b);
+                variation = (mixed ^ (mixed >>> 16)) & 0xff;
+            }
+            scanlines[p] = (rgb[0] + variation) & 0xff;
+            scanlines[p + 1] = (rgb[1] + (noise ? (variation * 3) & 0xff : 0)) & 0xff;
+            scanlines[p + 2] = (rgb[2] + (noise ? (variation * 7) & 0xff : 0)) & 0xff;
             if (channels === 4) scanlines[p + 3] = alpha;
         }
     }

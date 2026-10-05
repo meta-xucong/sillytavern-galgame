@@ -1,3 +1,4 @@
+import { hasOriginalTargetReadback } from './original-runtime-readback-guard.mjs';
 import { execFile } from 'node:child_process';
 import { readdir, readFile, mkdir, writeFile, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -270,6 +271,8 @@ await checkPlayerRouteIsolation();
 await checkSourcePublicConsistency();
 await checkFrozenBoundary();
 await checkOriginalRuntimeBridgeSecurity();
+await checkPresentationCacheSafety();
+await checkPresentationGateReports();
 
 const classificationSummary = summarize(findings, 'classification');
 const categorySummary = summarize(findings, 'category');
@@ -629,7 +632,7 @@ function classifyEndpoint(rel, endpoint, source = '') {
         return 'prohibited-active';
     }
     if (isApprovedRuntimeBridge(rel)) {
-        return allowedSillyTavernEndpoints.has(endpoint) || endpoint === '/health' || endpoint === '/v1/generate-reply' || endpoint === '/v1/stop'
+        return allowedSillyTavernEndpoints.has(endpoint) || endpoint === '/health' || endpoint === '/v1/generate-reply' || endpoint === '/v1/stop' || endpoint === '/v1/llm-health' || endpoint === '/v1/shutdown-gate' || endpoint === '/v1/shutdown-gate/renew' || endpoint === '/v1/shutdown-gate/release'
             ? 'allowed-adapter'
             : 'needs-review';
     }
@@ -639,7 +642,15 @@ function classifyEndpoint(rel, endpoint, source = '') {
             : 'needs-review';
     }
     if (isAdapter(rel)) {
-        return allowedSillyTavernEndpoints.has(endpoint) || endpoint === '/health' || endpoint === '/v1/generate-reply'
+        if (isPresentationAnalysisAdapter(rel)) {
+            return endpoint === '/v1/presentation/annotations' || endpoint === '/v1/health'
+                ? 'allowed-adapter'
+                : 'needs-review';
+        }
+        if (isProcessSupervisorAdapter(rel)) {
+            return endpoint === '/v1/recover' || endpoint === '/v1/shutdown' ? 'allowed-adapter' : 'needs-review';
+        }
+        return allowedSillyTavernEndpoints.has(endpoint) || endpoint === '/health' || endpoint === '/v1/generate-reply' || endpoint === '/v1/llm-health'
             ? 'allowed-adapter'
             : 'needs-review';
     }
@@ -667,6 +678,9 @@ function explainEndpoint(rel, endpoint, classification) {
         return 'Approved external original-runtime bridge may call the original runtime/chat contract.';
     }
     if (isAdapter(rel)) {
+        if (isProcessSupervisorAdapter(rel)) {
+            return 'Player process recovery endpoint is isolated in the loopback supervisor adapter.';
+        }
         return 'SillyTavern endpoint detail is isolated in the shared adapter layer.';
     }
     if (endpoint.startsWith('/v1/')) {
@@ -805,12 +819,14 @@ async function checkSourcePublicConsistency() {
         }
     }
 
-    const sharedFiles = (await collectScopeFiles(['frontend/shared/src']))
-        .filter((file) => file.endsWith('.js'));
-    for (const sourceFile of sharedFiles) {
-        const relSource = toRepoPath(sourceFile);
-        const suffix = relSource.replace('frontend/shared/src/', '');
-        for (const publicRoot of ['public/game/shared', 'public/game-admin/shared']) {
+    for (const target of [
+        { entry: 'frontend/player/src/main.js', publicRoot: 'public/game/shared' },
+        { entry: 'frontend/admin/src/main.js', publicRoot: 'public/game-admin/shared' },
+    ]) {
+        const sharedFiles = await collectImportedSharedSources(target.entry);
+        for (const relSource of sharedFiles) {
+            const suffix = relSource.replace('frontend/shared/src/', '');
+            const publicRoot = target.publicRoot;
             const relOutput = `${publicRoot}/${suffix}`;
             const source = normalizeBuiltJs(await readRepoFile(relSource));
             const output = normalizeBuiltJs(await readRepoFile(relOutput));
@@ -838,6 +854,87 @@ async function checkSourcePublicConsistency() {
             }
         }
     }
+
+    await checkBuiltModuleGraph('public/game/app.js', 'public/game');
+    await checkBuiltModuleGraph('public/game-admin/app.js', 'public/game-admin');
+}
+
+async function checkBuiltModuleGraph(entryFile, outputRoot) {
+    const pending = [entryFile];
+    const visited = new Set();
+    while (pending.length) {
+        const relPath = pending.pop();
+        if (visited.has(relPath)) continue;
+        visited.add(relPath);
+        let source;
+        try {
+            source = await readRepoFile(relPath);
+        } catch {
+            checks.push({ name: `module-graph:${relPath}`, ok: false, details: { error: 'module file missing' } });
+            continue;
+        }
+        for (const match of source.matchAll(/\b(?:from\s*|import\s*(?:\(\s*)?)['"]([^'"]+)['"]/gu)) {
+            const specifier = match[1];
+            if (!specifier.startsWith('.')) continue;
+            const cleanSpecifier = specifier.split(/[?#]/u, 1)[0];
+            const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(relPath), cleanSpecifier));
+            if (resolved !== outputRoot && !resolved.startsWith(`${outputRoot}/`)) {
+                checks.push({ name: `module-graph:${relPath}`, ok: false, details: { error: 'relative import escapes build root', specifier } });
+                continue;
+            }
+            try {
+                await stat(path.resolve(repoRoot, resolved));
+                checks.push({ name: `module-graph:${resolved}`, ok: true, details: { importedBy: relPath } });
+                if (resolved.endsWith('.js')) pending.push(resolved);
+            } catch {
+                checks.push({ name: `module-graph:${resolved}`, ok: false, details: { error: 'imported module missing', importedBy: relPath, specifier } });
+            }
+        }
+    }
+}
+
+async function checkPresentationGateReports() {
+    const { PRESENTATION_ANNOTATION_MODE, PRESENTATION_GATE_REPORTS } = await import('../player/src/presentation-renderer.js');
+    const { verifyPresentationGateReports } = await import('../shared/src/presentation-gate.js');
+    const modeValid = ['off', 'shadow', 'assisted'].includes(PRESENTATION_ANNOTATION_MODE);
+    const validation = await verifyPresentationGateReports({
+        reports: PRESENTATION_GATE_REPORTS,
+        readText: (relativePath) => readRepoFile(relativePath),
+        sha256: (value) => createHash('sha256').update(value, 'utf8').digest('hex'),
+    });
+    checks.push({
+        name: 'presentation-gate-reports',
+        ok: modeValid && validation.valid,
+        details: { modeValid, languageCount: validation.languages?.length || 0, errors: validation.errors },
+    });
+}
+
+async function collectImportedSharedSources(entryPoint) {
+    const pending = [entryPoint];
+    const visited = new Set();
+    const sharedSources = new Set();
+    while (pending.length) {
+        const relPath = pending.pop();
+        if (visited.has(relPath)) continue;
+        visited.add(relPath);
+        const source = await readRepoFile(relPath);
+        const absolutePath = path.resolve(repoRoot, relPath);
+        const sharedRoot = path.resolve(repoRoot, 'frontend/shared/src');
+        for (const match of source.matchAll(/\b(?:from\s*|import\s*(?:\(\s*)?)['"]([^'"]+)['"]/gu)) {
+            const specifier = match[1];
+            let dependency = '';
+            if (specifier.startsWith('../../shared/src/')) {
+                dependency = path.resolve(repoRoot, 'frontend/shared/src', specifier.slice('../../shared/src/'.length));
+            } else if (specifier.startsWith('.') && absolutePath.startsWith(`${sharedRoot}${path.sep}`)) {
+                dependency = path.resolve(path.dirname(absolutePath), specifier);
+            }
+            if (!dependency || !dependency.startsWith(`${sharedRoot}${path.sep}`) || !dependency.endsWith('.js')) continue;
+            const dependencyRel = path.relative(repoRoot, dependency).replace(/\\/gu, '/');
+            sharedSources.add(dependencyRel);
+            pending.push(dependencyRel);
+        }
+    }
+    return [...sharedSources].sort();
 }
 
 async function checkFrozenBoundary() {
@@ -865,9 +962,36 @@ async function checkFrozenBoundary() {
     }
 }
 
+async function checkPresentationCacheSafety() {
+    const rel = 'frontend/shared/src/presentation-cache.js';
+    const source = await readRepoFile(rel);
+    const forbidden = /visibleText|playerInput|characterCard|worldBook|hiddenPrompt|rawChat|saveSlot|storyState/iu.test(source);
+    const required = [
+        'galgame-presentation-cache-v1',
+        'PRESENTATION_CACHE_MAX_ENTRIES = 1_000',
+        'PRESENTATION_CACHE_MAX_BYTES = 20 * 1024 * 1024',
+        'PRESENTATION_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000',
+        'Cache only validated annotation DTOs and source hashes; never cache source prose.',
+    ];
+    const missing = required.filter((marker) => !source.includes(marker));
+    const ok = !forbidden && missing.length === 0;
+    checks.push({ name: 'presentation-cache-derived-data-only', ok, details: { file: rel, forbiddenTextFields: forbidden, missingMarkers: missing } });
+    if (!ok) findings.push({
+        ruleId: 'presentation-cache-safety',
+        category: 'parallel-story-state',
+        classification: 'prohibited-active',
+        file: rel,
+        line: 1,
+        excerpt: 'Presentation cache must contain only bounded, derived annotation DTOs and hashes.',
+        reason: 'Persistent presentation cache must not become a parallel chat/save/story source.',
+    });
+}
+
 async function checkOriginalRuntimeBridgeSecurity() {
     const rel = 'external-modules/original-runtime-bridge/server.mjs';
     const source = await readRepoFile(rel);
+    const lifecycle = await readRepoFile('external-modules/original-runtime-bridge/generation-lifecycle.mjs');
+    const targetReadbackVerified = hasOriginalTargetReadback(source, lifecycle);
     const bridgeChecks = [
         {
             name: 'default-loopback-listen',
@@ -939,8 +1063,8 @@ async function checkOriginalRuntimeBridgeSecurity() {
         },
         {
             name: 'target-chat-readback',
-            ok: /readTargetRawChat/.test(source) && /currentMatchesTargetBeforeGeneration/.test(source) && /waitForTargetReply/.test(source),
-            classification: /readTargetRawChat/.test(source) && /currentMatchesTargetBeforeGeneration/.test(source) && /waitForTargetReply/.test(source) ? 'allowed-adapter' : 'needs-review',
+            ok: targetReadbackVerified,
+            classification: targetReadbackVerified ? 'allowed-adapter' : 'needs-review',
             evidence: 'Bridge reads target chat before and after generation and checks active chat binding.',
         },
         {
@@ -1039,6 +1163,7 @@ function normalizeHtmlOutput(source) {
         .replace(/(\.\/styles\.css)\?v=[^"']*/g, '$1')
         .replace(/(\.\/app\.js)\?v=[^"']*/g, '$1')
         .replace(/<meta\s+name=["']galgame-config-service["']\s+content=["'][^"']*["']\s*>\s*/gi, '')
+        .replace(/<meta\s+name=["']galgame-process-supervisor["']\s+content=["'][^"']*["']\s*>\s*/gi, '')
         .replace(/<meta\s+name=["']galgame-original-runtime-bridge["']\s+content=["'][^"']*["']\s*>\s*/gi, '')
         .replace(/<meta\s+name=["']galgame-script-import-assistant["']\s+content=["'][^"']*["']\s*>\s*/gi, '')
         .replace(/\s*<\/head>/i, '\n</head>')
@@ -1125,7 +1250,21 @@ function isProtocolValidator(rel) {
 }
 
 function isAdapter(rel) {
-    return rel.endsWith('/sillytavern-adapter.js') || rel.endsWith('\\sillytavern-adapter.js');
+    return rel.endsWith('/sillytavern-adapter.js') || rel.endsWith('\\sillytavern-adapter.js')
+        || rel.endsWith('/process-supervisor-adapter.js') || rel.endsWith('\\process-supervisor-adapter.js')
+        || rel.endsWith('/presentation-analysis-adapter.js') || rel.endsWith('\\presentation-analysis-adapter.js');
+}
+
+function isPresentationAnalysisAdapter(rel) {
+    return rel.endsWith('/presentation-analysis-adapter.js') || rel.endsWith('\\presentation-analysis-adapter.js');
+}
+
+function isPresentationCacheAdapter(rel) {
+    return rel.endsWith('/presentation-cache.js') || rel.endsWith('\\presentation-cache.js');
+}
+
+function isProcessSupervisorAdapter(rel) {
+    return rel.endsWith('/process-supervisor-adapter.js') || rel.endsWith('\\process-supervisor-adapter.js');
 }
 
 function isAdminApp(rel) {
@@ -1218,6 +1357,9 @@ function classifyPlayerStateField({ rel, line, field, isPersistence }) {
     }
     if (isTestFile(rel)) {
         return 'deprecated-test-fixture';
+    }
+    if (isPresentationCacheAdapter(rel)) {
+        return 'allowed-adapter';
     }
     if (isValidationContext(line)) {
         return 'allowed-adapter';

@@ -359,7 +359,15 @@ export async function runCuratedBatch({ manifestPath = DEFAULT_MANIFEST, dataDir
     catalogAttempt += 1;
     catalogId = `${baseCatalogId}_r${catalogAttempt}`;
   }
-  const draft = await service.createCatalogDraft({ schemaVersion: CATALOG_DRAFT_SCHEMA_VERSION, catalogId, catalogRevision: 1, assetRefs: uploaded.map((asset) => ({ assetId: asset.assetId, assetVersion: asset.assetVersion })) });
+  const draft = await service.createCatalogDraft({
+    schemaVersion: CATALOG_DRAFT_SCHEMA_VERSION,
+    catalogId,
+    catalogRevision: 1,
+    assetRefs: uploaded.map((asset) => ({ assetId: asset.assetId, assetVersion: asset.assetVersion })),
+    characterChannels: uploaded
+      .filter((asset) => asset.assetType === 'character')
+      .map((asset) => ({ assetId: asset.assetId, assetVersion: asset.assetVersion, channel: 'character' })),
+  });
   const validated = await service.updateCatalogLifecycle(catalogId, 1, 'validate');
   const published = await service.updateCatalogLifecycle(catalogId, 1, 'publish');
   const control = await stores.visualControlStore.getControl();

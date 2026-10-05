@@ -10,21 +10,27 @@ const repoRoot = new URL('../../', import.meta.url);
 const sharedProofSecret = 'startup-contract-test-secret';
 const targetChatId = 'galgame-startup-contract-chat';
 
-const configScript = await readFile(new URL('StartGalgameConfigService.cmd', repoRoot), 'utf8');
-const bridgeScript = await readFile(new URL('StartGalgameRuntimeBridge.cmd', repoRoot), 'utf8');
-const servicesScript = await readFile(new URL('StartGalgameServices.cmd', repoRoot), 'utf8');
+const launcherRoot = new URL('external-modules/process-supervisor/launchers/', repoRoot);
+const configScript = await readFile(new URL('StartGalgameConfigService.cmd', launcherRoot), 'utf8');
+const bridgeScript = await readFile(new URL('StartGalgameRuntimeBridge.cmd', launcherRoot), 'utf8');
+const servicesScript = await readFile(new URL('StartGalgameServices.cmd', launcherRoot), 'utf8');
 
 assert.match(configScript, /set "SILLYTAVERN_BASE_URL=http:\/\/127\.0\.0\.1:8001"/);
 assert.match(configScript, /set "GALGAME_SILLYTAVERN_BASE_URL=http:\/\/127\.0\.0\.1:8001"/);
 assert.match(bridgeScript, /set "SILLYTAVERN_BASE_URL=http:\/\/127\.0\.0\.1:8001"/);
 assert.match(bridgeScript, /set "GALGAME_SILLYTAVERN_BASE_URL=http:\/\/127\.0\.0\.1:8001"/);
+assert.match(configScript, /http:\/\/127\.0\.0\.1:8001,http:\/\/localhost:8001/);
+assert.match(bridgeScript, /http:\/\/127\.0\.0\.1:8001,http:\/\/localhost:8001/);
 assert.match(configScript, /GALGAME_COMPUTERNAME_LOWER/);
 assert.match(bridgeScript, /GALGAME_COMPUTERNAME_LOWER/);
-const visualScript = await readFile(new URL('StartGalgameVisualAssetService.cmd', repoRoot), 'utf8');
+const visualScript = await readFile(new URL('StartGalgameVisualAssetService.cmd', launcherRoot), 'utf8');
 assert.match(visualScript, /GALGAME_VISUAL_CORE_PLAYER_ORIGINS/);
 assert.match(visualScript, /GALGAME_COMPUTERNAME_LOWER/);
-assert.match(servicesScript, /Url='http:\/\/127\.0\.0\.1:8001\/'/);
-assert.match(servicesScript, /shared runtime proof configured by paired launcher/);
+assert.match(servicesScript, /VerifyGalgameServices\.ps1/);
+const servicesHealthScript = await readFile(new URL('VerifyGalgameServices.ps1', launcherRoot), 'utf8');
+assert.match(servicesHealthScript, /Uri = 'http:\/\/127\.0\.0\.1:8001\/'/);
+assert.match(servicesHealthScript, /runtimeProof\.configured -eq \$true/);
+assert.match(servicesHealthScript, /proofRequired -eq \$true -and \$body\.proofConfigured -eq \$true/);
 assert.match(configScript, /set \/p GALGAME_BRIDGE_PROOF_SECRET=<"%SECRET_FILE%"/);
 assert.match(bridgeScript, /set \/p GALGAME_BRIDGE_PROOF_SECRET=<"%SECRET_FILE%"/);
 assert.match(configScript, /if not defined GALGAME_BRIDGE_PROOF_SECRET/);
@@ -95,6 +101,7 @@ try {
     const bridgeHealth = await fetch(`${bridgeBaseUrl}/health`).then((response) => response.json());
     assert.equal(bridgeHealth.ok, true);
     assert.equal(bridgeHealth.proofRequired, true);
+    assert.equal(bridgeHealth.proofConfigured, true);
 
     const binding = {
         release: {
@@ -177,6 +184,9 @@ const unconfiguredBridge = createOriginalRuntimeBridgeServer({
 await listen(unconfiguredBridge);
 try {
     const bridgeBaseUrl = serverUrl(unconfiguredBridge);
+    const unconfiguredHealth = await fetch(bridgeBaseUrl + '/health').then((response) => response.json());
+    assert.equal(unconfiguredHealth.proofRequired, true);
+    assert.equal(unconfiguredHealth.proofConfigured, false);
     const response = await fetch(`${bridgeBaseUrl}/v1/generate-reply`, {
         method: 'POST',
         headers: {

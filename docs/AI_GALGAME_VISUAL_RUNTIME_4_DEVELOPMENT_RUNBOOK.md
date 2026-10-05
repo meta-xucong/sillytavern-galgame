@@ -40,7 +40,7 @@
 
 只读接手检查已经确认：
 
-- 仓库：D:\AI\SillyTavern
+- 仓库：本机克隆的项目仓库根目录（具体路径由使用者决定）
 - 分支：verya-main，跟踪 origin/main
 - HEAD：b3b7bfa5a2eda9aee0294afb80cc85ca7ebf39a3
 - 工作区有大量已跟踪修改和未跟踪文件，必须原样保留。
@@ -132,7 +132,7 @@ D9 证据审计与独立复核
 ### 检查命令
 
 ~~~~cmd
-cd /d D:\AI\SillyTavern
+:: Run these commands from the repository root
 git status --short --branch
 git rev-parse --abbrev-ref HEAD
 git rev-parse HEAD
@@ -269,7 +269,7 @@ OpenAI Chat Completions response（legacy Anthropic parser remains compatibility
 ### 9.2 本地命令
 
 ~~~~cmd
-cd /d D:\AI\SillyTavern
+:: Run these commands from the repository root
 node --check external-modules/visual-asset-service/server.mjs
 node --check external-modules/visual-asset-service/test.mjs
 node external-modules/visual-asset-service/test.mjs
@@ -303,7 +303,7 @@ git diff --check -- docs frontend public/game public/game-admin external-modules
 ### 命令
 
 ~~~~cmd
-cd /d D:\AI\SillyTavern
+:: Run these commands from the repository root
 node external-modules/visual-asset-service/server.mjs --migrate-runtime-v2 --dry-run
 ~~~~
 
@@ -326,7 +326,7 @@ D5 必须由操作者单独批准。普通服务启动不会自动执行迁移�
 ### 命令
 
 ~~~~cmd
-cd /d D:\AI\SillyTavern
+:: Run these commands from the repository root
 node external-modules/visual-asset-service/server.mjs --migrate-runtime-v2 --execute
 ~~~~
 
@@ -377,7 +377,7 @@ node external-modules/visual-asset-service/server.mjs --migrate-runtime-v2 --exe
 使用仓库根目录：
 
 ~~~~text
-D:\AI\SillyTavern\StartGalgameVisualAnalyzerTest.cmd
+external-modules/process-supervisor/launchers/StartGalgameVisualAnalyzerTest.cmd
 ~~~~
 
 规则：
@@ -486,7 +486,7 @@ D:\AI\SillyTavern\StartGalgameVisualAnalyzerTest.cmd
 
 ### 18.1 实际配置
 
-受控入口 `StartGalgameVisualAnalyzerTest.ps1` 从 `D:\AI\alchemy_video_OS\.env.local` 读取
+受控入口 `external-modules/process-supervisor/launchers/StartGalgameVisualAnalyzerTest.ps1` 默认从仓库根目录的私有 `.env.local` 读取（也可通过 `GALGAME_VISUAL_PROVIDER_ENV_FILE` 指定其他本地文件）
 `REFERENCE_VISION_BASE_URL`、`REFERENCE_VISION_MODEL` 和 `REFERENCE_VISION_API_KEY`。配置校验
 只允许 HTTPS origin；重复 key 采用最后一个非空值；key 只存在 child process。
 
