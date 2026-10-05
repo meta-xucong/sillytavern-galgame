@@ -1,5 +1,5 @@
-import { applyQuotedDialogueSpeakerContinuity } from './shared/sillytavern-adapter.js?v=auto-e34cf3849e79';
-import { deriveSceneContinuityKey } from './shared/scene-continuity-analysis.js?v=auto-e34cf3849e79';
+import { applyQuotedDialogueSpeakerContinuity } from './shared/sillytavern-adapter.js?v=auto-b19af4e9a9f8';
+import { deriveSceneContinuityKey } from './shared/scene-continuity-analysis.js?v=auto-b19af4e9a9f8';
 
 export const PRESENTATION_ANNOTATION_MODE = 'shadow';
 export const PRESENTATION_GATE_REPORTS = Object.freeze({});

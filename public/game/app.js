@@ -1,4 +1,4 @@
-import { createReleaseStore } from './shared/config-service.js?v=auto-e34cf3849e79';
+import { createReleaseStore } from './shared/config-service.js?v=auto-b19af4e9a9f8';
 import {
     getAssetUrl,
     getSpecialVisualChannelAssetKeys,
@@ -8,13 +8,13 @@ import {
     getActiveSillyTavernBindings,
     materializeManifestForArc,
     resolveAdaptivePresentationProfileBinding,
-} from './shared/protocol.js?v=auto-e34cf3849e79';
+} from './shared/protocol.js?v=auto-b19af4e9a9f8';
 import {
     AUTO_SAVE_ID,
     createCanonicalPlayerSaveRelease,
     createPlayerSaveStore,
     manualSaveIds,
-} from './shared/player-save.js?v=auto-e34cf3849e79';
+} from './shared/player-save.js?v=auto-b19af4e9a9f8';
 import {
     createCoreVisualDisplayEntityHints,
     createCoreVisualDisplayEntityKey,
@@ -23,22 +23,22 @@ import {
     createVisualNovelDisplaySegments,
     OriginalRuntimeBridgeClient,
     SillyTavernOriginalChatBridge,
-} from './shared/sillytavern-adapter.js?v=auto-e34cf3849e79';
-import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-e34cf3849e79';
-import { collectVisibleHudRecords } from './visible-hud-records.js?v=auto-e34cf3849e79';
-import { createVisibleHudVisualHints } from './visible-hud-visual-hints.js?v=auto-e34cf3849e79';
-import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-e34cf3849e79';
-import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-e34cf3849e79';
-import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-e34cf3849e79';
-import { isSuccessfulShutdownReceipt, LocalProcessSupervisorClient } from './shared/process-supervisor-adapter.js?v=auto-e34cf3849e79';
-import { createPresentationBatches, PresentationAnalysisAdapter } from './shared/presentation-analysis-adapter.js?v=auto-e34cf3849e79';
-import { evaluateVisualServiceReadiness } from './shared/visual-service-health.js?v=auto-e34cf3849e79';
+} from './shared/sillytavern-adapter.js?v=auto-b19af4e9a9f8';
+import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-b19af4e9a9f8';
+import { collectVisibleHudRecords } from './visible-hud-records.js?v=auto-b19af4e9a9f8';
+import { createVisibleHudVisualHints } from './visible-hud-visual-hints.js?v=auto-b19af4e9a9f8';
+import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-b19af4e9a9f8';
+import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-b19af4e9a9f8';
+import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-b19af4e9a9f8';
+import { isSuccessfulShutdownReceipt, LocalProcessSupervisorClient } from './shared/process-supervisor-adapter.js?v=auto-b19af4e9a9f8';
+import { createPresentationBatches, PresentationAnalysisAdapter } from './shared/presentation-analysis-adapter.js?v=auto-b19af4e9a9f8';
+import { evaluateVisualServiceReadiness } from './shared/visual-service-health.js?v=auto-b19af4e9a9f8';
 import {
     buildSceneContinuityProjectionFromAnalysis,
     createSceneContinuityAnalysisRequest,
     createSceneContinuityAnalysisCacheKey,
     deriveSceneContinuityKey,
-} from './shared/scene-continuity-analysis.js?v=auto-e34cf3849e79';
+} from './shared/scene-continuity-analysis.js?v=auto-b19af4e9a9f8';
 import {
     createSceneContinuityHistoryCandidate,
     createSceneContinuityHistoryCandidateListHash,
@@ -52,11 +52,11 @@ import {
     SCENE_CONTINUITY_HISTORY_REPLAY_MIN_INTERVAL_MS,
     SCENE_CONTINUITY_HISTORY_REPLAY_PAGE_LIMIT,
     serializeSceneContinuityHistoryCheckpoint,
-} from './scene-continuity-history.js?v=auto-e34cf3849e79';
-import { PresentationAnnotationCache } from './shared/presentation-cache.js?v=auto-e34cf3849e79';
-import { consumeSceneContinuityProjection, presentationPortraitScopeKey, projectPartyRoster, projectPresentationIdentityDetailed, reservePersistentPresentationAsset } from './shared/presentation-projection.js?v=auto-e34cf3849e79';
-import { createPublishedPresentationKnownEntities, createVisibleMessageHash, sha256Hex, PRESENTATION_ANNOTATION_VERSION, PRESENTATION_IDENTITY_PROJECTION_VERSION, PRESENTATION_ROSTER_PROJECTION_VERSION } from './shared/presentation-annotation.js?v=auto-e34cf3849e79';
-import { canApplySceneContinuityPageResult, capSceneContinuityLedgerRecords, createPresentationDisplaySegments, createPresentationPages, createPresentationRosterDisplay, createSceneContinuityLedgerStorageKey, createSceneContinuityTimelinePrefixHash, createSpeakerVisualAttributes, deferShadowPresentationAnalysisUntilVisualSettles, formatPresentationRosterMember, isPresentationProjectionTimelineCurrent, isSceneContinuityCursorStrictlyEarlier, isSceneContinuityProjectionBoundToCursor, parseSceneContinuityLedger, PRESENTATION_ANNOTATION_MODE, resolvePresentationMode, sceneContinuityRecordFingerprint, selectLatestEarlierCompletedScenePage, selectPresentationAnalysisMessages, serializeSceneContinuityLedger, validateSceneContinuityLedgerRecords, waitForPriorSceneContinuityTask } from './presentation-renderer.js?v=auto-e34cf3849e79';
+} from './scene-continuity-history.js?v=auto-b19af4e9a9f8';
+import { PresentationAnnotationCache } from './shared/presentation-cache.js?v=auto-b19af4e9a9f8';
+import { consumeSceneContinuityProjection, presentationPortraitScopeKey, projectPartyRoster, projectPresentationIdentityDetailed, reservePersistentPresentationAsset } from './shared/presentation-projection.js?v=auto-b19af4e9a9f8';
+import { createPublishedPresentationKnownEntities, createVisibleMessageHash, sha256Hex, PRESENTATION_ANNOTATION_VERSION, PRESENTATION_IDENTITY_PROJECTION_VERSION, PRESENTATION_ROSTER_PROJECTION_VERSION } from './shared/presentation-annotation.js?v=auto-b19af4e9a9f8';
+import { canApplySceneContinuityPageResult, capSceneContinuityLedgerRecords, createPresentationDisplaySegments, createPresentationPages, createPresentationRosterDisplay, createSceneContinuityLedgerStorageKey, createSceneContinuityTimelinePrefixHash, createSpeakerVisualAttributes, deferShadowPresentationAnalysisUntilVisualSettles, formatPresentationRosterMember, isPresentationProjectionTimelineCurrent, isSceneContinuityCursorStrictlyEarlier, isSceneContinuityProjectionBoundToCursor, parseSceneContinuityLedger, PRESENTATION_ANNOTATION_MODE, resolvePresentationMode, sceneContinuityRecordFingerprint, selectLatestEarlierCompletedScenePage, selectPresentationAnalysisMessages, serializeSceneContinuityLedger, validateSceneContinuityLedgerRecords, waitForPriorSceneContinuityTask } from './presentation-renderer.js?v=auto-b19af4e9a9f8';
 
 const releaseStore = createReleaseStore(null, { fallbackToLocal: false });
 const playerSaveStore = createPlayerSaveStore();
@@ -257,8 +257,8 @@ const adaptiveTemplateMatrix = Object.freeze({
         order: ['actions', 'notes', 'events', 'relationships', 'locations', 'objectives'],
     },
     'rpg-adventure': {
-    primary: 'rpg-status',
-    order: ['rpg-status', 'dice', 'inventory', 'abilities', 'resources', 'objectives', 'quests', 'locations', 'factions', 'notes'],
+        primary: 'rpg-status',
+        order: ['rpg-status', 'dice', 'inventory', 'abilities', 'resources', 'objectives', 'quests', 'locations', 'factions', 'notes'],
     },
     'romance-social': {
         primary: 'affection',
@@ -1783,15 +1783,15 @@ async function analyzePresentationSnapshot(snapshot, activeIndex, { mode = resol
         if (!releaseId || !scenarioId || !scenarioVersion) return;
         const selectedMessages = selectPresentationAnalysisMessages(snapshot.messages, activeIndex, mode);
         const assistantMessages = await Promise.all(selectedMessages.map(async ({ message, index }) => {
-                const visibleText = String(message.displayText || message.text || '');
-                return {
-                    index,
-                    message,
-                    sourceMessageIndex: Number.isSafeInteger(message.index) ? message.index : index,
-                    sourceMessageHash: await createVisibleMessageHash(visibleText),
-                    visibleText,
-                };
-            }));
+            const visibleText = String(message.displayText || message.text || '');
+            return {
+                index,
+                message,
+                sourceMessageIndex: Number.isSafeInteger(message.index) ? message.index : index,
+                sourceMessageHash: await createVisibleMessageHash(visibleText),
+                visibleText,
+            };
+        }));
         const activeMessage = assistantMessages.find(({ index, message }) => index === activeIndex || message.index === activeIndex);
         const historyMessages = mode === 'assisted' && activeMessage
             ? assistantMessages.filter((item) => item !== activeMessage)
@@ -1814,11 +1814,11 @@ async function analyzePresentationSnapshot(snapshot, activeIndex, { mode = resol
         for (const entries of analysisBatches) {
             if (analysisSignal.aborted || epoch !== presentationAnalysisEpoch || activeChatSnapshot && activeChatSnapshot.fileName !== snapshot.fileName) return;
             const messages = entries.map(({ message, sourceMessageIndex, sourceMessageHash, visibleText }) => ({
-                    sourceMessageIndex,
-                    sourceMessageHash,
-                    authorLabel: '',
-                    visibleText,
-                }));
+                sourceMessageIndex,
+                sourceMessageHash,
+                authorLabel: '',
+                visibleText,
+            }));
             const firstIndex = entries[0]?.index ?? 0;
             const contextMessages = snapshot.messages.slice(Math.max(0, firstIndex - 4), firstIndex)
                 .filter((message) => message?.role === 'character')
@@ -3828,12 +3828,6 @@ function getCoreVisualPlaceholderUrl(role = 'character') {
     return CORE_VISUAL_PLACEHOLDER_URL;
 }
 
-function renderCoreVisualPlaceholder(role = 'character') {
-    applyCoreVisualPlaceholderBackground();
-    applyCoreVisualPlaceholderCharacter(role);
-    renderCoreVisualIconStrip();
-}
-
 async function renderCoreVisualPresentation(snapshot, messageIndex, token) {
     if (token !== visualBundleRequestToken) return;
     const visualRole = getActiveVisualSpeakerContext(snapshot?.messages?.[messageIndex], messageIndex).role;
@@ -4512,8 +4506,8 @@ function applyVisualLayerImage(element, renderUrl, identity, token, layer) {
         setTimeout(() => {
             if (element.dataset.visualTransitionToken !== transitionToken) return;
             if (typeof element.style.removeProperty === 'function') {
-        element.style.removeProperty('--visual-previous-image');
-    }
+                element.style.removeProperty('--visual-previous-image');
+            }
             element.classList.remove('is-visual-transitioning');
         }, 460);
     } else {
@@ -4617,7 +4611,6 @@ async function applyCoreVisualIcons(byType, baseUrl, token, invalidTypes = new S
         const identity = decision?.assetId && decision?.assetVersion
             ? `${decision.assetId}:${decision.assetVersion}`
             : '';
-        const selector = `.visual-icon-${type}`;
         const existing = findCoreVisualIcon(type);
         if (!candidateUrl) {
             if (existing?.classList?.contains?.('is-visual-active') && !invalidTypes.has(type) && !explicitlyEmpty) {
@@ -4677,15 +4670,6 @@ function createCoreVisualContentUrl(decision, baseUrl) {
     } catch (_error) {
         return '';
     }
-}
-
-function applyCoreVisualPlaceholderBackground() {
-    if (!ui.stageBackdrop) {
-        return;
-    }
-    ui.stageBackdrop.style.backgroundImage = `url("${CORE_VISUAL_PLACEHOLDER_URL}")`;
-    delete ui.stageBackdrop.dataset.visualAssetIdentity;
-    ui.stageBackdrop.classList.remove('is-visual-active', 'is-visual-transitioning');
 }
 
 function applyCoreVisualPlaceholderCharacter(role = 'character') {
@@ -4768,16 +4752,16 @@ function rememberRenderedVisualRuntimeMessage(snapshot, message, messageIndex) {
     if (shouldHydrateSnapshot) {
         for (let index = startIndex; index < Number(messageIndex); index += 1) {
             const snapshotMessage = snapshotMessages[index];
-        if (!snapshotMessage) {
-            visibleRuntimeMessages.delete(index);
-            continue;
-        }
-        const normalizedSnapshotMessage = normalizePlayerVisualRuntimeMessage({
-            index,
-            role: snapshotMessage.role === 'player' ? 'player' : 'character',
-            speaker: snapshotMessage.role === 'player' ? '你' : snapshotMessage.speaker || getMainCharacterName(),
-            text: snapshotMessage.displayText || snapshotMessage.text || '',
-        });
+            if (!snapshotMessage) {
+                visibleRuntimeMessages.delete(index);
+                continue;
+            }
+            const normalizedSnapshotMessage = normalizePlayerVisualRuntimeMessage({
+                index,
+                role: snapshotMessage.role === 'player' ? 'player' : 'character',
+                speaker: snapshotMessage.role === 'player' ? '你' : snapshotMessage.speaker || getMainCharacterName(),
+                text: snapshotMessage.displayText || snapshotMessage.text || '',
+            });
             if (normalizedSnapshotMessage) {
                 visibleRuntimeMessages.set(index, normalizedSnapshotMessage);
             } else {
@@ -4891,12 +4875,12 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
     const decisionContextMessage = segmentOverride
         ? segmentMessage
         : segmentMessage && fullMessage
-        ? {
-            ...fullMessage,
-            role: displayedMessage.role,
-            speaker: displayedMessage.speaker,
-        }
-        : (fullMessage || displayedMessage);
+            ? {
+                ...fullMessage,
+                role: displayedMessage.role,
+                speaker: displayedMessage.speaker,
+            }
+            : (fullMessage || displayedMessage);
     const effectiveVisibleContext = segmentMessage
         ? { ...visibleContext, current: decisionContextMessage }
         : visibleContext;
@@ -5729,8 +5713,8 @@ function openAdaptiveDetail(result, fallbackItems = [], returnFocusTarget = null
     adaptiveDetailReturnFocus = isHtmlElement(returnFocusTarget)
         ? returnFocusTarget
         : isHtmlElement(document.activeElement)
-        ? document.activeElement
-        : null;
+            ? document.activeElement
+            : null;
     adaptiveDetailReturnModule = result?.module || '';
     const title = getAdaptiveModuleMeta(result.module).label;
     ui.adaptiveDetailTitle.textContent = title;

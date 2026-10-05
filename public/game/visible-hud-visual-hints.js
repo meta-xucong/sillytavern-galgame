@@ -1,5 +1,5 @@
-import { formatVisualNovelDisplayText } from './shared/sillytavern-adapter.js?v=auto-e34cf3849e79';
-import { collectVisibleHudRecords } from './visible-hud-records.js?v=auto-e34cf3849e79';
+import { formatVisualNovelDisplayText } from './shared/sillytavern-adapter.js?v=auto-b19af4e9a9f8';
+import { collectVisibleHudRecords } from './visible-hud-records.js?v=auto-b19af4e9a9f8';
 
 const HUD_VISUAL_CHANNELS = Object.freeze([
     { module: 'equipment', entityType: 'equipment', attributeCode: 'equipment-visible-label', collection: 'items' },

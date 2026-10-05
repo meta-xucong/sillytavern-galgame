@@ -1,5 +1,5 @@
-import { extractHudPresentationFromText } from './shared/adaptive-presentation.js?v=auto-e34cf3849e79';
-import { formatVisualNovelDisplayText } from './shared/sillytavern-adapter.js?v=auto-e34cf3849e79';
+import { extractHudPresentationFromText } from './shared/adaptive-presentation.js?v=auto-b19af4e9a9f8';
+import { formatVisualNovelDisplayText } from './shared/sillytavern-adapter.js?v=auto-b19af4e9a9f8';
 
 /** Rebuild display-only records from the current visible branch; never persist game state. */
 export function collectVisibleHudRecords(snapshot, messageIndex, profile) {

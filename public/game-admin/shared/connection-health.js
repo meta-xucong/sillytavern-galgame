@@ -268,7 +268,7 @@ export class ConnectionHealthMonitor {
                 ? 'pending'
                 : result?.connectionState === 'idle'
                     ? 'idle'
-                : ok ? 'up' : 'down';
+                    : ok ? 'up' : 'down';
             const checkedAt = this.now();
             return {
                 name,

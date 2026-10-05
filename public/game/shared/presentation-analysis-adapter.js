@@ -3,12 +3,12 @@ import {
     createPresentationAnnotationRequest,
     validatePresentationAnnotationRequestAsync,
     validatePresentationAnnotationResponse,
-} from './presentation-annotation.js?v=auto-e34cf3849e79';
+} from './presentation-annotation.js?v=auto-b19af4e9a9f8';
 import {
     createSceneContinuityAnalysisRequest,
     validateSceneContinuityAnalysisRequest,
     validateSceneContinuityAnalysisResponse,
-} from './scene-continuity-analysis.js?v=auto-e34cf3849e79';
+} from './scene-continuity-analysis.js?v=auto-b19af4e9a9f8';
 
 const HEALTH_REQUEST_TIMEOUT_MS = 2_000;
 const HEALTH_RETRY_DELAY_MS = 180;

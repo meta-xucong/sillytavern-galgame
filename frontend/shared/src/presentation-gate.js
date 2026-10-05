@@ -185,7 +185,9 @@ export async function verifyPresentationGateReports({ reports, readText, sha256 
  */
 export async function computePresentationGateEvaluationDigest(report, sha256) {
     if (!isRecord(report) || typeof sha256 !== 'function') throw new TypeError('report and sha256 are required');
-    const { evaluationDigest: _ignored, evidence, ...claims } = report;
+    const claims = { ...report };
+    delete claims.evaluationDigest;
+    const evidence = claims.evidence;
     claims.evidence = { implementationHashes: evidence?.implementationHashes };
     return sha256(stableJson(claims));
 }

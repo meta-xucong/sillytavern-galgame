@@ -257,8 +257,8 @@ const adaptiveTemplateMatrix = Object.freeze({
         order: ['actions', 'notes', 'events', 'relationships', 'locations', 'objectives'],
     },
     'rpg-adventure': {
-    primary: 'rpg-status',
-    order: ['rpg-status', 'dice', 'inventory', 'abilities', 'resources', 'objectives', 'quests', 'locations', 'factions', 'notes'],
+        primary: 'rpg-status',
+        order: ['rpg-status', 'dice', 'inventory', 'abilities', 'resources', 'objectives', 'quests', 'locations', 'factions', 'notes'],
     },
     'romance-social': {
         primary: 'affection',
@@ -1783,15 +1783,15 @@ async function analyzePresentationSnapshot(snapshot, activeIndex, { mode = resol
         if (!releaseId || !scenarioId || !scenarioVersion) return;
         const selectedMessages = selectPresentationAnalysisMessages(snapshot.messages, activeIndex, mode);
         const assistantMessages = await Promise.all(selectedMessages.map(async ({ message, index }) => {
-                const visibleText = String(message.displayText || message.text || '');
-                return {
-                    index,
-                    message,
-                    sourceMessageIndex: Number.isSafeInteger(message.index) ? message.index : index,
-                    sourceMessageHash: await createVisibleMessageHash(visibleText),
-                    visibleText,
-                };
-            }));
+            const visibleText = String(message.displayText || message.text || '');
+            return {
+                index,
+                message,
+                sourceMessageIndex: Number.isSafeInteger(message.index) ? message.index : index,
+                sourceMessageHash: await createVisibleMessageHash(visibleText),
+                visibleText,
+            };
+        }));
         const activeMessage = assistantMessages.find(({ index, message }) => index === activeIndex || message.index === activeIndex);
         const historyMessages = mode === 'assisted' && activeMessage
             ? assistantMessages.filter((item) => item !== activeMessage)
@@ -1814,11 +1814,11 @@ async function analyzePresentationSnapshot(snapshot, activeIndex, { mode = resol
         for (const entries of analysisBatches) {
             if (analysisSignal.aborted || epoch !== presentationAnalysisEpoch || activeChatSnapshot && activeChatSnapshot.fileName !== snapshot.fileName) return;
             const messages = entries.map(({ message, sourceMessageIndex, sourceMessageHash, visibleText }) => ({
-                    sourceMessageIndex,
-                    sourceMessageHash,
-                    authorLabel: '',
-                    visibleText,
-                }));
+                sourceMessageIndex,
+                sourceMessageHash,
+                authorLabel: '',
+                visibleText,
+            }));
             const firstIndex = entries[0]?.index ?? 0;
             const contextMessages = snapshot.messages.slice(Math.max(0, firstIndex - 4), firstIndex)
                 .filter((message) => message?.role === 'character')
@@ -3828,12 +3828,6 @@ function getCoreVisualPlaceholderUrl(role = 'character') {
     return CORE_VISUAL_PLACEHOLDER_URL;
 }
 
-function renderCoreVisualPlaceholder(role = 'character') {
-    applyCoreVisualPlaceholderBackground();
-    applyCoreVisualPlaceholderCharacter(role);
-    renderCoreVisualIconStrip();
-}
-
 async function renderCoreVisualPresentation(snapshot, messageIndex, token) {
     if (token !== visualBundleRequestToken) return;
     const visualRole = getActiveVisualSpeakerContext(snapshot?.messages?.[messageIndex], messageIndex).role;
@@ -4512,8 +4506,8 @@ function applyVisualLayerImage(element, renderUrl, identity, token, layer) {
         setTimeout(() => {
             if (element.dataset.visualTransitionToken !== transitionToken) return;
             if (typeof element.style.removeProperty === 'function') {
-        element.style.removeProperty('--visual-previous-image');
-    }
+                element.style.removeProperty('--visual-previous-image');
+            }
             element.classList.remove('is-visual-transitioning');
         }, 460);
     } else {
@@ -4617,7 +4611,6 @@ async function applyCoreVisualIcons(byType, baseUrl, token, invalidTypes = new S
         const identity = decision?.assetId && decision?.assetVersion
             ? `${decision.assetId}:${decision.assetVersion}`
             : '';
-        const selector = `.visual-icon-${type}`;
         const existing = findCoreVisualIcon(type);
         if (!candidateUrl) {
             if (existing?.classList?.contains?.('is-visual-active') && !invalidTypes.has(type) && !explicitlyEmpty) {
@@ -4677,15 +4670,6 @@ function createCoreVisualContentUrl(decision, baseUrl) {
     } catch (_error) {
         return '';
     }
-}
-
-function applyCoreVisualPlaceholderBackground() {
-    if (!ui.stageBackdrop) {
-        return;
-    }
-    ui.stageBackdrop.style.backgroundImage = `url("${CORE_VISUAL_PLACEHOLDER_URL}")`;
-    delete ui.stageBackdrop.dataset.visualAssetIdentity;
-    ui.stageBackdrop.classList.remove('is-visual-active', 'is-visual-transitioning');
 }
 
 function applyCoreVisualPlaceholderCharacter(role = 'character') {
@@ -4768,16 +4752,16 @@ function rememberRenderedVisualRuntimeMessage(snapshot, message, messageIndex) {
     if (shouldHydrateSnapshot) {
         for (let index = startIndex; index < Number(messageIndex); index += 1) {
             const snapshotMessage = snapshotMessages[index];
-        if (!snapshotMessage) {
-            visibleRuntimeMessages.delete(index);
-            continue;
-        }
-        const normalizedSnapshotMessage = normalizePlayerVisualRuntimeMessage({
-            index,
-            role: snapshotMessage.role === 'player' ? 'player' : 'character',
-            speaker: snapshotMessage.role === 'player' ? '你' : snapshotMessage.speaker || getMainCharacterName(),
-            text: snapshotMessage.displayText || snapshotMessage.text || '',
-        });
+            if (!snapshotMessage) {
+                visibleRuntimeMessages.delete(index);
+                continue;
+            }
+            const normalizedSnapshotMessage = normalizePlayerVisualRuntimeMessage({
+                index,
+                role: snapshotMessage.role === 'player' ? 'player' : 'character',
+                speaker: snapshotMessage.role === 'player' ? '你' : snapshotMessage.speaker || getMainCharacterName(),
+                text: snapshotMessage.displayText || snapshotMessage.text || '',
+            });
             if (normalizedSnapshotMessage) {
                 visibleRuntimeMessages.set(index, normalizedSnapshotMessage);
             } else {
@@ -4891,12 +4875,12 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
     const decisionContextMessage = segmentOverride
         ? segmentMessage
         : segmentMessage && fullMessage
-        ? {
-            ...fullMessage,
-            role: displayedMessage.role,
-            speaker: displayedMessage.speaker,
-        }
-        : (fullMessage || displayedMessage);
+            ? {
+                ...fullMessage,
+                role: displayedMessage.role,
+                speaker: displayedMessage.speaker,
+            }
+            : (fullMessage || displayedMessage);
     const effectiveVisibleContext = segmentMessage
         ? { ...visibleContext, current: decisionContextMessage }
         : visibleContext;
@@ -5729,8 +5713,8 @@ function openAdaptiveDetail(result, fallbackItems = [], returnFocusTarget = null
     adaptiveDetailReturnFocus = isHtmlElement(returnFocusTarget)
         ? returnFocusTarget
         : isHtmlElement(document.activeElement)
-        ? document.activeElement
-        : null;
+            ? document.activeElement
+            : null;
     adaptiveDetailReturnModule = result?.module || '';
     const title = getAdaptiveModuleMeta(result.module).label;
     ui.adaptiveDetailTitle.textContent = title;

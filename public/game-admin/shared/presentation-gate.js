@@ -2,7 +2,7 @@ import {
     PRESENTATION_ANNOTATION_VERSION,
     PRESENTATION_IDENTITY_PROJECTION_VERSION,
     PRESENTATION_ROSTER_PROJECTION_VERSION,
-} from './presentation-annotation.js?v=auto-e34cf3849e79';
+} from './presentation-annotation.js?v=auto-b19af4e9a9f8';
 
 const HASH_PATTERN = /^(?:sha256:)?[a-f0-9]{64}$/u;
 const METRIC_NAMES = Object.freeze([
@@ -185,7 +185,9 @@ export async function verifyPresentationGateReports({ reports, readText, sha256 
  */
 export async function computePresentationGateEvaluationDigest(report, sha256) {
     if (!isRecord(report) || typeof sha256 !== 'function') throw new TypeError('report and sha256 are required');
-    const { evaluationDigest: _ignored, evidence, ...claims } = report;
+    const claims = { ...report };
+    delete claims.evaluationDigest;
+    const evidence = claims.evidence;
     claims.evidence = { implementationHashes: evidence?.implementationHashes };
     return sha256(stableJson(claims));
 }

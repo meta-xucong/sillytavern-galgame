@@ -21,7 +21,6 @@ const REQUEST_SCOPE_KEYS = Object.freeze(['chatId', 'releaseId', 'arcId', 'catal
 const REQUEST_KEYS = Object.freeze(['schemaVersion', 'requestId', 'sourceRole', 'scope', 'segment', 'contextPages', 'previousScene']);
 const SEGMENT_KEYS = Object.freeze(['messageId', 'pageIndex', 'pageText', 'pageTextSha256']);
 const LOCATION_RESPONSE_KEYS = Object.freeze(['schemaVersion', 'requestId', 'pageTextSha256', 'confidenceBand', 'currentLocation', 'transitionAction', 'referencedLocations', 'visualTags']);
-const ANALYSIS_KEYS = Object.freeze(['confidenceBand', 'currentLocation', 'transitionAction', 'referencedLocations', 'visualTags']);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const HASH_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 

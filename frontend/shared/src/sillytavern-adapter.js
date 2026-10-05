@@ -1304,7 +1304,7 @@ function normalizeVisualProjectionLabel(value) {
     return String(value || '')
         .normalize('NFKC')
         .replace(/[\u200B-\u200D\uFEFF]/g, '')
-        .replace(/^[\s>*#`*_~\[\]()（）【】「」『』]+|[\s>*#`*_~\[\]()（）【】「」『』]+$/gu, '')
+        .replace(/^[\s>*#`*_~\x5b\x5d()（）【】「」『』]+|[\s>*#`*_~\x5b\x5d()（）【】「」『』]+$/gu, '')
         .replace(/[：:]+$/u, '')
         .replace(/[\\/_-]+/gu, ' ')
         .replace(/\s+/gu, ' ')
@@ -1883,7 +1883,7 @@ function isNarratorSpeaker(value) {
 function isNonCharacterVisualLabel(value) {
     const label = String(value || '')
         .normalize('NFKC')
-        .replace(/^[\s>*#`*_~\[\]()（）【】「」『』]+|[\s>*#`*_~\[\]()（）【】「」『』]+$/gu, '')
+        .replace(/^[\s>*#`*_~\x5b\x5d()（）【】「」『』]+|[\s>*#`*_~\x5b\x5d()（）【】「」『』]+$/gu, '')
         .replace(/\s+/gu, ' ')
         .trim()
         .toLocaleLowerCase();
@@ -2002,7 +2002,7 @@ export function detectIncompleteRpgResponse(text, { minVisibleLength = 450 } = {
         return false;
     }
     const lastVisibleCharacter = narrativeText.trim().slice(-1);
-    return Boolean(lastVisibleCharacter) && !/[。！？!?\.．…」』”）)\]}*>*`~]$/u.test(lastVisibleCharacter);
+    return Boolean(lastVisibleCharacter) && !/[。！？!?．…」』”）)\]}*>*`~]$/u.test(lastVisibleCharacter);
 }
 
 function stripTrailingRpgMetadata(value) {
@@ -2104,7 +2104,7 @@ function sanitizeSuggestedActionLabel(value) {
     const label = sanitizeText(value, 240).trim();
     const quotePairs = [
         ['"', '"'],
-        ["'", "'"],
+        ['\'', '\''],
         ['“', '”'],
         ['‘', '’'],
         ['「', '」'],

@@ -1,4 +1,4 @@
-import { isSceneContinuityCursorStrictlyEarlier } from './presentation-renderer.js?v=auto-e34cf3849e79';
+import { isSceneContinuityCursorStrictlyEarlier } from './presentation-renderer.js?v=auto-b19af4e9a9f8';
 
 export const SCENE_CONTINUITY_HISTORY_REPLAY_PAGE_LIMIT = 128;
 export const SCENE_CONTINUITY_HISTORY_REPLAY_MIN_INTERVAL_MS = 2_100;

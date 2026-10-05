@@ -1,4 +1,4 @@
-import { extractSuggestedActionsFromOriginalText } from './sillytavern-adapter.js?v=auto-e34cf3849e79';
+import { extractSuggestedActionsFromOriginalText } from './sillytavern-adapter.js?v=auto-b19af4e9a9f8';
 import {
     ADAPTIVE_EXTRACTION_RESULT_PROTOCOL_VERSION,
     createDefaultAdaptivePresentationProfile,
@@ -6,7 +6,7 @@ import {
     normalizeAdaptivePresentationProfile,
     validateAdaptiveExtractionResult,
     validateAdaptivePresentationProfile,
-} from './adaptive-presentation-schema.js?v=auto-e34cf3849e79';
+} from './adaptive-presentation-schema.js?v=auto-b19af4e9a9f8';
 
 export const ADAPTIVE_PRESENTATION_AGGREGATE_VERSION = 'galgame.adaptive-presentation-result-set.v1';
 const MAX_ADAPTIVE_VISIBLE_TEXT_LENGTH = 16000;
@@ -420,7 +420,7 @@ function normalizeInventoryEntries(rawEntries) {
 function normalizeInventoryRawEntry(value) {
     const rawValue = typeof value === 'object' && value ? value.value : value;
     return sanitizeVisibleText(rawValue)
-        .replace(/^[\-*•]\s*/u, '')
+        .replace(/^[-*•]\s*/u, '')
         .replace(/^[\dA-Za-z]\.\s+/u, '')
         .replace(/^[*_`~]+|[*_`~]+$/gu, '')
         .trim();
@@ -666,7 +666,7 @@ function isEventStatus(value) {
 }
 
 function parseAbilityItem(value) {
-    const raw = sanitizeVisibleText(value).replace(/^[\-*•]\s*/u, '');
+    const raw = sanitizeVisibleText(value).replace(/^[-*•]\s*/u, '');
     const match = raw.match(/^(.+?)(?:\s*[:：]\s*|\s+)([+-]\d+|熟练|精通|proficient|expertise|available|unavailable|未知)(?:\s*[（(](.+?)[）)])?$/iu);
     const name = sanitizeVisibleText(match ? match[1] : raw);
     const translated = translateAbilityName(name);

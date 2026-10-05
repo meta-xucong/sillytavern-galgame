@@ -398,7 +398,6 @@ const PROFILE_ID_PATTERN = /^vprof_[a-z0-9_-]{8,80}$/;
 const ASSET_ID_PATTERN = /^(unknown_(scene|character|equipment|item|skill)|asset_[a-z0-9_-]{8,80})$/;
 const ENTITY_KEY_PATTERN = /^entity_(scene|character|equipment|item|skill|unknown)_[a-z0-9._:-]{8,72}$/;
 const NONCE_PATTERN = /^nonce_[A-Za-z0-9._:-]{16,96}$/;
-const JTI_PATTERN = /^jti_[A-Za-z0-9._:-]{16,96}$/;
 const IDEMPOTENCY_KEY_PATTERN = /^idem_[A-Za-z0-9._:-]{16,120}$/;
 
 export function getImmutableUnknownVisualAssetRef(type) {
