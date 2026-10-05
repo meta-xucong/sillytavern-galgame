@@ -1,4 +1,4 @@
-import { createReleaseStore } from './shared/config-service.js?v=auto-766236a721bb';
+import { createReleaseStore } from './shared/config-service.js?v=auto-fdcc7c7c5302';
 import {
     getAssetUrl,
     getVisualCharacterBindings,
@@ -7,13 +7,13 @@ import {
     getActiveSillyTavernBindings,
     materializeManifestForArc,
     resolveAdaptivePresentationProfileBinding,
-} from './shared/protocol.js?v=auto-766236a721bb';
+} from './shared/protocol.js?v=auto-fdcc7c7c5302';
 import {
     AUTO_SAVE_ID,
     createCanonicalPlayerSaveRelease,
     createPlayerSaveStore,
     manualSaveIds,
-} from './shared/player-save.js?v=auto-766236a721bb';
+} from './shared/player-save.js?v=auto-fdcc7c7c5302';
 import {
     createCoreVisualDisplayEntityHints,
     createCoreVisualDisplayEntityKey,
@@ -21,11 +21,11 @@ import {
     createVisualNovelDisplaySegments,
     OriginalRuntimeBridgeClient,
     SillyTavernOriginalChatBridge,
-} from './shared/sillytavern-adapter.js?v=auto-766236a721bb';
-import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-766236a721bb';
-import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-766236a721bb';
-import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-766236a721bb';
-import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-766236a721bb';
+} from './shared/sillytavern-adapter.js?v=auto-fdcc7c7c5302';
+import { extractAdaptivePresentation } from './shared/adaptive-presentation.js?v=auto-fdcc7c7c5302';
+import { createDefaultAdaptivePresentationProfile } from './shared/adaptive-presentation-schema.js?v=auto-fdcc7c7c5302';
+import { normalizeVisualRuntimeMessage } from './shared/visual-system-schema.js?v=auto-fdcc7c7c5302';
+import { createConnectionHealthMonitor } from './shared/connection-health.js?v=auto-fdcc7c7c5302';
 
 const releaseStore = createReleaseStore(null, { fallbackToLocal: false });
 const playerSaveStore = createPlayerSaveStore();
@@ -233,6 +233,7 @@ if (globalThis.__GALGAME_PLAYER_TEMPLATE_MATRIX_SMOKE__) {
         activeChatSnapshot = snapshot;
     };
     globalThis.__GALGAME_TEST_RECOVER_CONTENT_AFTER_RESET__ = () => recoverPlayerContentAfterReset();
+    globalThis.__GALGAME_TEST_RENDER_CONNECTION_HEALTH__ = (snapshot) => renderConnectionHealth(snapshot);
 }
 
 async function bootstrap() {
@@ -348,7 +349,10 @@ function renderConnectionHealth(snapshot) {
     ui.connectionStatus.title = parts.join('\n');
     if (ui.connectionResetButton) {
         const generationFailed = generation?.status === 'down';
-        const runtimeNeedsReset = Boolean(runtime?.details?.stale || runtime?.details?.stopping);
+        const runtimeNeedsReset = Boolean(runtime?.status === 'pending'
+            || runtime?.details?.connectionState === 'generating'
+            || runtime?.details?.stale
+            || runtime?.details?.stopping);
         const abnormal = snapshot.overall === 'degraded' || snapshot.overall === 'down' || generationFailed || runtimeNeedsReset;
         ui.connectionResetButton.hidden = !abnormal && !connectionResetInFlight;
         ui.connectionResetButton.disabled = connectionResetInFlight;
@@ -417,31 +421,18 @@ async function recoverPlayerContentAfterReset() {
 
     if (activeChatSnapshot?.fileName && manifest) {
         const latestSnapshot = await loadLatestSnapshotForActiveChat(activeChatSnapshot);
-        if (latestSnapshot?.ok) {
+        if (latestSnapshot?.ok && latestSnapshot.fileName === activeChatSnapshot.fileName) {
             activeChatSnapshot = latestSnapshot;
             renderChatSnapshot(latestSnapshot, getLatestSnapshotRenderOptions(latestSnapshot));
-            void persistAutoSave(latestSnapshot);
             return true;
         }
         return false;
     }
 
-    // Restore the exact chat/scenario version already recorded in the local
-    // save, but do not automatically start an LLM request during recovery.
-    const autoSlot = await playerSaveStore.loadSlot(AUTO_SAVE_ID).catch(() => null);
-    if (autoSlot && await loadPlayerSave(autoSlot.saveId, {
-        silentFailure: true,
-        requestReply: false,
-        persistSyncedProgress: false,
-    })) {
-        return true;
-    }
-
-    if (!release || !manifest) {
-        await refreshRelease();
-    }
-    await loadOriginalChat('continue', { requestReply: false, persistSnapshot: false });
-    return Boolean(activeChatSnapshot?.ok);
+    // Without an active chat anchor, selecting an auto-save or latest chat can
+    // silently switch the player's current branch. Preserve the stage and save
+    // until the player explicitly chooses a saved chat.
+    return false;
 }
 
 async function refreshRelease() {

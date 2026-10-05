@@ -1,5 +1,5 @@
-import { DEFAULT_SILLYTAVERN_SCENARIO } from './shared/demo-scenario.js?v=auto-766236a721bb';
-import { createReleaseStore } from './shared/config-service.js?v=auto-766236a721bb';
+import { DEFAULT_SILLYTAVERN_SCENARIO } from './shared/demo-scenario.js?v=auto-fdcc7c7c5302';
+import { createReleaseStore } from './shared/config-service.js?v=auto-fdcc7c7c5302';
 import {
     bindAdaptivePresentationProfileHashes,
     getDefaultArcId,
@@ -10,7 +10,7 @@ import {
     validateAdaptivePresentationProfiles,
     validateScenarioManifest,
     validateSillyTavernBindings,
-} from './shared/protocol.js?v=auto-766236a721bb';
+} from './shared/protocol.js?v=auto-fdcc7c7c5302';
 import {
     createDefaultAdaptivePresentationProfile,
     PRESENTATION_MODULES,
@@ -19,12 +19,12 @@ import {
     PRESENTATION_SAFE_WARNING_CODES,
     PRESENTATION_TEMPLATES,
     validateAdaptivePresentationProfile,
-} from './shared/adaptive-presentation-schema.js?v=auto-766236a721bb';
+} from './shared/adaptive-presentation-schema.js?v=auto-fdcc7c7c5302';
 import {
     getMediaConfig,
     saveMediaConfig,
-} from './shared/storage.js?v=auto-766236a721bb';
-import { SillyTavernAdapter } from './shared/sillytavern-adapter.js?v=auto-766236a721bb';
+} from './shared/storage.js?v=auto-fdcc7c7c5302';
+import { SillyTavernAdapter } from './shared/sillytavern-adapter.js?v=auto-fdcc7c7c5302';
 
 const releaseStore = createReleaseStore(DEFAULT_SILLYTAVERN_SCENARIO, { fallbackToLocal: true });
 const scriptAssistantState = {
