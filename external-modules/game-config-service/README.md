@@ -43,7 +43,7 @@ For a setup where SillyTavern is already running on port 8001, use the
 project-owned services launcher below. It starts both self-owned services with
 one shared `GALGAME_BRIDGE_PROOF_SECRET`. For the complete local stack, use
 `external-modules/process-supervisor/launchers/Start_Galgame_All.bat`; it
-starts SillyTavern on port 8000 and points the services at that instance.
+starts SillyTavern on port 8001 and points the services at that instance.
 The secret is loaded only into each child process environment; it is never
 placed in a command argument, log, browser response, or static frontend file.
 If the shared local secret file is missing or empty, the startup scripts stop

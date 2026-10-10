@@ -17,7 +17,7 @@ targets an already-running SillyTavern instance at `http://127.0.0.1:8001`,
 and replaces stale local bridge/config-service processes before starting fresh
 ones. For the complete local stack, use
 `external-modules/process-supervisor/launchers/Start_Galgame_All.bat`, which
-starts SillyTavern at port 8000 and configures its services for that instance.
+starts SillyTavern at port 8001 and configures its services for that instance.
 
 ```powershell
 $env:SILLYTAVERN_BASE_URL = 'http://127.0.0.1:8001'
@@ -69,6 +69,14 @@ Allowed:
 - Return original chat snapshots for Galgame display.
 - Verify signed release/Arc/target/chat binding proofs and reject expired, replayed, forged, arbitrary, or cross-target requests.
 - Stop safely through `/v1/stop`, request original runtime stop for pending generation, return explicit `forced` / `stopMode` / `pendingTaskFailed` diagnostics on timeout, fail the in-flight request instead of returning a fabricated success, then reject new generation tasks until the process is restarted.
+
+An outer CDP evaluation timeout also marks the bridge `recoveryRequired=true`
+and `ready=false`. The timed-out renderer may have completed a chat write without
+returning its result, so this process rejects another generation rather than
+reusing ambiguous browser state. The player Reset flow replaces only this
+isolated bridge process and Chrome profile. After recovery, the player syncs the
+exact original chat before offering another generation, preventing duplicate
+player messages or assistant replies.
 
 The process supervisor uses `/v1/shutdown-gate` to acquire a 60-second owner
 lease before shutting down the fixed service allowlist. During a long shutdown,

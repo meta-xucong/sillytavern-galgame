@@ -1,5 +1,5 @@
 const args = parseArgs(process.argv.slice(2));
-const playerUrl = normalizeBaseUrl(args['player-url'] || 'http://127.0.0.1:8000');
+const playerUrl = normalizeBaseUrl(args['player-url'] || 'http://127.0.0.1:8001');
 const configUrl = normalizeBaseUrl(args['config-url'] || 'http://127.0.0.1:8791');
 const bridgeCandidates = String(args['bridge-urls'] || 'http://127.0.0.1:8795,http://127.0.0.1:8798,http://127.0.0.1:8799,http://127.0.0.1:8800,http://127.0.0.1:8796,http://127.0.0.1:8797')
     .split(',')

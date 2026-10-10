@@ -19,9 +19,17 @@ import {
     createCoreVisualDisplayEntityHints,
     createCoreVisualDisplayEntityKey,
     detectIncompleteRpgResponse,
+    createStructuralMessageSpeakerIndex,
+    createChatLocalObservedSpeakerNameScopes,
+    createStructuralPageTitleEvidenceFromMessageIndex,
+    isStructuralFastTitleRule,
+    createProbableNarrativeSpeakerTitleEvidence,
+    createProbableQuoteSpanContinuationTitleEvidence,
+    classifyStructuralPageShape,
     formatVisualNovelDisplayText,
     createVisualNovelDisplaySegments,
     OriginalRuntimeBridgeClient,
+    SillyTavernSpeakerCandidateAdapter,
     SillyTavernOriginalChatBridge,
 } from '../../shared/src/sillytavern-adapter.js';
 import { extractAdaptivePresentation } from '../../shared/src/adaptive-presentation.js';
@@ -55,8 +63,8 @@ import {
 } from './scene-continuity-history.js';
 import { PresentationAnnotationCache } from '../../shared/src/presentation-cache.js';
 import { consumeSceneContinuityProjection, presentationPortraitScopeKey, projectPartyRoster, projectPresentationIdentityDetailed, reservePersistentPresentationAsset } from '../../shared/src/presentation-projection.js';
-import { createPublishedPresentationKnownEntities, createVisibleMessageHash, sha256Hex, PRESENTATION_ANNOTATION_VERSION, PRESENTATION_IDENTITY_PROJECTION_VERSION, PRESENTATION_ROSTER_PROJECTION_VERSION } from '../../shared/src/presentation-annotation.js';
-import { canApplySceneContinuityPageResult, capSceneContinuityLedgerRecords, createPresentationDisplaySegments, createPresentationPages, createPresentationRosterDisplay, createSceneContinuityLedgerStorageKey, createSceneContinuityTimelinePrefixHash, createSpeakerVisualAttributes, deferShadowPresentationAnalysisUntilVisualSettles, formatPresentationRosterMember, isPresentationProjectionTimelineCurrent, isSceneContinuityCursorStrictlyEarlier, isSceneContinuityProjectionBoundToCursor, parseSceneContinuityLedger, PRESENTATION_ANNOTATION_MODE, resolvePresentationMode, sceneContinuityRecordFingerprint, selectLatestEarlierCompletedScenePage, selectPresentationAnalysisMessages, serializeSceneContinuityLedger, validateSceneContinuityLedgerRecords, waitForPriorSceneContinuityTask } from './presentation-renderer.js';
+import { createPresentationContextDigest, createPublishedPresentationKnownEntities, createVisibleMessageHash, sha256Hex, validatePresentationAnnotationResponse, PRESENTATION_ANNOTATION_VERSION, PRESENTATION_IDENTITY_PROJECTION_VERSION, PRESENTATION_ROSTER_PROJECTION_VERSION, PRESENTATION_LIMITS } from '../../shared/src/presentation-annotation.js';
+import { canApplySceneContinuityPageResult, capSceneContinuityLedgerRecords, createPresentationPageTitleEvidence, createPresentationDisplaySegments, createPresentationPageWindow, createPresentationTimelineSnapshot, createPresentationRosterDisplay, createSceneContinuityLedgerStorageKey, createSceneContinuityTimelinePrefixHash, createSpeakerVisualAttributes, deferShadowPresentationAnalysisUntilVisualSettles, formatPresentationRosterMember, getPresentationSpeakerLabel, getPresentationVisualSpeakerContext, isPresentationProjectionTimelineCurrent, isPresentationTimelineSnapshotCurrent, isSceneContinuityCursorStrictlyEarlier, isSceneContinuityProjectionBoundToCursor, matchesPresentationTimelineSnapshot, parseSceneContinuityLedger, PRESENTATION_ANNOTATION_MODE, resolvePresentationMode, sceneContinuityRecordFingerprint, selectLatestEarlierCompletedScenePage, selectPresentationAnalysisMessages, serializeSceneContinuityLedger, validateSceneContinuityLedgerRecords, waitForPriorSceneContinuityTask } from './presentation-renderer.js';
 
 const releaseStore = createReleaseStore(null, { fallbackToLocal: false });
 const playerSaveStore = createPlayerSaveStore();
@@ -64,6 +72,7 @@ const processSupervisor = new LocalProcessSupervisorClient({
     baseUrl: document.querySelector('meta[name="galgame-process-supervisor"]')?.content || 'http://127.0.0.1:8790',
 });
 const chatBridge = new SillyTavernOriginalChatBridge({ baseUrl: getSillyTavernBaseUrl() });
+const speakerCandidateAdapter = new SillyTavernSpeakerCandidateAdapter({ baseUrl: getSillyTavernBaseUrl() });
 const runtimeBridge = new OriginalRuntimeBridgeClient({
     baseUrl: getOriginalRuntimeBridgeUrl(),
     sillyTavernBaseUrl: getSillyTavernRuntimeBaseUrl(),
@@ -74,7 +83,19 @@ const presentationAnalysis = new PresentationAnalysisAdapter({
 const presentationCache = new PresentationAnnotationCache();
 const presentationInflight = new Set();
 const presentationAnnotations = new Map();
+const presentationPageAnnotations = new Map();
+const presentationPageAnalysisContextDigests = new Map();
+const presentationStructuralPageTitles = new Map();
+const presentationStructuralMessageIndexes = new Map();
+const presentationChatObservedSpeakerNames = new WeakMap();
+const presentationStructuralTitleInflight = new Map();
 const presentationProjectionStates = new Map();
+const PRESENTATION_SINGLETON_PROVENANCE = 'current-message-singleton.v1';
+const PRESENTATION_PAGE_WINDOW_CACHE_VERSION = 'galgame.presentation-page-cache.v1';
+const PRESENTATION_PAGE_WINDOW_PROVENANCE = 'current-page-window.v1';
+const STRUCTURAL_MESSAGE_SPEAKER_INDEX_VERSION = 'full-message-speaker-index.v86';
+const PRESENTATION_PAGE_ANALYSIS_MAX_FULL_MESSAGE_CODE_POINTS = 6_000;
+const PRESENTATION_PAGE_ANALYSIS_MAX_FULL_PAGES = 8;
 const PRESENTATION_PORTRAIT_LEDGER_KEY = 'galgame.presentation-portrait-bindings.v1';
 let portraitLedgerPersistenceWarningLogged = false;
 let presentationServiceState = null;
@@ -82,6 +103,7 @@ let presentationServiceRetryAt = 0;
 let presentationAnalyzerScope = '';
 let presentationAnalysisEpoch = 0;
 let presentationAnalysisController = null;
+let presentationAnalysisRunIdentity = null;
 let shadowPresentationAnalysisController = null;
 let sceneContinuityAnalysisController = null;
 let sceneContinuityAnalysisTask = null;
@@ -118,6 +140,7 @@ const CORE_VISUAL_CONTEXT_RESPONSE_VERSION = 'galgame.visual-core-context.v2';
 const CORE_VISUAL_PLACEHOLDER_URL = './assets/visual-placeholder.svg';
 const CORE_NARRATOR_PLACEHOLDER_URL = './assets/narrator-placeholder.svg';
 const CORE_PLAYER_PLACEHOLDER_URL = './assets/player-placeholder.svg';
+const CORE_UNKNOWN_SPEAKER_PLACEHOLDER_URL = './assets/unknown-speaker-placeholder.svg';
 const VISUAL_CONTEXT_REVALIDATION_INTERVAL_MS = 30_000;
 const CORE_VISUAL_LOCAL_DISABLE_CODES = new Set([
     'VISUAL_CORE_DISABLED',
@@ -462,7 +485,10 @@ function renderConnectionHealth(snapshot) {
     if (!ui.connectionStatus || !snapshot) return;
     const visualStatus = snapshot.services?.visualService?.status || 'unknown';
     const visualRecovered = lastObservedVisualHealthStatus === 'down' && visualStatus === 'up';
-    lastObservedVisualHealthStatus = visualStatus;
+    // Reset clears the monitor snapshot to unknown before its next probe. Keep
+    // the last confirmed state across that transient so a later down -> up
+    // transition still reprojects the active page's visual assets.
+    if (visualStatus !== 'unknown') lastObservedVisualHealthStatus = visualStatus;
     const generation = snapshot.services?.generation;
     const runtime = snapshot.services?.runtimeBridge;
     const llm = snapshot.services?.llm;
@@ -545,16 +571,27 @@ async function resetConnectionState() {
             reason: 'user-reset',
             preserveGenerationPending: generationPending,
         });
-        const pendingStarts = Object.entries(processRecovery?.services || {})
-            .filter(([, service]) => service?.started === true)
-            .map(([name]) => name);
-        const recoveryDeadline = Date.now() + 20_000;
-        while (pendingStarts.length && Date.now() < recoveryDeadline
-            && pendingStarts.some((name) => !['up', 'idle'].includes(snapshot.services?.[name]?.status))) {
+        const pendingStarts = new Set(Object.entries(processRecovery?.services || {})
+            .filter(([, service]) => service?.started === true || service?.status === 'starting')
+            .map(([name]) => name));
+        // The optional analyzer is behind the visual facade, so its startup is
+        // confirmed by the aggregate visual health probe rather than a player
+        // connection slot of its own.
+        if (processRecovery?.diagnostics?.presentationAnalysis?.status === 'starting') {
+            pendingStarts.add('visualService');
+        }
+        const recoveryDeadline = Date.now() + 30_000;
+        while (pendingStarts.size && Date.now() < recoveryDeadline
+            && [...pendingStarts].some((name) => !['up', 'idle'].includes(snapshot.services?.[name]?.status))) {
             await delay(900);
             snapshot = await connectionHealthMonitor.probeNow({ reason: 'process-recovery-wait' });
         }
-        const llmResult = await probeLlmForReset();
+        const supervisorLlmResult = processRecovery?.diagnostics?.llm;
+        const llmResult = supervisorLlmResult?.protocolVersion === 'galgame.llm-health.v1'
+            && supervisorLlmResult.pending !== true
+            && typeof supervisorLlmResult.ok === 'boolean'
+            ? supervisorLlmResult
+            : await probeLlmForReset();
         snapshot = connectionHealthMonitor.recordLlmCheck(llmResult);
         let contentRecovered = null;
         const contentServicesReady = snapshot.services?.sillyTavern?.status === 'up'
@@ -576,6 +613,8 @@ async function resetConnectionState() {
             showToast('仍有连接异常，请稍后再试');
         } else if (generationPending) {
             showToast('连接正常，当前回应仍在处理中');
+        } else if (processRecovery?.accepted !== true) {
+            showToast('连接状态已重新检查，但复位服务暂不可达；请稍后重试');
         } else if (contentRecovered === false) {
             showToast('连接已恢复，但当前内容还没读到；请稍后再试');
         } else if (contentRecovered === true) {
@@ -606,7 +645,7 @@ async function probeLlmForReset() {
 
 async function requestLocalProcessRecovery() {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4_000);
+    const timeout = setTimeout(() => controller.abort(), 70_000);
     try {
         return await processSupervisor.recover(controller.signal);
     } finally {
@@ -1633,21 +1672,19 @@ async function getRuntimeBridgeProof(snapshot) {
     });
 }
 
-function createPresentationPagesForMessage(snapshot, messageIndex, message) {
+function createPresentationPagesForMessage(snapshot, messageIndex, message, requestedPageIndex = (typeof activeSegmentIndex !== 'undefined' && Number.isSafeInteger(activeSegmentIndex) ? activeSegmentIndex : 0)) {
     const presentationMode = resolvePresentationMode(String(manifest?.locale || release?.locale || ''));
-    const presentationState = presentationProjectionStates.get(presentationProjectionScope(snapshot));
-    const projectedSegments = message?.role === 'character' && presentationMode === 'assisted'
-        ? getAssistedPresentationSegments(snapshot, messageIndex, message, presentationState)
-        : null;
     const sourceMessageIndex = Number.isSafeInteger(message?.index) ? message.index : messageIndex;
-    const sourceText = projectedSegments
-        ? String(message?.displayText || message?.text || '')
-        : formatVisualNovelDisplayText(message?.displayText || message?.text || '');
-    const segments = (projectedSegments || createVisualNovelDisplaySegments(message?.displayText || message?.text, {
+    const visibleText = String(message?.displayText || message?.text || '');
+    // Restore the source-only page pipeline from GitHub main. Formatting,
+    // deterministic visible segmentation, and page grouping must not depend
+    // on whether semantic analysis has completed or what it classified.
+    const sourceText = formatVisualNovelDisplayText(visibleText);
+    const segments = createVisualNovelDisplaySegments(visibleText, {
         fallbackSpeaker: message?.role === 'player' ? '你' : message?.speaker || getMainCharacterName(),
         role: message?.role,
         knownSpeakers: getManifestKnownVisualSpeakers(),
-    })).map((segment) => ({
+    }).map((segment) => ({
         ...segment,
         sourceMessageIndex: segment.sourceMessageIndex ?? sourceMessageIndex,
         sourceMessageHash: segment.sourceMessageHash || '',
@@ -1656,17 +1693,933 @@ function createPresentationPagesForMessage(snapshot, messageIndex, message) {
         index: 0,
         type: message?.role === 'player' ? 'player' : 'narration',
         speaker: message?.role === 'player' ? '你' : '旁白',
-        text: message?.displayText || message?.text || '',
+        text: visibleText,
         sourceMessageIndex,
     }];
-    return {
-        sourceText,
-        pages: createPresentationPages({
-            segments: nonEmptySegments,
-            sourceText,
+    // Match the pre-semantic GitHub player path: each segment returned by the
+    // original visible-text segmenter is one playback page. Do not pass these
+    // body segments through the newer identity-grouping paginator.
+    const basePages = nonEmptySegments;
+
+    // Semantic results are a presentation overlay applied only after the
+    // complete source-derived page sequence already exists. They cannot
+    // create, remove, split, merge, or rewrite body pages.
+    const presentationState = presentationProjectionStates.get(presentationProjectionScope(snapshot));
+    const projectedSegments = message?.role === 'character' && presentationMode === 'assisted'
+        ? getAssistedPresentationSegments(snapshot, messageIndex, message, presentationState)
+        : null;
+    const pages = basePages.map((page) => {
+        const exactMatches = (projectedSegments || []).filter((segment) => samePresentationSpan(segment.sourceSpan, page.sourceSpan)
+            && String(segment.sourceText || segment.text || '') === String(page.sourceText || page.text || ''));
+        if (exactMatches.length !== 1) return page;
+        const segment = exactMatches[0];
+        return {
+            ...page,
+            semanticPresentation: {
+                type: segment.type,
+                speaker: segment.speaker,
+                identityRef: segment.identityRef,
+                sourceMessageIndex: segment.sourceMessageIndex ?? sourceMessageIndex,
+                sourceMessageHash: segment.sourceMessageHash || '',
+                sourceSpan: { ...segment.sourceSpan },
+                sourceText: String(segment.sourceText || segment.text || ''),
+                ...(segment.speakerLabelEvidence ? { speakerLabelEvidence: segment.speakerLabelEvidence } : {}),
+            },
+        };
+    });
+
+    if (message?.role === 'character' && presentationMode === 'assisted') {
+        const pageIndex = Number.isSafeInteger(requestedPageIndex) ? requestedPageIndex : 0;
+        const currentPage = pages[pageIndex];
+        const prefersStructuralHeading = currentPage && shouldUseStructuralHeadingTitle(currentPage, sourceText);
+        const titleIsAlreadyValid = currentPage && !prefersStructuralHeading
+            && getPresentationSpeakerLabel(currentPage, message) !== '未识别'
+            && !hasCoarseNarrationPageTitle(currentPage);
+        if (currentPage && (!titleIsAlreadyValid || prefersStructuralHeading)) {
+            const renderedPage = pages[pageIndex];
+            if ((getPresentationSpeakerLabel(renderedPage, message) === '未识别'
+                || hasCoarseNarrationPageTitle(renderedPage)
+                || prefersStructuralHeading)
+                && typeof presentationStructuralPageTitles !== 'undefined') {
+                const structural = getStructuralPageTitleMemo(snapshot, sourceMessageIndex, pageIndex, sourceText, renderedPage, messageIndex);
+                if (structural && (structural.pageTitleEvidence?.ruleId !== 'plain-prose-narration'
+                    || renderedPage.type === 'unknown')) {
+                    pages[pageIndex] = {
+                        ...renderedPage,
+                        sourceMessageHash: renderedPage.sourceMessageHash || structural.sourceMessageHash,
+                        pageTitleEvidence: structural.pageTitleEvidence,
+                        pageTitleEvidenceViewSpan: structural.viewSpan,
+                    };
+                }
+            }
+
+            const structurallyTitledPage = pages[pageIndex];
+            // Page-window annotations are the last title fallback. Only apply
+            // one when the current actual page has no full-projection or
+            // structural title and its span exactly matches one source page.
+            if ((getPresentationSpeakerLabel(structurallyTitledPage, message) === '未识别'
+                || hasCoarseNarrationPageTitle(structurallyTitledPage))
+                && shouldUsePresentationPageWindow(sourceText, basePages)) {
+                const exactBasePages = basePages.filter((page) => samePresentationSpan(page.sourceSpan, structurallyTitledPage.sourceSpan));
+                if (exactBasePages.length === 1) {
+                    const basePageIndex = basePages.indexOf(exactBasePages[0]);
+                    const pageProjection = getCurrentPresentationPageSegment(
+                        snapshot, messageIndex, message, sourceText, basePages, basePageIndex,
+                    );
+                    if (pageProjection?.pageTitleEvidence
+                        && samePresentationSpan(pageProjection.pageTitleEvidence.coreSpan, structurallyTitledPage.sourceSpan)
+                        && (!structurallyTitledPage.sourceMessageHash || structurallyTitledPage.sourceMessageHash === pageProjection.fullMessageHash)) {
+                        pages[pageIndex] = {
+                            ...structurallyTitledPage,
+                            sourceMessageHash: structurallyTitledPage.sourceMessageHash || pageProjection.fullMessageHash,
+                            pageTitleEvidence: pageProjection.pageTitleEvidence,
+                            pageTitleEvidenceViewSpan: pageProjection.viewSpan,
+                        };
+                    }
+                }
+            }
+        }
+    }
+    return { sourceText, pages };
+}
+
+function getManifestKnownVisualSpeakers() {
+    if (!manifest) return [];
+    const arcId = release?.activeArcId || release?.arcId || manifest.defaultArcId || manifest.arcId || '';
+    return [
+        ...getVisualCharacterBindings(manifest, arcId),
+        ...getVisualCharacterPool(manifest, arcId),
+    ];
+}
+
+function structuralPageTitleMemoryKey(snapshot, sourceMessageIndex, pageIndex, sourceSpan,
+    beforeMessageIndex = activeMessageIndex,
+    publishedSpeakerFingerprint = structuralSpeakerNamesFingerprint(),
+    parserVersion = STRUCTURAL_MESSAGE_SPEAKER_INDEX_VERSION) {
+    return `${presentationProjectionScope(snapshot)}/structural-title/${parserVersion}/${beforeMessageIndex}/${publishedSpeakerFingerprint}/${sourceMessageIndex}/${pageIndex}/${sourceSpan?.start}-${sourceSpan?.end}`;
+}
+
+function getStructuralPageTitleMemo(snapshot, sourceMessageIndex, pageIndex, sourceText, page,
+    beforeMessageIndex = activeMessageIndex, speakerNamesOverride = null, candidateSourceFingerprint = '') {
+    const speakerNames = Array.isArray(speakerNamesOverride)
+        ? speakerNamesOverride
+        : (typeof getStructuralSpeakerNamesForSnapshot === 'function'
+            ? getStructuralSpeakerNamesForSnapshot(snapshot, beforeMessageIndex) : getPublishedStructuralSpeakerNames());
+    const publishedSpeakerFingerprint = structuralSpeakerNamesFingerprint(speakerNames, candidateSourceFingerprint);
+    const parserVersion = STRUCTURAL_MESSAGE_SPEAKER_INDEX_VERSION;
+    const key = structuralPageTitleMemoryKey(snapshot, sourceMessageIndex, pageIndex, page?.sourceSpan,
+        beforeMessageIndex, publishedSpeakerFingerprint, parserVersion);
+    const memo = presentationStructuralPageTitles.get(key);
+    if (page?.semanticPresentation?.type === 'unattributed-dialogue' && memo) {
+        const evidence = memo.pageTitleEvidence;
+        const validStructuralSpeaker = ['speaker', 'group'].includes(evidence?.kind)
+            && isFastStructuralRule(evidence?.ruleId)
+            && isExactStructuralMessagePageEvidence(evidence, sourceText, {
+                sourceMessageIndex, sourceMessageHash: memo.sourceMessageHash, coreSpan: page?.sourceSpan,
+            });
+        const validStructuralHeading = evidence?.kind === 'classification'
+            && evidence?.ruleId === 'structural-heading-shape'
+            && evidence?.classification === 'other-visible' && evidence?.text === '标题'
+            && isExactStructuralMessagePageEvidence(evidence, sourceText, {
+                sourceMessageIndex, sourceMessageHash: memo.sourceMessageHash, coreSpan: page?.sourceSpan,
+            });
+        if (!validStructuralSpeaker && !validStructuralHeading) {
+            presentationStructuralPageTitles.delete(key);
+            return null;
+        }
+    }
+    if (memo?.pageTitleEvidence?.ruleId === 'plain-prose-narration'
+        && (page?.type !== 'unknown' || ['dialogue', 'unattributed-dialogue'].includes(page?.semanticPresentation?.type))) {
+        presentationStructuralPageTitles.delete(key);
+        return null;
+    }
+    if (!memo || memo.sourceText !== sourceText || memo.sourceMessageIndex !== sourceMessageIndex
+        || memo.publishedSpeakerFingerprint !== publishedSpeakerFingerprint || memo.parserVersion !== parserVersion
+        || memo.sourceSpan?.start !== page?.sourceSpan?.start || memo.sourceSpan?.end !== page?.sourceSpan?.end
+        || !memo.sourceMessageHash || memo.pageTitleEvidence?.sourceMessageHash !== memo.sourceMessageHash
+        || memo.pageTitleEvidence?.sourceMessageIndex !== sourceMessageIndex
+        || memo.pageTitleEvidence?.coreSpan?.start !== page?.sourceSpan?.start
+        || memo.pageTitleEvidence?.coreSpan?.end !== page?.sourceSpan?.end) return null;
+    return memo;
+}
+
+async function ensureStructuralPresentationPageTitle(snapshot, messageIndex, message, pageIndex) {
+    if (message?.role !== 'character') return;
+    const initial = createPresentationPagesForMessage(snapshot, messageIndex, message, pageIndex);
+    const page = initial.pages[pageIndex];
+    const retryFromBoundCandidates = shouldRetryPageTitleWithBoundCandidates(page, message, initial.sourceText);
+    if (!page || (hasAuthoritativePageTitle(page, message, initial.sourceText) && !retryFromBoundCandidates)) return;
+    const window = createPresentationPageWindow({ sourceText: initial.sourceText, pages: initial.pages, pageIndex, lookbehindPages: 1 });
+    if (!window) return;
+    const sourceMessageIndex = Number.isSafeInteger(message?.index) ? message.index : messageIndex;
+    const candidateRequestScope = structuralSpeakerCandidateRequestScope(snapshot);
+
+    // Resolve complete, message-local speaker evidence before waiting on the
+    // optional worldbook request when the original segmenter already exposed
+    // a concrete runtime-text speaker candidate. This catches strong local
+    // forms such as `Durik咆哮：“...”` without adding a second broad matcher.
+    const hasRuntimeTextSpeakerCandidate = ['dialogue', 'dialogue-group'].includes(page.type)
+        && typeof page.speaker === 'string' && page.speaker.trim()
+        && !['未识别', '旁白'].includes(page.speaker)
+        && page.speakerConfidence === 'inferred'
+        && page.confidenceBand === 'probable'
+        && page.speakerOrigin === 'runtime-text';
+    if (hasRuntimeTextSpeakerCandidate && hasStructuralQuoteCue(page.text)) {
+        const localSpeakerNames = getStructuralSpeakerNamesForSnapshot(snapshot, messageIndex);
+        const localSpeakerFingerprint = structuralSpeakerNamesFingerprint(localSpeakerNames);
+        const localMessageIndex = createStructuralMessageSpeakerIndex({
+            fullText: initial.sourceText,
+            publishedSpeakerNames: localSpeakerNames,
+            publishedSpeakerFingerprint: localSpeakerFingerprint,
             sourceMessageIndex,
-        }),
+            // The provisional hash is used only to inspect source-local
+            // syntax. It is replaced with the verified full-text hash before
+            // any evidence is memoized or rendered.
+            sourceMessageHash: `sha256:${'0'.repeat(64)}`,
+            parserVersion: STRUCTURAL_MESSAGE_SPEAKER_INDEX_VERSION,
+        });
+        const hasExplicitLocalCue = localMessageIndex.quoteEvidence.some((quote) => (
+            quote.decision?.status === 'attributed'
+            && quote.decision.syntaxRole === 'explicit-speaker-cue'
+            && quote.decision.evidenceRank === 0
+            && quote.quoteSpan.start < page.sourceSpan.end && page.sourceSpan.start < quote.quoteSpan.end
+        ));
+        if (hasExplicitLocalCue) {
+            const localSourceMessageHash = await createVisibleMessageHash(initial.sourceText);
+            if (!isCurrentStructuralTitleTarget(snapshot, messageIndex, message, pageIndex, initial.sourceText,
+                page.sourceSpan, candidateRequestScope)) return;
+            localMessageIndex.sourceMessageHash = localSourceMessageHash;
+            const localEvidence = createStructuralPageTitleEvidenceFromMessageIndex({
+                messageIndex: localMessageIndex,
+                fullText: initial.sourceText,
+                sourceMessageIndex,
+                sourceMessageHash: localSourceMessageHash,
+                publishedSpeakerFingerprint: localSpeakerFingerprint,
+                parserVersion: STRUCTURAL_MESSAGE_SPEAKER_INDEX_VERSION,
+                coreSpan: page.sourceSpan,
+                pageType: page.type,
+                previousPageSpans: initial.pages.slice(Math.max(0, pageIndex - 2), pageIndex).map((priorPage) => ({
+                    sourceSpan: priorPage.sourceSpan,
+                    pageType: priorPage.type,
+                })),
+            });
+            const hasStrongLocalSpeaker = ['speaker', 'group'].includes(localEvidence?.kind)
+                && isStructuralFastTitleRule(localEvidence.ruleId)
+                && isExactStructuralMessagePageEvidence(localEvidence, initial.sourceText, {
+                    sourceMessageIndex,
+                    sourceMessageHash: localSourceMessageHash,
+                    coreSpan: page.sourceSpan,
+                });
+            if (hasStrongLocalSpeaker) {
+                const localMemoKey = structuralPageTitleMemoryKey(snapshot, sourceMessageIndex, pageIndex, page.sourceSpan,
+                    messageIndex, localSpeakerFingerprint, STRUCTURAL_MESSAGE_SPEAKER_INDEX_VERSION);
+                const localMemo = {
+                    sourceText: initial.sourceText,
+                    sourceMessageIndex,
+                    sourceMessageHash: localSourceMessageHash,
+                    sourceSpan: page.sourceSpan,
+                    viewSpan: localEvidence.viewSpan,
+                    pageTitleEvidence: localEvidence,
+                    publishedSpeakerFingerprint: localSpeakerFingerprint,
+                    parserVersion: STRUCTURAL_MESSAGE_SPEAKER_INDEX_VERSION,
+                };
+                presentationStructuralPageTitles.set(localMemoKey, localMemo);
+                const locallyTitledPages = applyStructuralTitleMemoToPages(initial.pages, pageIndex, localMemo);
+                updateActiveStructuralTitle(snapshot, messageIndex, message, pageIndex, initial.sourceText,
+                    page.sourceSpan, locallyTitledPages);
+                return;
+            }
+        }
+    }
+
+    const candidateResult = await speakerCandidateAdapter.getBoundWorldbookCandidates({ release, manifest, snapshot });
+    if (candidateRequestScope !== structuralSpeakerCandidateRequestScope(activeChatSnapshot)
+        || !isCurrentStructuralTitleTarget(snapshot, messageIndex, message, pageIndex, initial.sourceText,
+            page.sourceSpan, candidateRequestScope)) return;
+    const candidateSourceFingerprint = structuralSpeakerCandidateSourceFingerprint(snapshot, candidateResult);
+    const structuralSpeakerNames = getStructuralSpeakerNamesForSnapshot(
+        snapshot, messageIndex, candidateResult.candidateSpeakerNames,
+    );
+    const publishedSpeakerFingerprint = structuralSpeakerNamesFingerprint(structuralSpeakerNames, candidateSourceFingerprint);
+    const key = structuralPageTitleMemoryKey(snapshot, sourceMessageIndex, pageIndex, page.sourceSpan,
+        messageIndex, publishedSpeakerFingerprint, STRUCTURAL_MESSAGE_SPEAKER_INDEX_VERSION);
+    const currentMemo = getStructuralPageTitleMemo(snapshot, sourceMessageIndex, pageIndex,
+        initial.sourceText, page, messageIndex, structuralSpeakerNames, candidateSourceFingerprint);
+    if (currentMemo) {
+        const currentPages = createPresentationPagesForMessage(snapshot, messageIndex, message, pageIndex).pages;
+        const titledPages = applyStructuralTitleMemoToPages(currentPages, pageIndex, currentMemo);
+        updateActiveStructuralTitle(snapshot, messageIndex, message, pageIndex, initial.sourceText, page.sourceSpan, titledPages);
+        return;
+    }
+    const pending = presentationStructuralTitleInflight.get(key);
+    if (pending?.sourceText === initial.sourceText) {
+        await pending.promise;
+        return;
+    }
+    const job = buildStructuralPresentationPageTitle(snapshot, messageIndex, message, pageIndex, initial,
+        structuralSpeakerNames, candidateSourceFingerprint, candidateRequestScope);
+    const pendingJob = { sourceText: initial.sourceText, promise: job };
+    presentationStructuralTitleInflight.set(key, pendingJob);
+    try {
+        await job;
+    } finally {
+        if (presentationStructuralTitleInflight.get(key) === pendingJob) presentationStructuralTitleInflight.delete(key);
+    }
+}
+
+function hasAuthoritativePageTitle(page, message, fullSourceText = '') {
+    if (!page) return false;
+    const semanticType = page.semanticPresentation?.type;
+    const pageShape = classifyStructuralPageShape({
+        fullText: fullSourceText,
+        pageType: page.type,
+        coreSpan: page.sourceSpan,
+    });
+    if (pageShape.kind === 'structured-record') return false;
+    if (pageShape.kind === 'heading' && !['dialogue', 'dialogue-group', 'unattributed-dialogue'].includes(semanticType)
+        && page.pageTitleEvidence?.ruleId !== 'structural-heading-shape') return false;
+    if (semanticType === 'unattributed-dialogue') {
+        const label = getPresentationSpeakerLabel(page, message);
+        return ['narrative-framed-quote', 'structural-heading-shape'].includes(page.pageTitleEvidence?.ruleId)
+            || (!hasCoarseNarrationPageTitle(page) && !['未识别', '旁白'].includes(label));
+    }
+    // A coarse or semantic narration label is not authoritative when the
+    // source contains a quote cue: the exact page still needs the structural
+    // title pass. This remains title-only and does not change page semantics.
+    const coarseNarrationNeedsQuoteScan = hasCoarseNarrationPageTitle(page)
+        && hasStructuralQuoteCue(fullSourceText);
+    if (coarseNarrationNeedsQuoteScan || getPresentationSpeakerLabel(page, message) === '未识别') return false;
+    const ruleId = page.pageTitleEvidence?.ruleId;
+    return !page.pageTitleEvidence || isFastStructuralRule(ruleId);
+}
+
+function shouldUseStructuralHeadingTitle(page, fullSourceText = '') {
+    if (!page || ['dialogue', 'dialogue-group'].includes(page.semanticPresentation?.type)) return false;
+    return classifyStructuralPageShape({
+        fullText: fullSourceText,
+        pageType: page.type,
+        coreSpan: page.sourceSpan,
+    }).kind === 'heading';
+}
+
+async function buildStructuralPresentationPageTitle(snapshot, messageIndex, message, pageIndex, initial, structuralSpeakerNames,
+    candidateSourceFingerprint = '', candidateRequestScope = '') {
+    const page = initial.pages[pageIndex];
+    const sourceMessageIndex = Number.isSafeInteger(message?.index) ? message.index : messageIndex;
+    const sourceMessageHash = await createVisibleMessageHash(initial.sourceText);
+    if (!isCurrentStructuralTitleTarget(snapshot, messageIndex, message, pageIndex, initial.sourceText,
+        page.sourceSpan, candidateRequestScope)) return;
+    const refreshed = createPresentationPagesForMessage(snapshot, messageIndex, message, pageIndex);
+    const currentPage = refreshed.pages[pageIndex];
+    const retryFromBoundCandidates = shouldRetryPageTitleWithBoundCandidates(currentPage, message, refreshed.sourceText);
+    if (!currentPage || refreshed.sourceText !== initial.sourceText
+        || !samePresentationSpan(currentPage.sourceSpan, page.sourceSpan)
+        || (hasAuthoritativePageTitle(currentPage, message, refreshed.sourceText) && !retryFromBoundCandidates)) return;
+
+    const stableSourceText = refreshed.sourceText;
+    const stableSourcePages = refreshed.pages;
+    const publishedSpeakerFingerprint = structuralSpeakerNamesFingerprint(structuralSpeakerNames, candidateSourceFingerprint);
+    const messageIndexKey = structuralMessageIndexMemoryKey(
+        snapshot, sourceMessageIndex, sourceMessageHash, publishedSpeakerFingerprint,
+    );
+    let structuralMessageIndex = presentationStructuralMessageIndexes.get(messageIndexKey);
+    if (!structuralMessageIndex || structuralMessageIndex.sourceLength !== Array.from(stableSourceText).length) {
+        structuralMessageIndex = createStructuralMessageSpeakerIndex({
+            fullText: stableSourceText,
+            publishedSpeakerNames: structuralSpeakerNames,
+            publishedSpeakerFingerprint,
+            sourceMessageIndex,
+            sourceMessageHash,
+            parserVersion: STRUCTURAL_MESSAGE_SPEAKER_INDEX_VERSION,
+        });
+        presentationStructuralMessageIndexes.set(messageIndexKey, structuralMessageIndex);
+    } else {
+        presentationStructuralMessageIndexes.delete(messageIndexKey);
+        presentationStructuralMessageIndexes.set(messageIndexKey, structuralMessageIndex);
+    }
+    while (presentationStructuralMessageIndexes.size > 128) {
+        presentationStructuralMessageIndexes.delete(presentationStructuralMessageIndexes.keys().next().value);
+    }
+    for (let index = 0; index <= pageIndex; index += 1) {
+        const candidatePage = refreshed.pages[index];
+        const candidateWindow = createPresentationPageWindow({
+            sourceText: refreshed.sourceText, pages: refreshed.pages, pageIndex: index, lookbehindPages: 1,
+        });
+        if (!candidatePage || !candidateWindow) {
+            continue;
+        }
+        let evidence = null;
+        let evidenceViewSpan = candidateWindow.viewSpan;
+        let evidenceSource = '';
+        const sourceMemo = getStructuralPageTitleMemo(snapshot, sourceMessageIndex, index, refreshed.sourceText,
+            candidatePage, messageIndex, structuralSpeakerNames, candidateSourceFingerprint);
+        if (sourceMemo && isFastStructuralRule(sourceMemo.pageTitleEvidence?.ruleId)) {
+            evidence = sourceMemo.pageTitleEvidence;
+            evidenceViewSpan = sourceMemo.viewSpan;
+            evidenceSource = 'structural';
+        }
+
+        if (!evidence) {
+            evidence = createStructuralContinuationEvidenceFromAnnotation(
+                candidatePage, sourceMessageIndex, sourceMessageHash, candidateWindow, refreshed.sourceText,
+            );
+            if (evidence) evidenceSource = 'annotation';
+        }
+        if (!evidence) {
+            const structuralCandidate = createStructuralPageTitleEvidenceFromMessageIndex({
+                messageIndex: structuralMessageIndex,
+                fullText: refreshed.sourceText,
+                sourceMessageIndex,
+                sourceMessageHash,
+                publishedSpeakerFingerprint,
+                parserVersion: STRUCTURAL_MESSAGE_SPEAKER_INDEX_VERSION,
+                coreSpan: candidatePage.sourceSpan,
+                pageType: candidatePage.type,
+                previousPageSpans: stableSourcePages.slice(Math.max(0, index - 2), index).map((priorPage) => ({
+                    sourceSpan: priorPage.sourceSpan,
+                    pageType: priorPage.type,
+                })),
+                allowPlainNarration: candidatePage.type === 'unknown',
+            });
+            evidence = isExactStructuralMessagePageEvidence(structuralCandidate, refreshed.sourceText, {
+                sourceMessageIndex, sourceMessageHash, coreSpan: candidatePage.sourceSpan,
+            }) ? structuralCandidate : null;
+            if (evidence) {
+                evidenceViewSpan = evidence.viewSpan;
+                evidenceSource = 'structural';
+            }
+        }
+
+        if (!evidence && candidatePage.pageTitleEvidence && isFastStructuralRule(candidatePage.pageTitleEvidence.ruleId)
+            && (candidatePage.pageTitleEvidence.ruleId !== 'plain-prose-narration' || candidatePage.type === 'unknown')) {
+            evidence = candidatePage.pageTitleEvidence;
+            evidenceViewSpan = candidatePage.pageTitleEvidenceViewSpan || candidateWindow.viewSpan;
+            evidenceSource = 'structural';
+        }
+
+        if (!evidence && refreshed.sourceText === stableSourceText
+            && shouldUsePresentationPageWindow(stableSourceText, stableSourcePages)) {
+            const exactBasePages = stableSourcePages.filter((basePage) => samePresentationSpan(basePage.sourceSpan, candidatePage.sourceSpan));
+            if (exactBasePages.length === 1) {
+                const basePageIndex = stableSourcePages.indexOf(exactBasePages[0]);
+                const pageProjection = getCurrentPresentationPageSegment(
+                    snapshot, messageIndex, message, stableSourceText, stableSourcePages, basePageIndex,
+                );
+                if (pageProjection?.pageTitleEvidence
+                    && samePresentationSpan(pageProjection.pageTitleEvidence.coreSpan, candidatePage.sourceSpan)
+                    && pageProjection.fullMessageHash === sourceMessageHash) {
+                    evidence = pageProjection.pageTitleEvidence;
+                    evidenceViewSpan = pageProjection.viewSpan;
+                    evidenceSource = 'page-window';
+                }
+            }
+        }
+
+        if (!evidence && candidatePage.pageTitleEvidence
+            && (candidatePage.pageTitleEvidence.ruleId !== 'plain-prose-narration' || candidatePage.type === 'unknown')) {
+            evidence = candidatePage.pageTitleEvidence;
+            evidenceViewSpan = candidatePage.pageTitleEvidenceViewSpan || candidateWindow.viewSpan;
+            evidenceSource = isFastStructuralRule(evidence.ruleId) ? 'structural' : 'page-window';
+        }
+        const exactCurrentNarrationSpeakerTitle = index === pageIndex
+            && candidatePage.type === 'narration'
+            && getPresentationSpeakerLabel(candidatePage, message) === '旁白'
+            && ['speaker', 'group'].includes(evidence?.kind)
+            && isExactStructuralMessagePageEvidence(evidence, refreshed.sourceText, {
+                sourceMessageIndex, sourceMessageHash, coreSpan: candidatePage.sourceSpan,
+            });
+        if (evidence && evidenceSource === 'structural' && isFastStructuralRule(evidence.ruleId)
+            && (candidatePage.identityRef?.type === 'unknown'
+                || exactCurrentNarrationSpeakerTitle
+                || (!candidatePage.identityRef && candidatePage.type === 'narration'
+                    && evidence.kind === 'classification' && ['unattributed-dialogue', 'status', 'other-visible'].includes(evidence.classification)))
+            && (index < pageIndex || getPresentationSpeakerLabel(candidatePage, message) === '未识别'
+                || exactCurrentNarrationSpeakerTitle
+                || evidence.classification === 'unattributed-dialogue'
+                || evidence.ruleId === 'structural-heading-shape')) {
+            presentationStructuralPageTitles.set(structuralPageTitleMemoryKey(
+                snapshot, sourceMessageIndex, index, candidatePage.sourceSpan,
+                messageIndex, publishedSpeakerFingerprint, STRUCTURAL_MESSAGE_SPEAKER_INDEX_VERSION,
+            ), {
+                sourceText: refreshed.sourceText,
+                sourceMessageIndex,
+                sourceMessageHash,
+                sourceSpan: candidatePage.sourceSpan,
+                viewSpan: evidenceViewSpan,
+                pageTitleEvidence: evidence,
+                publishedSpeakerFingerprint,
+                parserVersion: STRUCTURAL_MESSAGE_SPEAKER_INDEX_VERSION,
+            });
+        }
+    }
+    // A production segmenter's existing probable name+action+quote hint may
+    // provide a display-only title for this exact page. It never writes back
+    // into the segment, semantic classification, identity, or visual context.
+    const currentSemanticType = currentPage.semanticPresentation?.type;
+    const shape = classifyStructuralPageShape({
+        fullText: refreshed.sourceText,
+        pageType: currentPage.type,
+        coreSpan: currentPage.sourceSpan,
+    });
+    const currentMemo = getStructuralPageTitleMemo(snapshot, sourceMessageIndex, pageIndex,
+        refreshed.sourceText, currentPage, messageIndex, structuralSpeakerNames, candidateSourceFingerprint);
+    const hasExplicitSpeakerTitle = ['speaker', 'group'].includes(currentMemo?.pageTitleEvidence?.kind)
+        || ['speaker', 'group'].includes(currentPage.pageTitleEvidence?.kind);
+    const semanticAllowsProbableTitle = !currentSemanticType
+        || ['unknown', 'unattributed-dialogue'].includes(currentSemanticType);
+    if (!hasExplicitSpeakerTitle && semanticAllowsProbableTitle
+        && !['structured-record', 'heading'].includes(shape.kind)) {
+        let probableTitle = await createProbableNarrativeSpeakerTitleEvidence({
+            fullText: refreshed.sourceText,
+            sourceMessageIndex,
+            sourceMessageHash,
+            coreSpan: currentPage.sourceSpan,
+            segment: currentPage,
+            messageIndex: structuralMessageIndex,
+        });
+        if (!isCurrentStructuralTitleTarget(snapshot, messageIndex, message, pageIndex, initial.sourceText,
+            page.sourceSpan, candidateRequestScope)) return;
+        if (!probableTitle) {
+            const continuationTargets = structuralMessageIndex.unresolvedDialogueSpans.filter((span) => (
+                span?.reasonId === 'unattributed-quoted-speech'
+                && span.start < currentPage.sourceSpan.end && currentPage.sourceSpan.start < span.end
+            ));
+            const seedStartIndex = Math.max(0, pageIndex - 2);
+            const seedEvidenceRecords = (await Promise.all(stableSourcePages.slice(seedStartIndex, pageIndex)
+                .map((priorPage, priorPageOffset) => ({
+                    priorPage,
+                    sourcePageIndex: seedStartIndex + priorPageOffset,
+                }))
+                .filter(({ priorPage }) => priorPage?.sourceSpan
+                    && continuationTargets.some((span) => span.start < priorPage.sourceSpan.end
+                        && priorPage.sourceSpan.start < span.end))
+                .map(async ({ priorPage, sourcePageIndex }) => {
+                    if (priorPage?.type !== 'dialogue'
+                        || priorPage?.speakerConfidence !== 'inferred'
+                        || priorPage?.confidenceBand !== 'probable'
+                        || priorPage?.speakerOrigin !== 'runtime-text'
+                        || !isValidPresentationEvidenceSpan(priorPage.sourceSpan, Array.from(refreshed.sourceText).length)) return null;
+                    const priorShape = classifyStructuralPageShape({
+                        fullText: refreshed.sourceText,
+                        pageType: priorPage.type,
+                        coreSpan: priorPage.sourceSpan,
+                    });
+                    if (['structured-record', 'heading'].includes(priorShape.kind)) return null;
+                    const priorExplicitEvidence = createStructuralPageTitleEvidenceFromMessageIndex({
+                        messageIndex: structuralMessageIndex,
+                        fullText: refreshed.sourceText,
+                        sourceMessageIndex,
+                        sourceMessageHash,
+                        publishedSpeakerFingerprint,
+                        parserVersion: STRUCTURAL_MESSAGE_SPEAKER_INDEX_VERSION,
+                        coreSpan: priorPage.sourceSpan,
+                        pageType: priorPage.type,
+                        allowPlainNarration: false,
+                    });
+                    if (isExactStructuralMessagePageEvidence(priorExplicitEvidence, refreshed.sourceText, {
+                        sourceMessageIndex, sourceMessageHash, coreSpan: priorPage.sourceSpan,
+                    }) && ['speaker', 'group'].includes(priorExplicitEvidence.kind)) return null;
+                    const seed = await createProbableNarrativeSpeakerTitleEvidence({
+                        fullText: refreshed.sourceText,
+                        sourceMessageIndex,
+                        sourceMessageHash,
+                        coreSpan: priorPage.sourceSpan,
+                        segment: priorPage,
+                        messageIndex: structuralMessageIndex,
+                    });
+                    return seed ? {
+                        sourcePageIndex,
+                        coreSpan: priorPage.sourceSpan,
+                        evidence: seed,
+                    } : null;
+                }))).filter(Boolean);
+            if (!isCurrentStructuralTitleTarget(snapshot, messageIndex, message, pageIndex, initial.sourceText,
+                page.sourceSpan, candidateRequestScope)) return;
+            probableTitle = createProbableQuoteSpanContinuationTitleEvidence({
+                fullText: refreshed.sourceText,
+                sourceMessageIndex,
+                sourceMessageHash,
+                coreSpan: currentPage.sourceSpan,
+                currentPageIndex: pageIndex,
+                unresolvedSpans: continuationTargets,
+                seedEvidenceRecords,
+            });
+        }
+        if (probableTitle) {
+            if (!isCurrentStructuralTitleTarget(snapshot, messageIndex, message, pageIndex, initial.sourceText,
+                page.sourceSpan, candidateRequestScope)) return;
+            presentationStructuralPageTitles.set(structuralPageTitleMemoryKey(
+                snapshot, sourceMessageIndex, pageIndex, currentPage.sourceSpan,
+                messageIndex, publishedSpeakerFingerprint, STRUCTURAL_MESSAGE_SPEAKER_INDEX_VERSION,
+            ), {
+                sourceText: refreshed.sourceText,
+                sourceMessageIndex,
+                sourceMessageHash,
+                sourceSpan: currentPage.sourceSpan,
+                viewSpan: probableTitle.viewSpan,
+                pageTitleEvidence: probableTitle,
+                publishedSpeakerFingerprint,
+                parserVersion: STRUCTURAL_MESSAGE_SPEAKER_INDEX_VERSION,
+            });
+        }
+    }
+    while (presentationStructuralPageTitles.size > 512) {
+        presentationStructuralPageTitles.delete(presentationStructuralPageTitles.keys().next().value);
+    }
+    if (!isCurrentStructuralTitleTarget(snapshot, messageIndex, message, pageIndex, initial.sourceText,
+        page.sourceSpan, candidateRequestScope)) return;
+    let updatedPages = createPresentationPagesForMessage(snapshot, messageIndex, message, pageIndex).pages;
+    const candidateMemo = getStructuralPageTitleMemo(snapshot, sourceMessageIndex, pageIndex,
+        refreshed.sourceText, updatedPages[pageIndex], messageIndex, structuralSpeakerNames, candidateSourceFingerprint);
+    if (candidateMemo) updatedPages = applyStructuralTitleMemoToPages(updatedPages, pageIndex, candidateMemo);
+    const updatedPage = updatedPages[pageIndex];
+    const updatedLabel = getPresentationSpeakerLabel(updatedPage, message);
+    const hasCurrentUnattributedTitle = updatedPage?.pageTitleEvidence?.classification === 'unattributed-dialogue'
+        && updatedPage.pageTitleEvidence?.ruleId === 'unattributed-quoted-speech';
+    const hasCurrentProbableTitle = ['probable-narrative-dialogue', 'probable-quote-span-continuation']
+        .includes(updatedPage?.pageTitleEvidence?.ruleId);
+    if ((updatedLabel !== '未识别' || hasCurrentUnattributedTitle || hasCurrentProbableTitle)
+        && activeChatSnapshot?.fileName === snapshot.fileName
+        && activeMessageIndex === messageIndex && activeSegmentIndex === pageIndex) {
+        activeMessageSegments = updatedPages;
+        if (typeof ui !== 'undefined' && ui.speakerName) {
+            ui.speakerName.textContent = getDisplayedSpeakerName(updatedPage, message);
+            applySegmentPresentation(updatedPage);
+        } else {
+            renderActiveDialogueSegment({ animate: false });
+        }
+    }
+}
+
+function shouldRetryPageTitleWithBoundCandidates(page, message, fullText) {
+    if (message?.role !== 'character' || !hasStructuralQuoteCue(fullText)) return false;
+    const shape = classifyStructuralPageShape({
+        fullText,
+        pageType: page?.type,
+        coreSpan: page?.sourceSpan,
+    });
+    if (['structured-record', 'heading'].includes(shape.kind)
+        || ['player', 'system'].includes(page?.semanticPresentation?.type)) return false;
+    return ['旁白', '未识别', ''].includes(getPresentationSpeakerLabel(page, message));
+}
+
+function applyStructuralTitleMemoToPages(pages, pageIndex, memo) {
+    if (!Array.isArray(pages) || !pages[pageIndex] || !memo?.pageTitleEvidence) return pages;
+    const updated = [...pages];
+    updated[pageIndex] = {
+        ...updated[pageIndex],
+        sourceMessageHash: updated[pageIndex].sourceMessageHash || memo.sourceMessageHash,
+        pageTitleEvidence: memo.pageTitleEvidence,
+        pageTitleEvidenceViewSpan: memo.viewSpan,
     };
+    return updated;
+}
+
+function updateActiveStructuralTitle(snapshot, messageIndex, message, pageIndex, sourceText, sourceSpan, pages) {
+    if (!isCurrentStructuralTitleTarget(snapshot, messageIndex, message, pageIndex, sourceText, sourceSpan)) return;
+    const updatedPage = pages?.[pageIndex];
+    if (!updatedPage) return;
+    activeMessageSegments = pages;
+    if (ui?.speakerName) {
+        ui.speakerName.textContent = getDisplayedSpeakerName(updatedPage, message);
+        applySegmentPresentation(updatedPage);
+    } else {
+        renderActiveDialogueSegment({ animate: false });
+    }
+}
+
+function structuralMessageIndexMemoryKey(snapshot, sourceMessageIndex, sourceMessageHash, publishedSpeakerFingerprint) {
+    return `${presentationProjectionScope(snapshot)}/structural-message/${sourceMessageIndex}/${sourceMessageHash}/${publishedSpeakerFingerprint}/${STRUCTURAL_MESSAGE_SPEAKER_INDEX_VERSION}`;
+}
+
+function isValidPresentationEvidenceSpan(span, sourceLength) {
+    return Number.isSafeInteger(span?.start) && Number.isSafeInteger(span?.end)
+        && span.start >= 0 && span.end > span.start && span.end <= sourceLength;
+}
+
+function isExactSourceEvidenceSpan(span, chars) {
+    return isValidPresentationEvidenceSpan(span, chars.length)
+        && typeof span.text === 'string' && span.text.length > 0
+        && chars.slice(span.start, span.end).join('') === span.text;
+}
+
+function isExactStructuralMessagePageEvidence(evidence, sourceText, { sourceMessageIndex, sourceMessageHash, coreSpan } = {}) {
+    const chars = Array.from(String(sourceText ?? ''));
+    const speakers = evidence?.speakers;
+    const spans = evidence?.classificationEvidenceSpans;
+    if (!evidence || !isStructuralFastTitleRule(evidence.ruleId)
+        || evidence.sourceMessageIndex !== sourceMessageIndex || evidence.sourceMessageHash !== sourceMessageHash
+        || evidence.coreSpan?.start !== coreSpan?.start || evidence.coreSpan?.end !== coreSpan?.end
+        || !Number.isSafeInteger(evidence.viewSpan?.start) || !Number.isSafeInteger(evidence.viewSpan?.end)
+        || evidence.viewSpan.start < 0 || evidence.viewSpan.start > coreSpan.start
+        || evidence.viewSpan.end < coreSpan.end || evidence.viewSpan.end > chars.length
+        || !Array.isArray(spans) || !spans.length || spans.some((span) => (
+            !Number.isSafeInteger(span?.start) || !Number.isSafeInteger(span?.end)
+            || span.start < coreSpan.start || span.end > coreSpan.end || span.end <= span.start
+            || !chars.slice(span.start, span.end).some((char) => !/\s/u.test(char))
+        )) || !Array.isArray(speakers)) return false;
+    if (evidence.kind === 'speaker') {
+        if (speakers.length !== 1) return false;
+        if (evidence.ruleId === 'probable-narrative-dialogue') {
+            const probable = evidence.sourceEvidence;
+            const evidenceSpans = [probable?.speaker, probable?.action, probable?.quote];
+            if (evidence.text !== `${speakers[0]?.text}（推测）`
+                || evidence.confidenceBand !== 'probable'
+                || probable?.speakerConfidence !== 'inferred' || probable?.confidenceBand !== 'probable'
+                || probable?.speakerOrigin !== 'runtime-text'
+                || evidenceSpans.some((item, index) => !item
+                    || item.start !== spans[index]?.start || item.end !== spans[index]?.end
+                    || chars.slice(item.start, item.end).join('') !== item.text)) return false;
+        } else if (evidence.ruleId === 'probable-quote-span-continuation') {
+            const continuation = evidence.sourceEvidence;
+            const speaker = continuation?.speaker;
+            const action = continuation?.action;
+            const quote = continuation?.quote;
+            const quoteSpans = continuation?.continuedQuoteSpans;
+            if (evidence.text !== `${speakers[0]?.text}（推测）`
+                || evidence.confidenceBand !== 'probable'
+                || continuation?.speakerConfidence !== 'inferred'
+                || continuation?.confidenceBand !== 'probable'
+                || continuation?.speakerOrigin !== 'runtime-text'
+                || !isExactSourceEvidenceSpan(speaker, chars)
+                || !isExactSourceEvidenceSpan(action, chars)
+                || !isExactSourceEvidenceSpan(quote, chars)
+                || !isValidPresentationEvidenceSpan(continuation?.seedCoreSpan, chars.length)
+                || continuation.seedCoreSpan.end > coreSpan.start
+                || speaker.start < continuation.seedCoreSpan.start
+                || quote.end > continuation.seedCoreSpan.end
+                || !(speaker.end <= action.start && action.end <= quote.start)
+                || speakers[0]?.start !== speaker.start || speakers[0]?.end !== speaker.end
+                || !Array.isArray(quoteSpans) || !quoteSpans.length
+                || quoteSpans.some((span) => !isValidPresentationEvidenceSpan(span, chars.length)
+                    || span.start >= coreSpan.end || span.end <= coreSpan.start
+                    || !(quote.start < span.end && span.start < quote.end))) return false;
+        } else if (evidence.ruleId === 'group-role-prefix') {
+            if (evidence.text !== `${speakers[0]?.text}（群体）`
+                || speakers[0]?.displayText !== evidence.text) return false;
+        } else if (evidence.ruleId === 'player-first-person-action') {
+            const speaker = speakers[0];
+            const pageText = chars.slice(coreSpan.start, coreSpan.end).join('');
+            if (evidence.text !== '你' || speaker?.text !== '你' || speaker?.sourceText !== '我'
+                || !isExactSourceEvidenceSpan({ start: speaker.start, end: speaker.end, text: '我' }, chars)
+                || !/^\s*我(?:轻轻地|缓缓地|低声地|压低|放低|压住|放轻|轻声|低声|小声)?[^。！？!?;；\n]{0,42}(?:声音|嗓音|语气)(?:[^。！？!?;；\n]{0,18})?\s*[：:]\s*[“"「]/u.test(pageText)
+                || !/(?:压低|放低|压住|放轻|低声|轻声|小声)/u.test(pageText)) return false;
+        } else if (evidence.ruleId === 'honorific-display-title') {
+            const speaker = speakers[0];
+            const pageText = chars.slice(coreSpan.start, coreSpan.end).join('');
+            if (speaker?.sourceText !== `${speaker?.text}伯爵` || evidence.text !== speaker?.text
+                || !isExactSourceEvidenceSpan({ start: speaker.start, end: speaker.end, text: speaker.sourceText }, chars)
+                || !new RegExp(`^\\s*${speaker.text}伯爵[^。！？!?;；\\n]{0,40}(?:摊开|展开|递给|递过|交给|递出)`, 'u').test(pageText)) return false;
+        } else if (evidence.text !== speakers[0]?.text) return false;
+    }
+    if (evidence.kind === 'group' && (speakers.length < 2 || evidence.text !== '多人对话')) return false;
+    if (evidence.kind === 'classification' && (speakers.length !== 0
+        || (evidence.ruleId === 'plain-prose-narration' && evidence.classification !== 'narration')
+        || (evidence.ruleId === 'unattributed-quoted-speech' && evidence.classification !== 'unattributed-dialogue')
+        || (evidence.ruleId === 'structural-record-shape'
+            && !((evidence.classification === 'narration' && evidence.text === '旁白')
+                || (evidence.classification === 'choice' && evidence.text === '选项')))
+        || (evidence.ruleId === 'structural-heading-shape'
+            && (evidence.classification !== 'other-visible' || evidence.text !== '标题'))
+        || (evidence.ruleId === 'narrative-framed-quote'
+            && (evidence.classification !== 'narration' || evidence.text !== '旁白'))
+        || (['unknown-self-introduction', 'anonymous-first-appearance'].includes(evidence.ruleId)
+            && (evidence.classification !== 'unattributed-dialogue' || evidence.text !== '？？？'))
+        || (evidence.ruleId === 'unattributed-dialogue-shape' && evidence.classification !== 'unattributed-dialogue')
+        || !['plain-prose-narration', 'unattributed-quoted-speech', 'structural-record-shape', 'structural-heading-shape',
+            'unattributed-dialogue-shape', 'unknown-self-introduction', 'anonymous-first-appearance', 'narrative-framed-quote'].includes(evidence.ruleId))) return false;
+    return speakers.every((speaker) => (
+        typeof speaker?.text === 'string' && speaker.text.trim()
+        && Number.isSafeInteger(speaker.start) && Number.isSafeInteger(speaker.end)
+        && speaker.start >= evidence.viewSpan.start && speaker.end <= evidence.viewSpan.end
+        && speaker.end > speaker.start
+        && chars.slice(speaker.start, speaker.end).join('') === (speaker.sourceText || speaker.text)
+        && typeof speaker.mentionRef === 'string' && speaker.mentionRef.startsWith('display-only-')
+    ));
+}
+
+function isFastStructuralRule(ruleId) {
+    return isStructuralFastTitleRule(ruleId);
+}
+
+function hasCoarseNarrationPageTitle(page) {
+    if (page?.semanticPresentation?.type === 'unattributed-dialogue') {
+        return page?.type === 'narration' && !['speaker', 'group'].includes(page?.pageTitleEvidence?.kind);
+    }
+    if (page?.semanticPresentation && !['unknown', 'narration'].includes(page.semanticPresentation.type)) return false;
+    return page?.type === 'narration' || page?.pageTitleEvidence?.ruleId === 'plain-prose-narration';
+}
+
+function hasStructuralQuoteCue(value) {
+    const text = String(value ?? '');
+    return /["“”「」『』‘’｢｣]/u.test(text)
+        || /(?:^|[^\p{L}\p{N}])'[^'\r\n]{1,240}'(?=$|[^\p{L}\p{N}])/u.test(text);
+}
+
+function isCurrentStructuralTitleTarget(snapshot, messageIndex, message, pageIndex, sourceText, expectedSpan,
+    expectedCandidateRequestScope = '') {
+    const currentSnapshot = activeChatSnapshot;
+    if (currentSnapshot?.fileName !== snapshot?.fileName || activeMessageIndex !== messageIndex
+        || activeSegmentIndex !== pageIndex) return false;
+    if (expectedCandidateRequestScope
+        && structuralSpeakerCandidateRequestScope(currentSnapshot) !== expectedCandidateRequestScope) return false;
+    const activeMessage = currentSnapshot?.messages?.[messageIndex];
+    if (!activeMessage || activeMessage.role !== 'character'
+        || String(activeMessage.displayText || activeMessage.text || '') !== String(message.displayText || message.text || '')) return false;
+    const current = createPresentationPagesForMessage(currentSnapshot, messageIndex, activeMessage, pageIndex);
+    return current.sourceText === sourceText && samePresentationSpan(current.pages[pageIndex]?.sourceSpan, expectedSpan);
+}
+
+function isCurrentRenderedPresentationPageSpan(snapshot, messageIndex, pageIndex, sourceText, expectedSpan) {
+    const message = snapshot?.messages?.[messageIndex];
+    if (!message) return false;
+    const current = createPresentationPagesForMessage(snapshot, messageIndex, message, pageIndex);
+    return current.sourceText === sourceText && samePresentationSpan(current.pages[pageIndex]?.sourceSpan, expectedSpan);
+}
+
+function samePresentationSpan(left, right) {
+    return Number.isSafeInteger(left?.start) && Number.isSafeInteger(left?.end)
+        && left.start === right?.start && left.end === right?.end;
+}
+
+function getPublishedStructuralSpeakerNames() {
+    const names = [];
+    for (const character of getManifestKnownVisualSpeakers()) {
+        const primary = String(character?.displayName || character?.name || character?.characterKey || character?.id || '').trim();
+        if (primary) names.push(primary);
+        const aliases = Array.isArray(character?.aliases) ? character.aliases : [];
+        for (const alias of aliases) {
+            const value = typeof alias === 'string' ? alias : alias?.value || alias?.name || alias?.displayName;
+            if (typeof value === 'string' && value.trim()) names.push(value.trim());
+        }
+    }
+    return [...new Set(names)];
+}
+
+function getChatLocalObservedStructuralSpeakerNames(snapshot, beforeMessageIndex = (typeof activeMessageIndex === 'number'
+    ? activeMessageIndex : snapshot?.messages?.length)) {
+    if (!snapshot || typeof snapshot !== 'object' || !Array.isArray(snapshot.messages)) return [];
+    const cursor = Number.isSafeInteger(beforeMessageIndex)
+        ? Math.min(Math.max(beforeMessageIndex, 0), snapshot.messages.length) : 0;
+    let scopes = presentationChatObservedSpeakerNames.get(snapshot);
+    if (!scopes) {
+        const messages = snapshot.messages.map((message, index) => {
+            const visibleText = message?.role === 'character'
+                ? formatVisualNovelDisplayText(String(message.displayText || message.text || '')) : '';
+            return {
+                sourceMessageIndex: Number.isSafeInteger(message?.index) ? message.index : index,
+                visibleText,
+            };
+        });
+        scopes = createChatLocalObservedSpeakerNameScopes({
+            messages,
+            publishedSpeakerNames: getPublishedStructuralSpeakerNames(),
+            minimumDistinctMessages: 2,
+        });
+        presentationChatObservedSpeakerNames.set(snapshot, scopes);
+    }
+    return scopes[cursor] || [];
+}
+
+function getStructuralSpeakerNamesForSnapshot(snapshot, beforeMessageIndex, boundWorldbookCandidates = []) {
+    return [...new Set([
+        ...getPublishedStructuralSpeakerNames(),
+        ...getChatLocalObservedStructuralSpeakerNames(snapshot, beforeMessageIndex),
+        ...(Array.isArray(boundWorldbookCandidates) ? boundWorldbookCandidates : []),
+    ])];
+}
+
+function structuralSpeakerNamesFingerprint(names = getPublishedStructuralSpeakerNames(), candidateSourceFingerprint = '') {
+    return candidateSourceFingerprint
+        ? canonicalJson({ names, candidateSourceFingerprint })
+        : canonicalJson(names);
+}
+
+function structuralSpeakerCandidateRequestScope(snapshot) {
+    return canonicalJson({
+        releaseId: String(release?.releaseId || ''),
+        releaseScenarioId: String(release?.scenarioId || ''),
+        releaseScenarioVersion: String(release?.scenarioVersion || ''),
+        manifestId: String(manifest?.id || ''),
+        manifestVersion: String(manifest?.version || ''),
+        arcId: String(release?.activeArcId || release?.arcId || ''),
+        chatFileName: String(snapshot?.fileName || ''),
+        worldbookName: typeof snapshot?.rawChat?.[0]?.chat_metadata?.world_info === 'string'
+            ? snapshot.rawChat[0].chat_metadata.world_info : '',
+    });
+}
+
+function structuralSpeakerCandidateSourceFingerprint(snapshot, candidateResult = {}) {
+    const worldbookName = typeof snapshot?.rawChat?.[0]?.chat_metadata?.world_info === 'string'
+        ? snapshot.rawChat[0].chat_metadata.world_info : '';
+    return worldbookName ? canonicalJson([
+        worldbookName,
+        String(candidateResult?.resourceFingerprint || ''),
+    ]) : '';
+}
+
+function createStructuralContinuationEvidenceFromAnnotation(page, sourceMessageIndex, sourceMessageHash, window, fullText) {
+    const evidence = page?.speakerLabelEvidence;
+    const sourceSpan = page?.sourceSpan;
+    if (!evidence || evidence.sourceMessageIndex !== sourceMessageIndex
+        || evidence.sourceMessageHash !== sourceMessageHash
+        || typeof evidence.text !== 'string' || !evidence.text.trim()
+        || !Number.isSafeInteger(evidence.start) || !Number.isSafeInteger(evidence.end)
+        || evidence.end <= evidence.start || evidence.end > Array.from(String(fullText || '')).length
+        || !Number.isSafeInteger(sourceSpan?.start) || !Number.isSafeInteger(sourceSpan?.end)
+        || sourceSpan.start !== window.coreSpan.start || sourceSpan.end !== window.coreSpan.end) return null;
+    const chars = Array.from(String(fullText || ''));
+    if (chars.slice(evidence.start, evidence.end).join('') !== evidence.text) return null;
+    return {
+        sourceMessageIndex,
+        sourceMessageHash,
+        viewSpan: { ...window.viewSpan },
+        coreSpan: { ...window.coreSpan },
+        classificationEvidenceSpans: [{ ...window.coreSpan }],
+        kind: 'speaker',
+        text: evidence.text,
+        speakers: [{
+            mentionRef: `display-only-annotation-${sourceMessageIndex}-${evidence.start}-${evidence.end}`,
+            text: evidence.text,
+            start: evidence.start,
+            end: evidence.end,
+        }],
+        ruleId: 'annotation-title',
+    };
+}
+
+function shouldUsePresentationPageWindow(sourceText, pages) {
+    return Array.from(String(sourceText || '')).length > PRESENTATION_PAGE_ANALYSIS_MAX_FULL_MESSAGE_CODE_POINTS
+        || (Array.isArray(pages) && pages.length > PRESENTATION_PAGE_ANALYSIS_MAX_FULL_PAGES);
+}
+
+function presentationPageAnnotationMemoryKey(snapshot, messageIndex, pageIndex, coreSpan) {
+    const sourceMessageIndex = Number.isSafeInteger(snapshot?.messages?.[messageIndex]?.index)
+        ? snapshot.messages[messageIndex].index : messageIndex;
+    return `${presentationProjectionScope(snapshot)}/page-window/${sourceMessageIndex}/${pageIndex}/${coreSpan?.start}-${coreSpan?.end}`;
+}
+
+function getCurrentPresentationPageSegment(snapshot, messageIndex, message, sourceText, pages, pageIndex) {
+    const window = createPresentationPageWindow({ sourceText, pages, pageIndex, lookbehindPages: 1 });
+    if (!window) return null;
+    const sourceMessageIndex = Number.isSafeInteger(message?.index) ? message.index : messageIndex;
+    const key = presentationPageAnnotationMemoryKey(snapshot, messageIndex, pageIndex, window.coreSpan);
+    const remembered = presentationPageAnnotations.get(key);
+    const expectedContextDigest = presentationPageAnalysisContextDigests.get(key);
+    if (!remembered || remembered.sourceMessageIndex !== sourceMessageIndex
+        || remembered.annotationVersion !== PRESENTATION_ANNOTATION_VERSION
+        || remembered.scenarioId !== currentPresentationScenarioId()
+        || remembered.scenarioVersion !== currentPresentationScenarioVersion()
+        || remembered.releaseId !== String(release?.releaseId || manifest?.releaseId || '')
+        || remembered.arcId !== String(release?.activeArcId || release?.arcId || manifest?.defaultArcId || manifest?.arcId || '')
+        || remembered.analyzerScope !== presentationAnalyzerScope
+        || !remembered.contextDigest || remembered.contextDigest !== expectedContextDigest
+        || remembered.annotationProvenance !== PRESENTATION_PAGE_WINDOW_PROVENANCE
+        || remembered.publishedKnownEntitiesSourceFingerprint !== presentationKnownEntitiesSourceFingerprint()
+        || remembered.coreSpan.start !== window.coreSpan.start || remembered.coreSpan.end !== window.coreSpan.end
+        || remembered.viewSpan.start !== window.viewSpan.start || remembered.viewSpan.end !== window.viewSpan.end
+        || !matchesPresentationTimelineSnapshot(snapshot, remembered.timelineSnapshot)) return null;
+    return remembered;
 }
 
 function renderChatSnapshot(snapshot, options = {}) {
@@ -1678,10 +2631,6 @@ function renderChatSnapshot(snapshot, options = {}) {
     cancelShadowPresentationAnalysis();
     const canAnalyzePresentation = snapshot && manifest && presentationMode !== 'off' && !options.skipPresentationAnalysis
         && !globalThis.__GALGAME_PLAYER_TEST_DISABLE_BOOTSTRAP__;
-    if (presentationMode !== 'shadow' && canAnalyzePresentation) {
-        // Keep the assisted path's existing eager analysis and projection flow.
-        void analyzePresentationSnapshot(snapshot, messageIndex, { mode: presentationMode });
-    }
 
     if (message) {
         const waitingForReply = snapshotAwaitsReply(snapshot);
@@ -1692,7 +2641,7 @@ function renderChatSnapshot(snapshot, options = {}) {
         const incompleteReply = message.role === 'character'
             && displayingLatest
             && detectIncompleteRpgResponse(message.text || message.displayText || '');
-        activeMessageSegments = createPresentationPagesForMessage(snapshot, messageIndex, message).pages;
+        activeMessageSegments = createPresentationPagesForMessage(snapshot, messageIndex, message, Number(options.pageIndex || 0)).pages;
         activeSegmentIndex = clampIndex(Number(options.pageIndex || 0), activeMessageSegments.length);
         pageIndex = activeSegmentIndex;
         activeRenderContext = {
@@ -1706,6 +2655,12 @@ function renderChatSnapshot(snapshot, options = {}) {
         renderActiveDialogueSegment({
             animate: shouldAnimateMessage(message, waitingForReply, displayingLatest, options),
         });
+        if (presentationMode === 'assisted' && message.role === 'character') {
+            void ensureStructuralPresentationPageTitle(snapshot, messageIndex, message, activeSegmentIndex);
+        }
+        if (presentationMode !== 'shadow' && canAnalyzePresentation) {
+            void analyzePresentationSnapshot(snapshot, messageIndex, { mode: presentationMode, pageIndex: activeSegmentIndex });
+        }
         rememberRenderedVisualRuntimeMessage(snapshot, message, messageIndex);
         return scheduleVisiblePageVisualBundle(snapshot, messageIndex);
     } else {
@@ -1722,6 +2677,7 @@ function cancelShadowPresentationAnalysis() {
     if (presentationAnalysisController === controller) {
         presentationAnalysisEpoch += 1;
         presentationAnalysisController = null;
+        presentationAnalysisRunIdentity = null;
     }
 }
 
@@ -1730,6 +2686,7 @@ function scheduleVisiblePageVisualBundle(snapshot, messageIndex, segmentOverride
     if (mode !== 'shadow') return scheduleVisualBundleRefresh(snapshot, messageIndex, segmentOverride);
 
     cancelShadowPresentationAnalysis();
+    const requestedPageIndex = activeSegmentIndex;
     const message = snapshot?.messages?.[messageIndex];
     const visibleText = String(message?.displayText || message?.text || '');
     if (!manifest || message?.role !== 'character' || !visibleText.trim()
@@ -1743,7 +2700,7 @@ function scheduleVisiblePageVisualBundle(snapshot, messageIndex, segmentOverride
     const visualTask = scheduleVisualBundleRefresh(snapshot, messageIndex, segmentOverride);
     void deferShadowPresentationAnalysisUntilVisualSettles(
         visualTask,
-        () => analyzePresentationSnapshot(snapshot, messageIndex, { mode: 'shadow', controller }),
+        () => analyzePresentationSnapshot(snapshot, messageIndex, { mode: 'shadow', controller, pageIndex: requestedPageIndex }),
         controller.signal,
     ).finally(() => {
         if (shadowPresentationAnalysisController === controller) shadowPresentationAnalysisController = null;
@@ -1751,17 +2708,44 @@ function scheduleVisiblePageVisualBundle(snapshot, messageIndex, segmentOverride
     return visualTask;
 }
 
-async function analyzePresentationSnapshot(snapshot, activeIndex, { mode = resolvePresentationMode(String(manifest?.locale || release?.locale || '')), controller: suppliedController = null } = {}) {
+async function analyzePresentationSnapshot(snapshot, activeIndex, { mode = resolvePresentationMode(String(manifest?.locale || release?.locale || '')), controller: suppliedController = null, pageIndex = null } = {}) {
+    if (!snapshot?.messages?.length || !snapshot?.fileName || !manifest || Date.now() < presentationServiceRetryAt) {
+        if (presentationAnalysisController) {
+            presentationAnalysisController.abort();
+            presentationAnalysisEpoch += 1;
+            presentationAnalysisController = null;
+            presentationAnalysisRunIdentity = null;
+        }
+        return;
+    }
+    const initialTimelineSnapshot = createPresentationTimelineSnapshot(snapshot);
+    const runScope = `${presentationProjectionScope(snapshot)}/${presentationKnownEntitiesSourceFingerprint()}`;
+    const targetPageIndex = Number.isSafeInteger(pageIndex) ? pageIndex
+        : (typeof activeSegmentIndex !== 'undefined' && Number.isSafeInteger(activeSegmentIndex) ? activeSegmentIndex : 0);
+    if (presentationAnalysisController && !presentationAnalysisController.signal.aborted
+        && presentationAnalysisRunIdentity?.activeIndex === activeIndex
+        && presentationAnalysisRunIdentity?.pageIndex === targetPageIndex
+        && presentationAnalysisRunIdentity?.mode === mode
+        && presentationAnalysisRunIdentity?.scope === runScope
+        && presentationAnalysisRunIdentity?.analyzerScope === presentationAnalyzerScope
+        && matchesPresentationTimelineSnapshot(snapshot, presentationAnalysisRunIdentity.timelineSnapshot)) return;
     const epoch = ++presentationAnalysisEpoch;
     if (presentationAnalysisController && presentationAnalysisController !== suppliedController) presentationAnalysisController.abort();
     const analysisController = suppliedController || new AbortController();
     presentationAnalysisController = analysisController;
+    presentationAnalysisRunIdentity = {
+        controller: analysisController, activeIndex, pageIndex: targetPageIndex, mode, scope: runScope,
+        analyzerScope: presentationAnalyzerScope, timelineSnapshot: initialTimelineSnapshot,
+    };
     const analysisSignal = analysisController.signal;
-    if (!snapshot?.messages?.length || !snapshot?.fileName || !manifest || Date.now() < presentationServiceRetryAt) {
-        if (presentationAnalysisController === analysisController) presentationAnalysisController = null;
-        return;
+    const stateScope = presentationProjectionScope(snapshot);
+    const priorState = presentationProjectionStates.get(stateScope);
+    if (mode === 'assisted' && priorState
+        && (priorState.activeCursor !== activeIndex || !isPresentationTimelineSnapshotCurrent(snapshot, priorState))) {
+        presentationProjectionStates.set(stateScope, { ...priorState, activeCursor: activeIndex, activeAnnotationIdentity: null });
     }
     let annotationsChanged = false;
+    let activeAnnotationIdentity = null;
     try {
         if (presentationServiceState !== true) {
             const status = await presentationAnalysis.healthCheck(analysisSignal);
@@ -1773,15 +2757,20 @@ async function analyzePresentationSnapshot(snapshot, activeIndex, { mode = resol
             }
             presentationServiceState = true;
             presentationAnalyzerScope = String(status.analyzerScope || 'configured');
+            if (presentationAnalysisRunIdentity?.controller === analysisController) presentationAnalysisRunIdentity.analyzerScope = presentationAnalyzerScope;
             presentationServiceRetryAt = 0;
         }
-        if (analysisSignal.aborted || epoch !== presentationAnalysisEpoch || activeChatSnapshot && activeChatSnapshot.fileName !== snapshot.fileName) return;
+        if (!isPresentationAnalysisSnapshotCurrent(snapshot, activeIndex, initialTimelineSnapshot, epoch, analysisSignal, targetPageIndex)) return;
         const releaseId = String(release?.releaseId || manifest.releaseId || '');
         const scenarioId = String(release?.scenarioId || manifest.scenarioId || manifest.id || '');
         const scenarioVersion = String(release?.scenarioVersion || manifest.scenarioVersion || manifest.version || '');
         const arcId = String(release?.activeArcId || release?.arcId || manifest.defaultArcId || manifest.arcId || '');
         if (!releaseId || !scenarioId || !scenarioVersion) return;
-        const selectedMessages = selectPresentationAnalysisMessages(snapshot.messages, activeIndex, mode);
+        const timelineSnapshot = createPresentationTimelineSnapshot(snapshot);
+        if (!isPresentationAnalysisSnapshotCurrent(snapshot, activeIndex, timelineSnapshot, epoch, analysisSignal, targetPageIndex)) return;
+        // Only the current assistant message may generate an annotation. Older
+        // rows are analyzed as singleton targets when the player visits them.
+        const selectedMessages = selectPresentationAnalysisMessages(snapshot.messages, activeIndex, 'shadow');
         const assistantMessages = await Promise.all(selectedMessages.map(async ({ message, index }) => {
             const visibleText = String(message.displayText || message.text || '');
             return {
@@ -1789,92 +2778,211 @@ async function analyzePresentationSnapshot(snapshot, activeIndex, { mode = resol
                 message,
                 sourceMessageIndex: Number.isSafeInteger(message.index) ? message.index : index,
                 sourceMessageHash: await createVisibleMessageHash(visibleText),
+                timelinePrefixHash: await createSceneContinuityTimelinePrefixHash(snapshot.messages, index, createVisibleMessageHash),
                 visibleText,
             };
         }));
+        if (!isPresentationAnalysisSnapshotCurrent(snapshot, activeIndex, timelineSnapshot, epoch, analysisSignal, targetPageIndex)) return;
         const activeMessage = assistantMessages.find(({ index, message }) => index === activeIndex || message.index === activeIndex);
-        const historyMessages = mode === 'assisted' && activeMessage
-            ? assistantMessages.filter((item) => item !== activeMessage)
-            : mode === 'assisted' ? assistantMessages : [];
-        const analysisBatches = mode === 'shadow'
-            ? (activeMessage ? [[activeMessage]] : [])
-            : [...(activeMessage ? [[activeMessage]] : []), ...chunkPresentationMessages(historyMessages, 8)];
+        const analysisBatches = activeMessage ? [[activeMessage]] : [];
         const chatKey = `chat_${await sha256Hex(`galgame.presentation.chat-scope.v1:${snapshot.fileName}`)}`;
+        const publishedKnownEntitiesSourceFingerprint = presentationKnownEntitiesSourceFingerprint();
         const publishedContext = await createPublishedPresentationKnownEntities(manifest?.resourceBindings?.characters || {});
+        const publishedKnownEntitiesFingerprint = await createPresentationContextDigest([], publishedContext.knownEntities);
+        if (scenarioId !== currentPresentationScenarioId()
+            || scenarioVersion !== currentPresentationScenarioVersion()
+            || publishedKnownEntitiesSourceFingerprint !== presentationKnownEntitiesSourceFingerprint()) return;
+        const activeEntry = assistantMessages.find(({ index, message }) => index === activeIndex || message.index === activeIndex);
+        let activeDisplay = activeEntry?.message?.role === 'character'
+            ? createPresentationPagesForMessage(snapshot, activeIndex, activeEntry.message, targetPageIndex)
+            : null;
+        let activeStableText = activeDisplay?.sourceText || '';
+        let activeStablePages = activeDisplay?.pages || [];
+        const activeNeedsPageWindow = activeEntry?.message?.role === 'character'
+            && shouldUsePresentationPageWindow(activeStableText, activeStablePages);
+        if (mode === 'assisted' && activeNeedsPageWindow
+            && activeChatSnapshot?.fileName === snapshot.fileName
+            && typeof ensureStructuralPresentationPageTitle === 'function') {
+            // Let the local title fast path finish before deciding whether a
+            // page-window semantic title request is still needed. Full-message
+            // singleton analysis below remains independent for identity/visual
+            // projection.
+            await ensureStructuralPresentationPageTitle(snapshot, activeIndex, activeEntry.message, targetPageIndex);
+            activeDisplay = createPresentationPagesForMessage(snapshot, activeIndex, activeEntry.message, targetPageIndex);
+            activeStableText = activeDisplay.sourceText;
+            activeStablePages = activeDisplay.pages;
+        }
+        const activeDisplayPage = activeDisplay?.pages?.[targetPageIndex];
+        const matchingStablePages = activeDisplay?.sourceText === activeStableText && activeDisplayPage
+            ? activeStablePages.filter((page) => samePresentationSpan(page.sourceSpan, activeDisplayPage.sourceSpan))
+            : [];
+        const pageTitleNeedsSemanticReview = !activeDisplayPage
+            || getPresentationSpeakerLabel(activeDisplayPage, activeEntry?.message) === '未识别'
+            || hasCoarseNarrationPageTitle(activeDisplayPage);
+        if (activeNeedsPageWindow && pageTitleNeedsSemanticReview && matchingStablePages.length === 1) {
+            const basePageIndex = activeStablePages.indexOf(matchingStablePages[0]);
+            // Page title inference is a supplemental label-only request. It
+            // completes before the established singleton path, so a valid title
+            // renders promptly without promoting page evidence to identity.
+            await analyzeCurrentPresentationPageWindow({
+                snapshot, activeIndex, pageIndex: basePageIndex, displayedPageIndex: targetPageIndex,
+                expectedSourceSpan: activeDisplayPage.sourceSpan, message: activeEntry.message,
+                sourceMessageIndex: activeEntry.sourceMessageIndex, timelinePrefixHash: activeEntry.timelinePrefixHash,
+                sourceText: activeStableText, pages: activeStablePages, timelineSnapshot, epoch, signal: analysisSignal,
+                scope: { scenarioId, scenarioVersion, releaseId, arcId, chatKey },
+                knownEntities: publishedContext.knownEntities,
+                publishedKnownEntitiesFingerprint,
+                publishedKnownEntitiesSourceFingerprint,
+                analyzerScope: presentationAnalyzerScope,
+            });
+        }
+        const annotationScope = {
+            scenarioId,
+            scenarioVersion,
+            publishedKnownEntitiesFingerprint,
+            publishedKnownEntitiesSourceFingerprint,
+        };
         for (const diagnostic of publishedContext.diagnostics) {
             console.warn(`Galgame presentation input limited: ${diagnostic.code} count=${diagnostic.count}`);
         }
-        const cacheScope = `${chatKey}/${releaseId}/${arcId}/`;
-        if (mode === 'assisted') {
-            await presentationCache.reconcileTimeline(cacheScope, assistantMessages.map((item) => ({
-                sourceMessageIndex: item.sourceMessageIndex,
-                sourceMessageHash: item.sourceMessageHash,
-            })));
-        }
+        const cacheScope = `galgame.presentation-cache.v3/${chatKey}/${scenarioId}/${scenarioVersion}/${releaseId}/${arcId}/${PRESENTATION_SINGLETON_PROVENANCE}/`;
         for (const entries of analysisBatches) {
-            if (analysisSignal.aborted || epoch !== presentationAnalysisEpoch || activeChatSnapshot && activeChatSnapshot.fileName !== snapshot.fileName) return;
+            if (!isPresentationAnalysisSnapshotCurrent(snapshot, activeIndex, timelineSnapshot, epoch, analysisSignal, targetPageIndex)) return;
+            const includesActive = Boolean(activeMessage && entries.includes(activeMessage));
             const messages = entries.map(({ message, sourceMessageIndex, sourceMessageHash, visibleText }) => ({
                 sourceMessageIndex,
                 sourceMessageHash,
                 authorLabel: '',
                 visibleText,
             }));
-            const firstIndex = entries[0]?.index ?? 0;
-            const contextMessages = snapshot.messages.slice(Math.max(0, firstIndex - 4), firstIndex)
-                .filter((message) => message?.role === 'character')
-                .map(async (message, contextOffset) => {
-                    const visibleText = String(message.displayText || message.text || '');
-                    const sourceMessageIndex = Number.isSafeInteger(message.index) ? message.index : Math.max(0, firstIndex - 4) + contextOffset;
-                    return { sourceMessageIndex, sourceMessageHash: await createVisibleMessageHash(visibleText), visibleText };
-                });
-            const resolvedContext = await Promise.all(contextMessages);
+            const contextMessages = snapshot.messages
+                .slice(0, Math.max(0, entries[0]?.index ?? 0))
+                .map((contextMessage, contextIndex) => ({ contextMessage, contextIndex }))
+                .filter(({ contextMessage }) => contextMessage?.role === 'character')
+                .slice(-4);
+            const resolvedContext = await Promise.all(contextMessages.map(async ({ contextMessage, contextIndex }) => {
+                const visibleText = String(contextMessage.displayText || contextMessage.text || '');
+                const sourceMessageIndex = Number.isSafeInteger(contextMessage.index) ? contextMessage.index : contextIndex;
+                return { sourceMessageIndex, sourceMessageHash: await createVisibleMessageHash(visibleText), visibleText };
+            }));
             const requests = await createPresentationBatches({
                 scope: { scenarioId, scenarioVersion, releaseId, arcId, chatKey },
                 messages,
-                contextMessages: resolvedContext.slice(-4),
+                contextMessages: resolvedContext,
                 knownEntities: publishedContext.knownEntities,
             });
             const analyzerScope = presentationAnalyzerScope;
             for (const request of requests) {
-                if (analysisSignal.aborted || epoch !== presentationAnalysisEpoch || activeChatSnapshot && activeChatSnapshot.fileName !== snapshot.fileName) return;
+                if (!isPresentationAnalysisSnapshotCurrent(snapshot, activeIndex, timelineSnapshot, epoch, analysisSignal, targetPageIndex)) return;
+                if (request.messages.length !== 1
+                    || !activeMessage
+                    || request.messages[0].sourceMessageIndex !== activeMessage.sourceMessageIndex) continue;
                 const uncached = [];
+                const cachedAnnotations = [];
                 for (const message of request.messages) {
-                    const key = presentationCacheKey({ chatKey, releaseId, arcId, message, contextDigest: request.contextDigest, analyzerScope });
+                    const source = entries.find((item) => item.sourceMessageIndex === message.sourceMessageIndex);
+                    const key = presentationCacheKey({ chatKey, scenarioId, scenarioVersion, releaseId, arcId, message,
+                        contextDigest: request.contextDigest, analyzerScope, timelinePrefixHash: source?.timelinePrefixHash || '', publishedKnownEntitiesFingerprint });
                     const cached = await presentationCache.get(key);
                     if (!cached) uncached.push(message);
-                    else annotationsChanged = rememberPresentationAnnotation(snapshot, releaseId, arcId, entries.find((item) => item.sourceMessageIndex === message.sourceMessageIndex), cached) || annotationsChanged;
-                }
-                if (!uncached.length) continue;
-                const inflightKey = `${cacheScope}${request.contextDigest}/${uncached.map((item) => item.sourceMessageHash).join(',')}`;
-                if (presentationInflight.has(inflightKey)) continue;
-                presentationInflight.add(inflightKey);
-                try {
-                    const analysisRequest = uncached.length === request.messages.length
-                        ? request
-                        : { ...request, messages: uncached };
-                    const annotations = await presentationAnalysis.annotate({ request: analysisRequest, signal: analysisSignal });
-                    if (analysisSignal.aborted || epoch !== presentationAnalysisEpoch || activeChatSnapshot && activeChatSnapshot.fileName !== snapshot.fileName) return;
-                    for (const annotation of annotations) {
-                        const source = uncached.find((item) => item.sourceMessageIndex === annotation.sourceMessageIndex);
-                        if (!source) continue;
-                        const key = presentationCacheKey({ chatKey, releaseId, arcId, message: source, contextDigest: request.contextDigest, analyzerScope });
-                        await presentationCache.put(key, annotation, {
-                            sourceMessageIndex: source.sourceMessageIndex,
-                            sourceMessageHash: source.sourceMessageHash,
-                            contextDigest: request.contextDigest,
-                            schemaVersion: PRESENTATION_ANNOTATION_VERSION,
-                            analyzerScope,
-                        });
-                        annotationsChanged = rememberPresentationAnnotation(snapshot, releaseId, arcId, entries.find((item) => item.sourceMessageIndex === annotation.sourceMessageIndex), annotation) || annotationsChanged;
+                    else {
+                        const cacheValidation = await validatePresentationAnnotationResponse(
+                            { schemaVersion: PRESENTATION_ANNOTATION_VERSION, results: [cached] },
+                            { ...request, messages: [message] },
+                        );
+                        if (!cacheValidation.valid) {
+                            try { await presentationCache.delete(key); } catch { /* corrupted cache remains fail-closed */ }
+                            uncached.push(message);
+                        } else cachedAnnotations.push({ message, annotation: cached });
                     }
-                } finally {
-                    presentationInflight.delete(inflightKey);
+                }
+                let annotations = [];
+                let inflightKey = '';
+                if (uncached.length) {
+                    const prefixIdentity = uncached.map((item) => entries.find((entry) => entry.sourceMessageIndex === item.sourceMessageIndex)?.timelinePrefixHash || '').join(',');
+                    inflightKey = `${cacheScope}${analyzerScope}/${request.contextDigest}/${prefixIdentity}/${uncached.map((item) => item.sourceMessageHash).join(',')}`;
+                    if (presentationInflight.has(inflightKey)) continue;
+                    presentationInflight.add(inflightKey);
+                    try {
+                        const analysisRequest = uncached.length === request.messages.length
+                            ? request
+                            : { ...request, messages: uncached };
+                        annotations = await presentationAnalysis.annotate({ request: analysisRequest, signal: analysisSignal });
+                    } finally {
+                        presentationInflight.delete(inflightKey);
+                    }
+                }
+                if (!isPresentationAnalysisSnapshotCurrent(snapshot, activeIndex, timelineSnapshot, epoch, analysisSignal, targetPageIndex)) return;
+                for (const { message, annotation } of cachedAnnotations) {
+                    const source = entries.find((item) => item.sourceMessageIndex === message.sourceMessageIndex);
+                    const cacheMetadata = {
+                        contextDigest: request.contextDigest, analyzerScope, timelinePrefixHash: source?.timelinePrefixHash || '',
+                        annotationProvenance: PRESENTATION_SINGLETON_PROVENANCE, ...annotationScope,
+                    };
+                    annotationsChanged = rememberPresentationAnnotation(snapshot, releaseId, arcId, source, annotation, cacheMetadata) || annotationsChanged;
+                }
+                for (const annotation of annotations) {
+                    const source = uncached.find((item) => item.sourceMessageIndex === annotation.sourceMessageIndex);
+                    if (!source) continue;
+                    const timelinePrefixHash = entries.find((item) => item.sourceMessageIndex === source.sourceMessageIndex)?.timelinePrefixHash || '';
+                    const key = presentationCacheKey({ chatKey, scenarioId, scenarioVersion, releaseId, arcId, message: source,
+                        contextDigest: request.contextDigest, analyzerScope, timelinePrefixHash, publishedKnownEntitiesFingerprint });
+                    await presentationCache.put(key, annotation, {
+                        sourceMessageIndex: source.sourceMessageIndex,
+                        sourceMessageHash: source.sourceMessageHash,
+                        contextDigest: request.contextDigest,
+                        schemaVersion: PRESENTATION_ANNOTATION_VERSION,
+                        analyzerScope,
+                        scenarioId,
+                        scenarioVersion,
+                        publishedKnownEntitiesFingerprint,
+                        annotationProvenance: PRESENTATION_SINGLETON_PROVENANCE,
+                    });
+                    annotationsChanged = rememberPresentationAnnotation(snapshot, releaseId, arcId,
+                        entries.find((item) => item.sourceMessageIndex === annotation.sourceMessageIndex), annotation,
+                        { contextDigest: request.contextDigest, analyzerScope, timelinePrefixHash,
+                            annotationProvenance: PRESENTATION_SINGLETON_PROVENANCE, ...annotationScope }) || annotationsChanged;
+                }
+                if (includesActive && request.messages.some((item) => item.sourceMessageIndex === activeMessage.sourceMessageIndex)) {
+                    const activeMemo = presentationAnnotations.get(presentationAnnotationMemoryKey(snapshot, releaseId, arcId,
+                        activeMessage.sourceMessageIndex, scenarioId, scenarioVersion));
+                    if (activeMemo?.sourceMessageHash === activeMessage.sourceMessageHash
+                        && activeMemo.visibleText === activeMessage.visibleText
+                        && activeMemo.contextDigest === request.contextDigest
+                        && activeMemo.analyzerScope === analyzerScope
+                        && activeMemo.timelinePrefixHash === activeMessage.timelinePrefixHash
+                        && activeMemo.scenarioId === scenarioId
+                        && activeMemo.scenarioVersion === scenarioVersion
+                        && activeMemo.publishedKnownEntitiesFingerprint === publishedKnownEntitiesFingerprint
+                        && activeMemo.annotationProvenance === PRESENTATION_SINGLETON_PROVENANCE) {
+                        activeAnnotationIdentity = {
+                            sourceMessageIndex: activeMessage.sourceMessageIndex,
+                            sourceMessageHash: activeMessage.sourceMessageHash,
+                            contextDigest: request.contextDigest,
+                            analyzerScope,
+                            timelinePrefixHash: activeMessage.timelinePrefixHash,
+                            scenarioId,
+                            scenarioVersion,
+                            publishedKnownEntitiesFingerprint,
+                            annotationProvenance: PRESENTATION_SINGLETON_PROVENANCE,
+                        };
+                    }
+                }
+            }
+            if (includesActive) {
+                const currentState = await buildPresentationProjectionState(snapshot, releaseId, arcId, activeIndex, activeAnnotationIdentity, annotationScope);
+                if (!isPresentationAnalysisSnapshotCurrent(snapshot, activeIndex, timelineSnapshot, epoch, analysisSignal, targetPageIndex)) return;
+                presentationProjectionStates.set(presentationProjectionScope(snapshot, releaseId, arcId, scenarioId, scenarioVersion), currentState);
+                if (resolvePresentationMode(String(manifest?.locale || release?.locale || '')) === 'assisted'
+                    && activeChatSnapshot?.fileName === snapshot.fileName) {
+                    renderChatSnapshot(snapshot, { messageIndex: activeIndex, pageIndex: activeSegmentIndex, skipPresentationAnalysis: true });
                 }
             }
         }
         if (annotationsChanged && mode === 'assisted') {
-            const currentState = await buildPresentationProjectionState(snapshot, releaseId, arcId);
-            presentationProjectionStates.set(presentationProjectionScope(snapshot, releaseId, arcId), currentState);
+            const currentState = await buildPresentationProjectionState(snapshot, releaseId, arcId, activeIndex, activeAnnotationIdentity, annotationScope);
+            if (!isPresentationAnalysisSnapshotCurrent(snapshot, activeIndex, timelineSnapshot, epoch, analysisSignal, targetPageIndex)) return;
+            presentationProjectionStates.set(presentationProjectionScope(snapshot, releaseId, arcId, scenarioId, scenarioVersion), currentState);
             if (resolvePresentationMode(String(manifest?.locale || release?.locale || '')) === 'assisted'
                 && epoch === presentationAnalysisEpoch
                 && activeChatSnapshot?.fileName === snapshot.fileName) {
@@ -1886,42 +2994,257 @@ async function analyzePresentationSnapshot(snapshot, activeIndex, { mode = resol
         presentationServiceState = false;
         presentationServiceRetryAt = Date.now() + 30_000;
     } finally {
-        if (presentationAnalysisController === analysisController) presentationAnalysisController = null;
+        if (presentationAnalysisController === analysisController) {
+            presentationAnalysisController = null;
+            presentationAnalysisRunIdentity = null;
+        }
     }
 }
 
-function presentationProjectionScope(snapshot, releaseId = release?.releaseId || manifest?.releaseId || '', arcId = release?.activeArcId || release?.arcId || manifest?.defaultArcId || manifest?.arcId || '') {
-    return `${snapshot?.fileName || ''}/${releaseId}/${arcId}`;
+async function analyzeCurrentPresentationPageWindow({ snapshot, activeIndex, pageIndex, displayedPageIndex = pageIndex,
+    expectedSourceSpan = null, message, sourceMessageIndex,
+    timelinePrefixHash = '', sourceText, pages, timelineSnapshot, epoch, signal, scope, knownEntities,
+    publishedKnownEntitiesFingerprint, publishedKnownEntitiesSourceFingerprint, analyzerScope,
+    mode = resolvePresentationMode(String(manifest?.locale || release?.locale || '')) } = {}) {
+    const pageWindow = createPresentationPageWindow({ sourceText, pages, pageIndex, lookbehindPages: 1 });
+    if (!pageWindow || Array.from(pageWindow.viewText).length > PRESENTATION_LIMITS.maxMessageCodePoints
+        || !message || message.role !== 'character'
+        || expectedSourceSpan && !samePresentationSpan(pageWindow.coreSpan, expectedSourceSpan)) return;
+    const fullMessageHash = await createVisibleMessageHash(sourceText);
+    const viewMessageHash = await createVisibleMessageHash(pageWindow.viewText);
+    const coreTextHash = await createVisibleMessageHash(pageWindow.coreText);
+    if (!timelinePrefixHash) timelinePrefixHash = await createSceneContinuityTimelinePrefixHash(
+        snapshot.messages, activeIndex, createVisibleMessageHash,
+    );
+    if (!isPresentationAnalysisSnapshotCurrent(snapshot, activeIndex, timelineSnapshot, epoch, signal, displayedPageIndex)
+        || !isCurrentRenderedPresentationPageSpan(snapshot, activeIndex, displayedPageIndex, sourceText, pageWindow.coreSpan)
+        || publishedKnownEntitiesSourceFingerprint !== presentationKnownEntitiesSourceFingerprint()
+        || analyzerScope !== presentationAnalyzerScope) return;
+
+    const requestMessage = {
+        sourceMessageIndex,
+        sourceMessageHash: viewMessageHash,
+        authorLabel: '',
+        visibleText: pageWindow.viewText,
+    };
+    const requests = await createPresentationBatches({
+        scope,
+        messages: [requestMessage],
+        contextMessages: [],
+        knownEntities,
+    });
+    if (!isPresentationAnalysisSnapshotCurrent(snapshot, activeIndex, timelineSnapshot, epoch, signal, displayedPageIndex)
+        || !isCurrentRenderedPresentationPageSpan(snapshot, activeIndex, displayedPageIndex, sourceText, pageWindow.coreSpan)
+        || requests.length !== 1 || requests[0].messages?.length !== 1
+        || requests[0].messages[0].sourceMessageIndex !== sourceMessageIndex
+        || requests[0].messages[0].sourceMessageHash !== viewMessageHash
+        || requests[0].messages[0].visibleText !== pageWindow.viewText) return;
+
+    const request = requests[0];
+    const contextDigest = String(request.contextDigest || '');
+    if (!contextDigest) return;
+    const key = presentationPageWindowCacheKey({
+        chatKey: scope.chatKey, scenarioId: scope.scenarioId, scenarioVersion: scope.scenarioVersion,
+        releaseId: scope.releaseId, arcId: scope.arcId, sourceMessageIndex, fullMessageHash,
+        timelinePrefixHash, pageIndex, coreSpan: pageWindow.coreSpan, coreTextHash,
+        viewSpan: pageWindow.viewSpan, viewMessageHash, contextDigest, analyzerScope,
+        publishedKnownEntitiesFingerprint,
+    });
+    const memoKey = presentationPageAnnotationMemoryKey(snapshot, activeIndex, pageIndex, pageWindow.coreSpan);
+    presentationPageAnalysisContextDigests.set(memoKey, contextDigest);
+
+    let annotation = null;
+    const cached = await presentationCache.get(key);
+    if (!isPresentationAnalysisSnapshotCurrent(snapshot, activeIndex, timelineSnapshot, epoch, signal, displayedPageIndex)
+        || !isCurrentRenderedPresentationPageSpan(snapshot, activeIndex, displayedPageIndex, sourceText, pageWindow.coreSpan)) return;
+    if (cached) {
+        const cachedValidation = await validatePresentationAnnotationResponse(
+            { schemaVersion: PRESENTATION_ANNOTATION_VERSION, results: [cached] },
+            { ...request, messages: [request.messages[0]] },
+        );
+        if (!isPresentationAnalysisSnapshotCurrent(snapshot, activeIndex, timelineSnapshot, epoch, signal, displayedPageIndex)
+            || !isCurrentRenderedPresentationPageSpan(snapshot, activeIndex, displayedPageIndex, sourceText, pageWindow.coreSpan)) return;
+        if (cachedValidation.valid) annotation = cached;
+        else {
+            try { await presentationCache.delete(key); } catch { /* a corrupt cache record remains unusable */ }
+        }
+    }
+
+    if (!annotation) {
+        const inflightKey = `${PRESENTATION_PAGE_WINDOW_CACHE_VERSION}/${key}`;
+        if (presentationInflight.has(inflightKey)) return;
+        presentationInflight.add(inflightKey);
+        try {
+            const results = await presentationAnalysis.annotate({ request, signal });
+            if (!isPresentationAnalysisSnapshotCurrent(snapshot, activeIndex, timelineSnapshot, epoch, signal, displayedPageIndex)
+                || !isCurrentRenderedPresentationPageSpan(snapshot, activeIndex, displayedPageIndex, sourceText, pageWindow.coreSpan)) return;
+            const freshValidation = await validatePresentationAnnotationResponse(
+                { schemaVersion: PRESENTATION_ANNOTATION_VERSION, results }, request,
+            );
+            if (!isPresentationAnalysisSnapshotCurrent(snapshot, activeIndex, timelineSnapshot, epoch, signal, displayedPageIndex)
+                || !isCurrentRenderedPresentationPageSpan(snapshot, activeIndex, displayedPageIndex, sourceText, pageWindow.coreSpan)) return;
+            if (!freshValidation.valid || !Array.isArray(results) || results.length !== 1) return;
+            [annotation] = results;
+            try {
+                await presentationCache.put(key, annotation, {
+                    sourceMessageIndex, sourceMessageHash: viewMessageHash, contextDigest,
+                    schemaVersion: PRESENTATION_ANNOTATION_VERSION, analyzerScope,
+                });
+            } catch { /* local cache is optional; current-page display can still use validated evidence */ }
+            if (!isPresentationAnalysisSnapshotCurrent(snapshot, activeIndex, timelineSnapshot, epoch, signal, displayedPageIndex)
+                || !isCurrentRenderedPresentationPageSpan(snapshot, activeIndex, displayedPageIndex, sourceText, pageWindow.coreSpan)) {
+                try { await presentationCache.delete(key); } catch { /* stale cache entries are isolated by their full key */ }
+                return;
+            }
+        } finally {
+            presentationInflight.delete(inflightKey);
+        }
+    }
+
+    if (!annotation || !isPresentationAnalysisSnapshotCurrent(snapshot, activeIndex, timelineSnapshot, epoch, signal, displayedPageIndex)
+        || !isCurrentRenderedPresentationPageSpan(snapshot, activeIndex, displayedPageIndex, sourceText, pageWindow.coreSpan)) return;
+    const pageTitleEvidence = createPresentationPageTitleEvidence({
+        fullText: sourceText, annotation, sourceMessageIndex, sourceMessageHash: fullMessageHash,
+        viewSpan: pageWindow.viewSpan, coreSpan: pageWindow.coreSpan,
+    });
+    if (!pageTitleEvidence) return;
+    presentationPageAnnotations.set(memoKey, {
+        pageTitleEvidence,
+        sourceMessageIndex,
+        viewSpan: pageWindow.viewSpan,
+        coreSpan: pageWindow.coreSpan,
+        fullMessageHash,
+        coreTextHash,
+        viewMessageHash,
+        timelinePrefixHash,
+        timelineSnapshot,
+        scenarioId: scope.scenarioId,
+        scenarioVersion: scope.scenarioVersion,
+        releaseId: scope.releaseId,
+        arcId: scope.arcId,
+        analyzerScope,
+        contextDigest,
+        publishedKnownEntitiesFingerprint,
+        publishedKnownEntitiesSourceFingerprint,
+        annotationVersion: PRESENTATION_ANNOTATION_VERSION,
+        annotationProvenance: PRESENTATION_PAGE_WINDOW_PROVENANCE,
+    });
+    while (presentationPageAnnotations.size > 1024) {
+        const oldest = presentationPageAnnotations.keys().next().value;
+        presentationPageAnnotations.delete(oldest);
+        presentationPageAnalysisContextDigests.delete(oldest);
+    }
+    if (mode === 'assisted' && activeChatSnapshot?.fileName === snapshot.fileName) {
+        renderChatSnapshot(snapshot, { messageIndex: activeIndex, pageIndex: displayedPageIndex, skipPresentationAnalysis: true });
+    }
 }
 
-function presentationAnnotationMemoryKey(snapshot, releaseId, arcId, sourceMessageIndex) {
-    return `${presentationProjectionScope(snapshot, releaseId, arcId)}/${sourceMessageIndex}`;
+function presentationPageWindowCacheKey({ chatKey, scenarioId, scenarioVersion, releaseId, arcId, sourceMessageIndex,
+    fullMessageHash, timelinePrefixHash, pageIndex, coreSpan, coreTextHash, viewSpan, viewMessageHash,
+    contextDigest, analyzerScope, publishedKnownEntitiesFingerprint } = {}) {
+    return [PRESENTATION_PAGE_WINDOW_CACHE_VERSION, chatKey, scenarioId, scenarioVersion, releaseId, arcId,
+        PRESENTATION_PAGE_WINDOW_PROVENANCE, sourceMessageIndex, fullMessageHash, timelinePrefixHash,
+        pageIndex, `${coreSpan?.start}-${coreSpan?.end}`, coreTextHash,
+        `${viewSpan?.start}-${viewSpan?.end}`, viewMessageHash, contextDigest,
+        publishedKnownEntitiesFingerprint, PRESENTATION_ANNOTATION_VERSION, analyzerScope].join('/');
 }
 
-function rememberPresentationAnnotation(snapshot, releaseId, arcId, source, annotation) {
+function isPresentationAnalysisSnapshotCurrent(snapshot, activeIndex, timelineSnapshot, epoch, signal, expectedPageIndex = null) {
+    if (signal?.aborted || epoch !== presentationAnalysisEpoch
+        || (activeChatSnapshot?.fileName && activeChatSnapshot.fileName !== snapshot?.fileName)
+        || (Number.isSafeInteger(activeMessageIndex) && activeMessageIndex !== activeIndex)
+        || (Number.isSafeInteger(expectedPageIndex) && Number.isSafeInteger(activeSegmentIndex) && activeSegmentIndex !== expectedPageIndex)) return false;
+    const currentSnapshot = activeChatSnapshot?.fileName === snapshot?.fileName ? activeChatSnapshot : snapshot;
+    return matchesPresentationTimelineSnapshot(currentSnapshot, timelineSnapshot);
+}
+
+function currentPresentationScenarioId() {
+    return String(release?.scenarioId || manifest?.scenarioId || manifest?.id || '');
+}
+
+function currentPresentationScenarioVersion() {
+    return String(release?.scenarioVersion || manifest?.scenarioVersion || manifest?.version || '');
+}
+
+function presentationKnownEntitiesSourceFingerprint() {
+    return canonicalJson(manifest?.resourceBindings?.characters || {});
+}
+
+function presentationProjectionScope(snapshot, releaseId = release?.releaseId || manifest?.releaseId || '', arcId = release?.activeArcId || release?.arcId || manifest?.defaultArcId || manifest?.arcId || '', scenarioId = currentPresentationScenarioId(), scenarioVersion = currentPresentationScenarioVersion()) {
+    return `${snapshot?.fileName || ''}/${scenarioId}/${scenarioVersion}/${releaseId}/${arcId}`;
+}
+
+function presentationAnnotationMemoryKey(snapshot, releaseId, arcId, sourceMessageIndex, scenarioId = currentPresentationScenarioId(), scenarioVersion = currentPresentationScenarioVersion()) {
+    return `${presentationProjectionScope(snapshot, releaseId, arcId, scenarioId, scenarioVersion)}/${sourceMessageIndex}`;
+}
+
+function rememberPresentationAnnotation(snapshot, releaseId, arcId, source, annotation, {
+    contextDigest = '', analyzerScope = '', timelinePrefixHash = '', scenarioId = '', scenarioVersion = '',
+    publishedKnownEntitiesFingerprint = '', annotationProvenance = '',
+} = {}) {
     if (!source || !annotation || source.sourceMessageHash !== annotation.sourceMessageHash) return false;
-    const key = presentationAnnotationMemoryKey(snapshot, releaseId, arcId, source.sourceMessageIndex);
+    if (!scenarioId || !scenarioVersion || !publishedKnownEntitiesFingerprint
+        || annotationProvenance !== PRESENTATION_SINGLETON_PROVENANCE) return false;
+    const key = presentationAnnotationMemoryKey(snapshot, releaseId, arcId, source.sourceMessageIndex, scenarioId, scenarioVersion);
     const previous = presentationAnnotations.get(key);
-    if (previous?.sourceMessageHash === source.sourceMessageHash && previous.visibleText === source.visibleText) return false;
-    presentationAnnotations.set(key, { annotation, sourceMessageHash: source.sourceMessageHash, visibleText: source.visibleText });
+    if (previous?.sourceMessageHash === source.sourceMessageHash
+        && previous.visibleText === source.visibleText
+        && previous.contextDigest === contextDigest
+        && previous.analyzerScope === analyzerScope
+        && previous.timelinePrefixHash === timelinePrefixHash
+        && previous.scenarioId === scenarioId
+        && previous.scenarioVersion === scenarioVersion
+        && previous.publishedKnownEntitiesFingerprint === publishedKnownEntitiesFingerprint
+        && previous.annotationProvenance === annotationProvenance
+        && JSON.stringify(previous.annotation) === JSON.stringify(annotation)) return false;
+    presentationAnnotations.set(key, {
+        annotation, sourceMessageHash: source.sourceMessageHash, visibleText: source.visibleText,
+        contextDigest, analyzerScope, timelinePrefixHash, scenarioId, scenarioVersion, publishedKnownEntitiesFingerprint, annotationProvenance,
+    });
     while (presentationAnnotations.size > 2048) presentationAnnotations.delete(presentationAnnotations.keys().next().value);
     return true;
 }
 
-async function buildPresentationProjectionState(snapshot, releaseId, arcId) {
+async function buildPresentationProjectionState(snapshot, releaseId, arcId, activeCursor, activeAnnotationIdentity = null, annotationScope = {}) {
+    const scenarioId = String(annotationScope.scenarioId || currentPresentationScenarioId());
+    const scenarioVersion = String(annotationScope.scenarioVersion || currentPresentationScenarioVersion());
+    const publishedKnownEntitiesFingerprint = String(annotationScope.publishedKnownEntitiesFingerprint || '');
+    const publishedKnownEntitiesSourceFingerprint = String(annotationScope.publishedKnownEntitiesSourceFingerprint ?? presentationKnownEntitiesSourceFingerprint());
     const assistantMessages = await Promise.all(snapshot.messages
         .map((message, index) => ({ message, index }))
         .filter(({ message }) => message?.role === 'character' && String(message.displayText || message.text || '').trim())
         .map(async ({ message, index }) => {
             const visibleText = String(message.displayText || message.text || '');
             const sourceMessageIndex = Number.isSafeInteger(message.index) ? message.index : index;
-            const remembered = presentationAnnotations.get(presentationAnnotationMemoryKey(snapshot, releaseId, arcId, sourceMessageIndex));
+            const sourceMessageHash = await createVisibleMessageHash(visibleText);
+            const remembered = presentationAnnotations.get(presentationAnnotationMemoryKey(snapshot, releaseId, arcId, sourceMessageIndex, scenarioId, scenarioVersion));
+            const timelinePrefixHash = remembered
+                ? await createSceneContinuityTimelinePrefixHash(snapshot.messages, index, createVisibleMessageHash)
+                : '';
+            const validRemembered = remembered?.visibleText === visibleText
+                && remembered.sourceMessageHash === sourceMessageHash
+                && remembered.analyzerScope === presentationAnalyzerScope
+                && remembered.timelinePrefixHash === timelinePrefixHash
+                && remembered.scenarioId === scenarioId
+                && remembered.scenarioVersion === scenarioVersion
+                && remembered.publishedKnownEntitiesFingerprint === publishedKnownEntitiesFingerprint
+                && remembered.annotationProvenance === PRESENTATION_SINGLETON_PROVENANCE;
             return {
+                arrayIndex: index,
                 sourceMessageIndex,
-                sourceMessageHash: await createVisibleMessageHash(visibleText),
+                sourceMessageHash,
+                timelinePrefixHash,
                 visibleText,
                 authorLabel: String(message.speaker || ''),
-                annotation: remembered?.visibleText === visibleText ? remembered.annotation : null,
+                annotation: validRemembered ? remembered.annotation : null,
+                ...(validRemembered ? { annotationIdentity: {
+                    contextDigest: remembered.contextDigest, analyzerScope: remembered.analyzerScope,
+                    timelinePrefixHash: remembered.timelinePrefixHash,
+                    scenarioId: remembered.scenarioId,
+                    scenarioVersion: remembered.scenarioVersion,
+                    publishedKnownEntitiesFingerprint: remembered.publishedKnownEntitiesFingerprint,
+                    annotationProvenance: remembered.annotationProvenance,
+                } } : {}),
             };
         }));
     const publishedCast = Object.entries(manifest?.resourceBindings?.characters || {}).map(([id, character]) => ({
@@ -1935,6 +3258,14 @@ async function buildPresentationProjectionState(snapshot, releaseId, arcId) {
     return {
         releaseId: String(releaseId),
         arcId: String(arcId),
+        scenarioId,
+        scenarioVersion,
+        publishedKnownEntitiesFingerprint,
+        publishedKnownEntitiesSourceFingerprint,
+        chatKey: String(snapshot.fileName),
+        activeCursor,
+        activeAnnotationIdentity,
+        timelineSnapshot: createPresentationTimelineSnapshot(snapshot),
         projection: identity.projection,
         roster: projectPartyRoster({ chatKey: String(snapshot.fileName), releaseId: String(releaseId), messages: assistantMessages, identityProjection: identity }),
         messages: assistantMessages,
@@ -1945,50 +3276,75 @@ function getAssistedPresentationSegments(snapshot, messageIndex, message, state)
     const visibleText = String(message.displayText || message.text || '');
     const sourceMessageIndex = Number.isSafeInteger(message.index) ? message.index : messageIndex;
     const scope = presentationProjectionScope(snapshot);
-    if (!isPresentationProjectionCurrent(snapshot, state) || presentationProjectionScope(snapshot, state.releaseId, state.arcId) !== scope) {
-        return [{ index: 0, type: 'unknown', speaker: '未识别', identityRef: { type: 'unknown' }, text: visibleText }];
+    if (!state || state.activeCursor !== messageIndex || !isPresentationTimelineSnapshotCurrent(snapshot, state)
+        || presentationProjectionScope(snapshot, state.releaseId, state.arcId, state.scenarioId, state.scenarioVersion) !== scope
+        || state.publishedKnownEntitiesSourceFingerprint !== presentationKnownEntitiesSourceFingerprint()) {
+        return null;
     }
-    const remembered = presentationAnnotations.get(presentationAnnotationMemoryKey(snapshot, state.releaseId, state.arcId, sourceMessageIndex));
-    if (!remembered || remembered.visibleText !== visibleText) {
-        return [{ index: 0, type: 'unknown', speaker: '未识别', identityRef: { type: 'unknown' }, text: visibleText }];
+    const remembered = presentationAnnotations.get(presentationAnnotationMemoryKey(snapshot, state.releaseId, state.arcId, sourceMessageIndex, state.scenarioId, state.scenarioVersion));
+    const activeIdentity = state.activeAnnotationIdentity;
+    const activeRow = state.messages.find((row) => row.sourceMessageIndex === sourceMessageIndex && row.arrayIndex === messageIndex);
+    if (!remembered || !activeRow || !activeIdentity
+        || remembered.visibleText !== visibleText
+        || remembered.sourceMessageHash !== activeRow.sourceMessageHash
+        || activeIdentity.sourceMessageIndex !== sourceMessageIndex
+        || activeIdentity.sourceMessageHash !== activeRow.sourceMessageHash
+        || activeIdentity.timelinePrefixHash !== activeRow.timelinePrefixHash
+        || remembered.timelinePrefixHash !== activeIdentity.timelinePrefixHash
+        || remembered.contextDigest !== activeIdentity.contextDigest
+        || remembered.analyzerScope !== activeIdentity.analyzerScope
+        || remembered.scenarioId !== activeIdentity.scenarioId
+        || remembered.scenarioVersion !== activeIdentity.scenarioVersion
+        || remembered.publishedKnownEntitiesFingerprint !== activeIdentity.publishedKnownEntitiesFingerprint
+        || remembered.annotationProvenance !== PRESENTATION_SINGLETON_PROVENANCE
+        || activeIdentity.annotationProvenance !== PRESENTATION_SINGLETON_PROVENANCE
+        || state.scenarioId !== activeIdentity.scenarioId
+        || state.scenarioVersion !== activeIdentity.scenarioVersion
+        || state.publishedKnownEntitiesFingerprint !== activeIdentity.publishedKnownEntitiesFingerprint
+        || activeIdentity.analyzerScope !== presentationAnalyzerScope) {
+        return null;
     }
+    const completeProjection = isPresentationProjectionCurrent(snapshot, state) ? state.projection : null;
     return createPresentationDisplaySegments({
         text: visibleText,
         annotation: remembered.annotation,
-        projection: state.projection,
+        projection: completeProjection,
         sourceMessageIndex,
-        sourceMessageHash: state.messages.find((row) => row.sourceMessageIndex === sourceMessageIndex)?.sourceMessageHash || '',
+        sourceMessageHash: activeRow.sourceMessageHash,
     });
 }
 
 function isPresentationProjectionCurrent(snapshot, state) {
+    // The full visible prefix already proves each memo's historical context is unchanged;
+    // the scenario/version and published-cast fingerprints close the remaining scope.
     return isPresentationProjectionTimelineCurrent(snapshot, state)
+        && state.scenarioId === currentPresentationScenarioId()
+        && state.scenarioVersion === currentPresentationScenarioVersion()
+        && state.publishedKnownEntitiesSourceFingerprint === presentationKnownEntitiesSourceFingerprint()
         && (state.messages || []).every((row) => {
-            const remembered = presentationAnnotations.get(presentationAnnotationMemoryKey(snapshot, state.releaseId, state.arcId, row.sourceMessageIndex));
+            const remembered = presentationAnnotations.get(presentationAnnotationMemoryKey(snapshot, state.releaseId, state.arcId, row.sourceMessageIndex, state.scenarioId, state.scenarioVersion));
             return row.sourceMessageHash === remembered?.sourceMessageHash
-                && row.visibleText === remembered?.visibleText;
+                && row.visibleText === remembered?.visibleText
+                && row.timelinePrefixHash === remembered?.timelinePrefixHash
+                && row.annotationIdentity?.contextDigest === remembered?.contextDigest
+                && row.annotationIdentity?.analyzerScope === remembered?.analyzerScope
+                && row.annotationIdentity?.scenarioId === state.scenarioId
+                && remembered?.scenarioId === state.scenarioId
+                && row.annotationIdentity?.scenarioVersion === state.scenarioVersion
+                && remembered?.scenarioVersion === state.scenarioVersion
+                && row.annotationIdentity?.publishedKnownEntitiesFingerprint === state.publishedKnownEntitiesFingerprint
+                && remembered?.publishedKnownEntitiesFingerprint === state.publishedKnownEntitiesFingerprint
+                && row.annotationIdentity?.annotationProvenance === PRESENTATION_SINGLETON_PROVENANCE
+                && remembered?.annotationProvenance === PRESENTATION_SINGLETON_PROVENANCE;
         });
 }
 
-function chunkPresentationMessages(messages, size) {
-    const batches = [];
-    for (let index = 0; index < messages.length; index += size) batches.push(messages.slice(index, index + size));
-    return batches;
-}
-
-function presentationCacheKey({ chatKey, releaseId, arcId, message, contextDigest, analyzerScope }) {
-    return [chatKey, releaseId, arcId, message.sourceMessageIndex, message.sourceMessageHash, contextDigest,
-        PRESENTATION_ANNOTATION_VERSION, PRESENTATION_IDENTITY_PROJECTION_VERSION,
+function presentationCacheKey({ chatKey, scenarioId, scenarioVersion, releaseId, arcId, message, contextDigest, analyzerScope, timelinePrefixHash = '', publishedKnownEntitiesFingerprint }) {
+    return ['galgame.presentation-cache.v3', chatKey, scenarioId, scenarioVersion, releaseId, arcId,
+        PRESENTATION_SINGLETON_PROVENANCE, publishedKnownEntitiesFingerprint,
+        message.sourceMessageIndex, message.sourceMessageHash, contextDigest,
+        timelinePrefixHash, PRESENTATION_ANNOTATION_VERSION, PRESENTATION_IDENTITY_PROJECTION_VERSION,
         PRESENTATION_ROSTER_PROJECTION_VERSION, analyzerScope].join('/');
-}
-
-function getManifestKnownVisualSpeakers() {
-    if (!manifest) return [];
-    const arcId = release?.activeArcId || release?.arcId || manifest.defaultArcId || manifest.arcId || '';
-    return [
-        ...getVisualCharacterBindings(manifest, arcId),
-        ...getVisualCharacterPool(manifest, arcId),
-    ];
 }
 
 function scheduleVisualBundleRefresh(snapshot, messageIndex, segmentOverride = null) {
@@ -3438,8 +4794,7 @@ async function renderCoreVisualGroupScene(snapshot, messageIndex, page, token) {
             visualProfile: context.visualProfile,
             sceneContinuity,
             segmentOverride: {
-                type: 'narration',
-                role: 'system',
+                type: 'other-visible',
                 speaker: '多人对话',
                 text: page.text,
                 sourceText: page.text,
@@ -3601,79 +4956,17 @@ function getActiveVisualSpeakerContext(message, messageIndex, segmentOverride = 
     const activeSegment = segmentOverride || (activeRenderContext && activeMessageIndex === messageIndex
         ? activeMessageSegments[activeSegmentIndex]
         : null);
-    if (activeSegment?.type === 'dialogue-group') {
-        return { role: 'group', speaker: '多人对话' };
-    }
-    if (!activeSegment) {
-        if (message?.role === 'character' && isManifestNarratorSpeaker(message.speaker)) {
-            return { role: 'narrator', speaker: '旁白' };
-        }
-        return {
-            role: message?.role === 'player' ? 'player' : 'character',
-            speaker: message?.role === 'player' ? '你' : message?.speaker || getMainCharacterName(),
-        };
-    }
-    if (message?.role === 'system') {
-        return { role: 'system', speaker: '系统' };
-    }
-    if (activeSegment.type === 'unattributed-dialogue' || activeSegment.identityRef?.type === 'unknown') {
-        return { role: 'system', speaker: '未识别' };
-    }
-    if (!['dialogue', 'narration', 'player', 'system'].includes(activeSegment.type)) {
-        return { role: 'system', speaker: '' };
-    }
-    if (message?.role === 'character' && isManifestNarratorSpeaker(activeSegment.speaker || message.speaker)) {
-        return { role: 'narrator', speaker: '旁白' };
-    }
-    if (message?.role === 'character'
-        && activeSegment.type === 'narration'
-        && isCharacterVisualMetadataSegment(activeSegment.text)
-        && !isManifestNarratorSpeaker(message.speaker)) {
-        return { role: 'character', speaker: message.speaker || getMainCharacterName() };
-    }
-    const role = activeSegment.type === 'narration'
-        ? 'narrator'
-        : activeSegment.type === 'player'
-            ? 'player'
-            : activeSegment.type === 'system'
-                ? 'system'
-                : 'character';
-    const speaker = activeSegment.type === 'narration'
-        ? '旁白'
-        : activeSegment.type === 'player'
-            ? '你'
-            : activeSegment.type === 'system'
-                ? '系统'
-                : activeSegment.speaker || message?.speaker || getMainCharacterName();
-    return { role, speaker };
-}
-
-function isCharacterVisualMetadataSegment(value) {
-    return /^(?:角色|人物|立绘|性别|性别表现|种族|物种|外观|外貌|特征|服装|衣着|穿着|character|person|sprite|gender|species|appearance|features|clothing|outfit)\s*[:：]/iu.test(String(value || '').trim());
-}
-
-function normalizeManifestSpeakerName(value) {
-    return String(value || '')
-        .normalize('NFKC')
-        .replace(/[：:，,。！？!?]+$/u, '')
-        .replace(/\s+/gu, ' ')
-        .trim()
-        .toLocaleLowerCase();
-}
-
-function isManifestNarratorSpeaker(value) {
-    const normalized = normalizeManifestSpeakerName(value);
-    if (!normalized || !manifest) return false;
-    const arcId = release?.activeArcId || release?.arcId || manifest?.defaultArcId || '';
-    return getVisualCharacterBindings(manifest, arcId).some((binding) => {
-        if (binding?.channel !== 'narrator') return false;
-        return [binding.characterKey, ...(Array.isArray(binding.aliases) ? binding.aliases : [])]
-            .some((candidate) => normalizeManifestSpeakerName(candidate) === normalized);
-    });
+    return getPresentationVisualSpeakerContext(activeSegment, message);
 }
 
 async function renderCoreVisualImmediateCharacter(snapshot, messageIndex, token) {
     try {
+        const message = snapshot?.messages?.[messageIndex];
+        const speakerContext = getActiveVisualSpeakerContext(message, messageIndex);
+        if (!['character', 'narrator', 'player'].includes(speakerContext.role)) {
+            recordSceneContinuityDiagnostic('portrait-skipped', { reason: 'visual-role-unavailable' });
+            return;
+        }
         const baseUrl = getCoreVisualServiceUrl();
         if (!baseUrl || token !== visualBundleRequestToken || !manifest) {
             recordSceneContinuityDiagnostic('portrait-skipped', { reason: !baseUrl ? 'service-unavailable' : !manifest ? 'manifest-unavailable' : 'request-stale' });
@@ -3685,14 +4978,8 @@ async function renderCoreVisualImmediateCharacter(snapshot, messageIndex, token)
             recordSceneContinuityDiagnostic('portrait-skipped', { reason: !profile ? 'visual-profile-unavailable' : 'request-stale' });
             return;
         }
-        const message = snapshot?.messages?.[messageIndex];
         if (!message) {
             recordSceneContinuityDiagnostic('portrait-skipped', { reason: 'visible-message-unavailable' });
-            return;
-        }
-        const speakerContext = getActiveVisualSpeakerContext(message, messageIndex);
-        if (!['character', 'narrator', 'player'].includes(speakerContext.role)) {
-            recordSceneContinuityDiagnostic('portrait-skipped', { reason: 'visual-role-unavailable' });
             return;
         }
         const arcId = release?.activeArcId || release?.arcId || manifest?.defaultArcId || '';
@@ -3823,8 +5110,9 @@ function renderCoreVisualFallback({ preserveVerified = false, preserveVerifiedBa
 }
 
 function getCoreVisualPlaceholderUrl(role = 'character') {
+    if (role === 'unknown') return CORE_UNKNOWN_SPEAKER_PLACEHOLDER_URL;
     if (role === 'player') return CORE_PLAYER_PLACEHOLDER_URL;
-    if (role === 'narrator' || role === 'system') return CORE_NARRATOR_PLACEHOLDER_URL;
+    if (role === 'narrator') return CORE_NARRATOR_PLACEHOLDER_URL;
     return CORE_VISUAL_PLACEHOLDER_URL;
 }
 
@@ -3919,7 +5207,7 @@ async function renderCoreVisualPresentation(snapshot, messageIndex, token) {
             setVisualStatus('');
             return;
         }
-        await renderCoreVisualDecisions(body.decisions, baseUrl, token, request, body);
+        await renderCoreVisualDecisions(body.decisions, baseUrl, token, request, body, visualRole);
     } catch (_error) {
         if (token === visualBundleRequestToken) {
             recordSceneContinuityDiagnostic('visual-decision-failed', {
@@ -4106,14 +5394,14 @@ function hasValidatedSceneDecisionInput(request) {
         )));
 }
 
-async function renderCoreVisualDecisions(decisions, baseUrl, token, request, response) {
+async function renderCoreVisualDecisions(decisions, baseUrl, token, request, response, presentationRole = null) {
     if (token !== visualBundleRequestToken) {
         recordSceneContinuityDiagnostic('decision-skipped', { reason: 'request-stale' });
         return;
     }
     const byType = new Map();
     const invalidTypes = new Set();
-    const currentRole = request?.visibleContext?.current?.role || 'character';
+    const currentRole = presentationRole || request?.visibleContext?.current?.role || 'character';
     const sceneDecisionGateOpen = activeSceneContinuityToken === token
         && activeSceneContinuityAction === 'changed'
         && hasValidatedSceneDecisionInput(request);
@@ -4838,9 +6126,7 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
         messageIndex,
         getAdaptivePresentationProfile(),
     );
-    const activeSpeakerContext = segmentOverride
-        ? { role: segmentOverride.role || 'character', speaker: String(segmentOverride.speaker || '') }
-        : getActiveVisualSpeakerContext(message, messageIndex);
+    const activeSpeakerContext = getActiveVisualSpeakerContext(message, messageIndex, segmentOverride);
     const activeSegment = segmentOverride || (activeRenderContext && activeMessageIndex === messageIndex
         ? activeMessageSegments[activeSegmentIndex]
         : null);
@@ -4849,7 +6135,9 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
     const segmentMessage = activeSegment
         ? normalizePlayerVisualRuntimeMessage({
             index: messageIndex,
-            role: activeSegmentRole,
+            // unknown is a local presentation channel only. Keep the original
+            // author role in the visual DTO; it cannot create a character entity.
+            role: activeSegmentRole === 'unknown' ? visibleContext.current.role : activeSegmentRole,
             speaker: activeSegmentSpeaker,
             text: activeSegment.sourceText || activeSegment.text || visibleContext.current.text || '',
         })
@@ -4903,8 +6191,7 @@ async function createCoreVisualDecisionRequest({ snapshot, message, messageIndex
     // character fallback; never borrow a random character-pool portrait.
     const hasActiveCharacterCandidate = displayedMessage.role === 'character'
         && activeSpeakerContext.role === 'character'
-        && Boolean(String(displayedMessage.speaker || '').trim())
-        && !isManifestNarratorSpeaker(displayedMessage.speaker);
+        && Boolean(String(displayedMessage.speaker || '').trim());
     const hasActiveCharacterPresentation = hasActiveCharacterBinding || hasActiveCharacterCandidate;
     const entities = [];
     // Keep status/equipment/item/skill evidence from the full visible message,
@@ -6245,6 +7532,14 @@ function advanceDialoguePlayback() {
         activeSegmentIndex += 1;
         pageIndex = activeSegmentIndex;
         renderActiveDialogueSegment({ animate: shouldAnimateActiveSegment() });
+        const presentationMode = resolvePresentationMode(String(manifest?.locale || release?.locale || ''));
+        if (presentationMode !== 'off' && presentationMode !== 'shadow'
+            && !globalThis.__GALGAME_PLAYER_TEST_DISABLE_BOOTSTRAP__) {
+            void analyzePresentationSnapshot(activeRenderContext.snapshot, activeMessageIndex, {
+                mode: presentationMode,
+                pageIndex: activeSegmentIndex,
+            });
+        }
         // Re-project the active inline speaker so portrait and narration avatar
         // follow the dialogue segment without clearing verified layers.
         scheduleVisiblePageVisualBundle(activeRenderContext.snapshot, activeMessageIndex, activeMessageSegments[activeSegmentIndex]);
@@ -6333,19 +7628,7 @@ function applySegmentPresentation(segment) {
 }
 
 function getDisplayedSpeakerName(segment, message) {
-    if (segment?.type === 'dialogue-group') {
-        return '多人对话';
-    }
-    if (message?.role === 'player' || segment.type === 'player') {
-        return '你';
-    }
-    if (segment.type === 'narration') {
-        return '旁白';
-    }
-    if (segment.type === 'stage') {
-        return segment.speaker ? `${segment.speaker} · 动作` : '动作';
-    }
-    return segment.speaker || message?.speaker || getMainCharacterName();
+    return getPresentationSpeakerLabel(segment, message);
 }
 
 function shouldAnimateMessage(message, waitingForReply, displayingLatest, options = {}) {

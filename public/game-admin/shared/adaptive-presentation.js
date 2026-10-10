@@ -1,4 +1,4 @@
-import { extractSuggestedActionsFromOriginalText } from './sillytavern-adapter.js?v=auto-b19af4e9a9f8';
+import { extractSuggestedActionsFromOriginalText } from './sillytavern-adapter.js?v=galgame-2026-10-09-speaker-v86';
 import {
     ADAPTIVE_EXTRACTION_RESULT_PROTOCOL_VERSION,
     createDefaultAdaptivePresentationProfile,
@@ -6,7 +6,7 @@ import {
     normalizeAdaptivePresentationProfile,
     validateAdaptiveExtractionResult,
     validateAdaptivePresentationProfile,
-} from './adaptive-presentation-schema.js?v=auto-b19af4e9a9f8';
+} from './adaptive-presentation-schema.js?v=galgame-2026-10-09-speaker-v86';
 
 export const ADAPTIVE_PRESENTATION_AGGREGATE_VERSION = 'galgame.adaptive-presentation-result-set.v1';
 const MAX_ADAPTIVE_VISIBLE_TEXT_LENGTH = 16000;

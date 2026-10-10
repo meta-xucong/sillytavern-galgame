@@ -17,7 +17,17 @@ assert.equal(request.options.headers['X-Galgame-Recovery'], '1');
 assert.deepEqual(JSON.parse(request.options.body), { protocolVersion: PROCESS_SUPERVISOR_PROTOCOL_VERSION });
 
 const offline = new LocalProcessSupervisorClient({ fetchImpl: async () => { throw new Error('offline'); } });
-assert.equal(await offline.recover(), null);
+assert.equal((await offline.recover()).errorCode, 'RECOVERY_SERVICE_UNAVAILABLE');
+const timedOut = new LocalProcessSupervisorClient({ fetchImpl: async () => { throw new DOMException('aborted', 'AbortError'); } });
+assert.equal((await timedOut.recover(AbortSignal.abort())).errorCode, 'RECOVERY_REQUEST_TIMEOUT');
+const refused = new LocalProcessSupervisorClient({
+    fetchImpl: async () => ({ ok: false, status: 503, json: async () => ({ errorCode: 'RECOVERY_REQUEST_NOT_ALLOWED' }) }),
+});
+assert.equal((await refused.recover()).errorCode, 'RECOVERY_REQUEST_NOT_ALLOWED');
+const malformed = new LocalProcessSupervisorClient({
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ protocolVersion: 'wrong' }) }),
+});
+assert.equal((await malformed.recover()).errorCode, 'RECOVERY_RESPONSE_INVALID');
 
 let shutdownRequest = null;
 const acceptedServices = Object.fromEntries(PROCESS_SUPERVISOR_SHUTDOWN_SERVICE_KEYS.map((name) => [name, { status: name === 'processSupervisor' ? 'kept-running' : 'scheduled' }]));

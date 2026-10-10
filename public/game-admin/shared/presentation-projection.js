@@ -2,7 +2,7 @@ import {
     PRESENTATION_IDENTITY_PROJECTION_VERSION,
     PRESENTATION_ROSTER_PROJECTION_VERSION,
     sha256Hex,
-} from './presentation-annotation.js?v=auto-b19af4e9a9f8';
+} from './presentation-annotation.js?v=galgame-2026-10-09-speaker-v86';
 
 const UNKNOWN = Object.freeze({ type: 'unknown' });
 const SCENE_CONTINUITY_VERSION = 'galgame.scene-continuity.v1';

@@ -105,7 +105,7 @@ export function createConfigService({
     visualAssetServiceBaseUrl = process.env.GALGAME_VISUAL_ASSET_SERVICE_BASE_URL || '',
     visualAssetInternalReadToken = process.env.GALGAME_VISUAL_ASSET_INTERNAL_READ_TOKEN || '',
     visualAssetInternalTimeoutMs = Number(process.env.GALGAME_VISUAL_ASSET_INTERNAL_TIMEOUT_MS || VISUAL_ASSET_INTERNAL_TIMEOUT_MS),
-    sillyTavernBaseUrl = process.env.GALGAME_SILLYTAVERN_BASE_URL || process.env.SILLYTAVERN_BASE_URL || 'http://127.0.0.1:8000',
+    sillyTavernBaseUrl = process.env.GALGAME_SILLYTAVERN_BASE_URL || process.env.SILLYTAVERN_BASE_URL || 'http://127.0.0.1:8001',
     originalChatBridge = new SillyTavernOriginalChatBridge({
         baseUrl: sillyTavernBaseUrl,
         fetchImpl: createCookieFetch(globalThis.fetch),

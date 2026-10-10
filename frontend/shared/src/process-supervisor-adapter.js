@@ -51,7 +51,7 @@ export class LocalProcessSupervisorClient {
     }
 
     async recover(signal) {
-        if (!this.baseUrl || typeof this.fetchImpl !== 'function') return null;
+        if (!this.baseUrl || typeof this.fetchImpl !== 'function') return recoveryFailure('RECOVERY_UNAVAILABLE');
         try {
             const response = await this.fetchImpl(`${this.baseUrl}${PROCESS_SUPERVISOR_ENDPOINTS.recover}`, {
                 method: 'POST',
@@ -60,12 +60,18 @@ export class LocalProcessSupervisorClient {
                 body: JSON.stringify({ protocolVersion: PROCESS_SUPERVISOR_PROTOCOL_VERSION }),
                 signal,
             });
-            if (!response.ok) return null;
             const result = await response.json().catch(() => null);
-            return result?.protocolVersion === PROCESS_SUPERVISOR_PROTOCOL_VERSION ? result : null;
+            if (!response.ok) {
+                return recoveryFailure(safeRecoveryErrorCode(result?.errorCode) || `SUPERVISOR_HTTP_${Number(response.status) || 0}`);
+            }
+            if (result?.protocolVersion !== PROCESS_SUPERVISOR_PROTOCOL_VERSION || typeof result.services !== 'object') {
+                return recoveryFailure('RECOVERY_RESPONSE_INVALID');
+            }
+            return result;
         } catch {
-            // The companion is optional; health probing remains available without it.
-            return null;
+            // Keep the failure class visible to the reset flow; core health
+            // probes still run independently when the optional supervisor is down.
+            return recoveryFailure(signal?.aborted ? 'RECOVERY_REQUEST_TIMEOUT' : 'RECOVERY_SERVICE_UNAVAILABLE');
         }
     }
 
@@ -106,4 +112,20 @@ export class LocalProcessSupervisorClient {
             return null;
         }
     }
+}
+
+function recoveryFailure(errorCode) {
+    return {
+        ok: false,
+        accepted: false,
+        protocolVersion: PROCESS_SUPERVISOR_PROTOCOL_VERSION,
+        errorCode,
+        services: {},
+        diagnostics: {},
+    };
+}
+
+function safeRecoveryErrorCode(value) {
+    const code = String(value || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80);
+    return code || '';
 }

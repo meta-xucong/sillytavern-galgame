@@ -5,7 +5,7 @@ const ROUTES = Object.freeze({
   '/v1/presentation/health': Object.freeze({ method: 'GET', upstreamPath: '/v1/health', headers: [], timeoutMs: 2_500 }),
   '/v1/presentation/annotations': Object.freeze({
     method: 'POST', upstreamPath: '/v1/presentation/annotations', versionHeader: 'x-galgame-presentation-version',
-    headers: ['content-type', 'x-galgame-presentation-version'], timeoutMs: 65_000,
+    headers: ['content-type', 'x-galgame-presentation-version'], timeoutMs: 130_000,
   }),
   '/v1/presentation/scene-continuity': Object.freeze({
     method: 'POST', upstreamPath: '/v1/presentation/scene-continuity', versionHeader: 'x-galgame-scene-continuity-version',

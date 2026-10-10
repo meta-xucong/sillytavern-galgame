@@ -1,5 +1,5 @@
-import { formatVisualNovelDisplayText } from './shared/sillytavern-adapter.js?v=auto-b19af4e9a9f8';
-import { collectVisibleHudRecords } from './visible-hud-records.js?v=auto-b19af4e9a9f8';
+import { formatVisualNovelDisplayText } from './shared/sillytavern-adapter.js?v=galgame-2026-10-10-speaker-title-v4';
+import { collectVisibleHudRecords } from './visible-hud-records.js?v=galgame-2026-10-10-speaker-title-v4';
 
 const HUD_VISUAL_CHANNELS = Object.freeze([
     { module: 'equipment', entityType: 'equipment', attributeCode: 'equipment-visible-label', collection: 'items' },

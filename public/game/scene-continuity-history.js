@@ -1,4 +1,4 @@
-import { isSceneContinuityCursorStrictlyEarlier } from './presentation-renderer.js?v=auto-b19af4e9a9f8';
+import { isSceneContinuityCursorStrictlyEarlier } from './presentation-renderer.js?v=galgame-2026-10-10-speaker-title-v4';
 
 export const SCENE_CONTINUITY_HISTORY_REPLAY_PAGE_LIMIT = 128;
 export const SCENE_CONTINUITY_HISTORY_REPLAY_MIN_INTERVAL_MS = 2_100;

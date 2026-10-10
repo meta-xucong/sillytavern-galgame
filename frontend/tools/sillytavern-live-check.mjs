@@ -2,7 +2,7 @@ import { SillyTavernAdapter } from '../shared/src/sillytavern-adapter.js';
 import { DEMO_SCENARIO } from '../shared/src/demo-scenario.js';
 
 const args = parseArgs(process.argv.slice(2));
-const baseUrl = normalizeBaseUrl(args['base-url'] || process.env.GALGAME_SILLYTAVERN_BASE_URL || 'http://127.0.0.1:8000');
+const baseUrl = normalizeBaseUrl(args['base-url'] || process.env.GALGAME_SILLYTAVERN_BASE_URL || 'http://127.0.0.1:8001');
 const strict = args.strict === true;
 const strictBindings = args['strict-bindings'] === true;
 const fetchWithCookies = createCookieFetch(globalThis.fetch);

@@ -47,7 +47,7 @@ export function commandLineHasExactRelativeServerEntry(commandLine) {
 }
 
 export function commandLineHasStrictRelativeServerEntry(commandLine, executablePath = '') {
-    const args = splitWindowsCommandLine(String(commandLine || ''));
+    const args = stripSupportedSillyTavernPortOverride(splitWindowsCommandLine(String(commandLine || '')));
     if (args.length < 2 || args.length > 3 || !/(?:^|\\|\/)node\.exe$/i.test(args[0])) return false;
     if (String(args.at(-1) || '').toLowerCase() !== 'server.js') return false;
     if (args.length === 2) return true;
@@ -56,7 +56,7 @@ export function commandLineHasStrictRelativeServerEntry(commandLine, executableP
 }
 
 export function commandLineHasStrictNodeScriptEntry(commandLine, executablePath = '', scriptPath = '') {
-    const args = splitWindowsCommandLine(String(commandLine || ''));
+    const args = stripSupportedSillyTavernPortOverride(splitWindowsCommandLine(String(commandLine || '')));
     if (args.length < 2 || args.length > 3 || !/(?:^|\\|\/)node\.exe$/i.test(args[0])) return false;
     const executable = normalize(executablePath).replace(/^"|"$/g, '');
     const script = normalize(scriptPath).replace(/^"|"$/g, '');
@@ -71,9 +71,17 @@ export function commandLineHasStrictNodeScriptEntry(commandLine, executablePath 
 }
 
 export function commandLineHasStrictAbsoluteNodeScriptEntry(commandLine, executablePath = '', scriptPath = '') {
-    const args = splitWindowsCommandLine(String(commandLine || ''));
+    const args = stripSupportedSillyTavernPortOverride(splitWindowsCommandLine(String(commandLine || '')));
     if (!commandLineHasStrictNodeScriptEntry(commandLine, executablePath, scriptPath) || !scriptPath) return false;
     return normalize(args.at(-1)).replace(/^"|"$/g, '') === normalize(scriptPath).replace(/^"|"$/g, '');
+}
+
+function stripSupportedSillyTavernPortOverride(args) {
+    const script = String(args.at(-3) || '').replace(/^"|"$/g, '').replaceAll('/', '\\').toLowerCase();
+    const isSillyTavernEntry = /(?:^|\\)server\.js$/i.test(script);
+    return isSillyTavernEntry && args.at(-2) === '--port' && args.at(-1) === '8001'
+        ? args.slice(0, -2)
+        : args;
 }
 
 export function classifySillyTavernProcess({

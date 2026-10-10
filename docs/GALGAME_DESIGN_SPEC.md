@@ -1,11 +1,171 @@
 # AI Galgame 游戏设计框架与功能说明
 
+## 当前：2026-10-10 旁白页结构说话人标题投影修复
+
+若当前页外观上是旁白、但完整消息的结构证据明确归属了该页对白，玩家标题可以显示对应说话人；parser 的 rank 0–2 唯一说话人/群体证据共用规则契约，并经过哈希和页范围验证，rank 3/default 证据不用于旁白标题覆盖。这是标题侧车，不会把页面变成角色对白，也不会触发人物身份或头像绑定。正文、页序、分页和原版 SillyTavern 行为保持原样。详见 `GALGAME_NARRATION_SPEAKER_TITLE_PROJECTION_FIX_TASKSPEC_2026-10-10.md`。
+
+## 当前：2026-10-10 LLM 感知复位恢复
+
+玩家复位会检查真实 LLM 连通性；只有 provider 传输级故障且取得运行桥关闭闸门后，才替换隔离的运行桥。活动生成、酒馆、聊天记录和玩家存档保持不动；provider HTTP 错误作为诊断呈现，不靠进程重启重试。详见 `GALGAME_RESET_LLM_AWARE_RECOVERY_TASKSPEC_2026-10-10.md`。
+
+## 当前：2026-10-09 V87 本地强证据标题快路径（parser v86）
+
+人物对白标题优先从现有生产分段器产生的本地人物候选进入完整结构证据校验。明确且 rank 0 的引语归属可立即显示，避免可选世界书读取延迟让“未识别”留在页面。该优化不改语义分析结论、游戏正文、分页、角色身份或 SillyTavern 原版。详见 `GALGAME_SPEAKER_ATTRIBUTION_V87_LOCAL_EVIDENCE_FAST_PATH_TASKSPEC_2026-10-09.md`。
+
+## 历史：2026-10-09 V86 复合职务称谓引语归属（parser v86）
+
+在所有剧本共用的 V86 结构解析器上，新增有限职位头词的复合称谓识别。只处理闭合冒号引语；前缀须为当前聊天候选、有限通用角色称谓，或当前消息引语外重复出现且至少一次作动作主语。无法验证的复合名词、冲突主体、书面来源和心理活动继续 abstain。只影响显示标题；正文、分页和身份投影保持不变。详见 `GALGAME_SPEAKER_ATTRIBUTION_V86_COMPOUND_ROLE_QUOTE_TASKSPEC_2026-10-09.md`。
+
+## 历史：2026-10-09 V85 局部人物主体引语归属（parser v84）
+
+在所有剧本共用的 V84 结构解析器上，新增局部人物主体到冒号引语的保守归属规则。只使用当前 roster 或当前正文中的唯一人物描述/编号单位主语，保持来源转述、书面载体、并列人物与心理活动拒绝归属。只影响显示标题。详见 `GALGAME_SPEAKER_ATTRIBUTION_V85_LOCAL_ACTOR_QUOTE_RECOVERY_TASKSPEC_2026-10-09.md`。
+
+## 历史：2026-10-09 V84 跨剧本结构规则统一激活（当前由 V86 / parser v86 继承）
+
+所有已发布剧本使用同一份 shared 结构化 speaker/title parser。规则不按剧本 ID 或剧本名开关；角色名称从当前发布资源、当前聊天明确出现的名称以及 V83 精确聊天绑定世界书候选中动态提供，并按当前聊天/release 隔离。生产 parser 与历史回放使用同一版本，v83 累积继承 v78 及之前规则。题材专用线索只是附加分支；通用句法规则仍在所有剧本运行。该保证表示默认使用同一规则集，不代表任意语言、格式和剧本文风都有同等准确率。标题仍只影响显示，不改变正文、分页、identity 或 SillyTavern 原版语义。详见 `GALGAME_SPEAKER_ATTRIBUTION_V84_CROSS_SCENARIO_RULE_ACTIVATION_TASKSPEC_2026-10-09.md`。
+
+## 历史能力：2026-10-09 V83 当前聊天世界书标题候选自动发现（由 V86 / parser v86 继承）
+
+所有已发布剧本在玩家端解析对白标题时，默认尝试从当前实际加载聊天头的 `chat_metadata.world_info` 读取其明确绑定的世界书，并提取已知的显式角色标题候选；剧本不再需要重复配置 Arc 世界书名。此字段不是角色卡、全局、persona 等运行时 worldbook 来源的完整清单，本功能不覆盖这些资源。候选只用于结构标题显示，不成为角色身份/头像/队伍状态。没有明确聊天绑定或 worldbook 格式不受支持时不猜测，维持现有兜底。不同聊天与 release 隔离，原始世界书 JSON 不离开只读 adapter。该能力不改变原版世界书注入或上下文。当前提取格式仍非任意 schema 通用，回放覆盖不等于准确率。详见 `GALGAME_SPEAKER_ATTRIBUTION_V83_AUTO_ACTIVE_WORLD_BOOK_TASKSPEC_2026-10-09.md`。
+
+## 历史：2026-10-09 v78 标题归属（已由 V86 生产版本继承）
+
+历史生产解析器为 `full-message-speaker-index.v78`：在完整引语上识别受限代词动作链、总结报告谓词和读信/看图后的引文来源；只影响既有对白标题，不改正文分页或 SillyTavern 原版。当前生产行为与跨剧本契约以本页 V86 条目为准。固定历史 cohort 的覆盖变化不是准确率；无逐页 gold 时保持 `INSUFFICIENT_EVIDENCE`。详见 `GALGAME_SPEAKER_ATTRIBUTION_V78_TASKSPEC_2026-10-09.md`。
+
+## 历史记录：2026-10-09 v77 标题规则
+
+v77 的历史规则包括引语后的发言描述、句首动作主体引出冒号引语，以及冒号前最近的明确动作主体。当前行为以本页顶部 V86 跨剧本规则契约为准。只影响对白标题，不改剧情正文、分页、状态或原版 SillyTavern。历史覆盖变化不代表准确率；v77 详细记录见 `GALGAME_SPEAKER_ATTRIBUTION_V77_TASKSPEC_2026-10-09.md`。
+
+## 2026-10-09 v76 历史结构标题归属
+
+历史 parser/cache namespace 为 `full-message-speaker-index.v76`。新增“句首具名角色 + 动作 + 冒号引语”结构识别，以及严格有界的短代词承接。名字须处于引语引入句的主语位置并紧邻动作；不能从旁边随便提到的人名猜说话人。匿名人物、并列主体、书面内容和场景切换继续保守处理。所有结果只影响显示标题，不改变消息文本、正文分页、人物状态或原版 SillyTavern 语义。2026-10-09 历史回放覆盖：158 个聊天文件、955 条 assistant 消息、18,696 个既有页面；这不是逐页准确率，准确率仍需 gold。见 `GALGAME_SPEAKER_ATTRIBUTION_V76_TASKSPEC_2026-10-09.md`。
+
+## 2026-10-09 v75 句首连接词与名册 cue 边界
+
+v75 为历史版本；当前行为与证据以本页顶部 V86 契约及 parser v86 实现为准。
+
+历史结构标题解析器为 v75。角色名前出现“随后/接着/然后/这时/此时/突然”等篇章连接成分时，解析器会先剥离该句首连接成分，再检查精确名册角色与局部发声 cue 的关系，从而避免把“随后尼布”作为伪姓名。若页级切词对同一个引语把修饰词并入姓名，只有完整消息已经有同引语 rank-0 决议且 cue span 对齐时才以完整消息的精确角色名纠正页级标题。v74 回放仍保留旧行为；对旁白、信息载体、并列主体和未出现于名册的普通提及不放宽判断。此变化仅影响显示标题和 parser cache 版本，不改正文分页、source spans、角色状态或 SillyTavern 原版。历史目录在当前工作区不可用，未宣称历史覆盖/准确率提升。详见 `GALGAME_SPEAKER_ATTRIBUTION_V75_TASKSPEC_2026-10-09.md`。
+
+## 2026-10-09 v74：roster 主体和引语冒号结构
+
+历史结构标题解析器 v74。名单内角色若是当前引语冒号前缀的唯一句首主体，可不依赖特定动作词归属该引语；逗号分隔的多个动作/发声子句优先使用最后一个明确的名册角色，守卫等通用角色主体会阻止把前一人物错当说话人。并列主体、信息来源转述、记录和未出现于当前角色名单的近邻提名仍不自动认作说话人。该证据只驱动显示标题。旁白兜底历史回放现在具备与 unresolved 项相同的引语跨度诊断，因此可区分“确无局部 speaker 线索”和“已有线索未解析”。回放覆盖变化不是准确率，缺少人工 gold 时准确率为 `INSUFFICIENT_EVIDENCE`。详见 `GALGAME_SPEAKER_ATTRIBUTION_V74_TASKSPEC_2026-10-09.md`。
+
+## 2026-10-09 v73 历史版本：代词发声回指；宽松邻句姓名兜底退役
+
+v73 是 v74 的前一版本。其回指规则只用于 display title；旧版本回放计数不能替代人工 gold 准确率评估。详情见 `GALGAME_SPEAKER_ATTRIBUTION_V73_TASKSPEC_2026-10-09.md`。
+
+## 2026-10-09 v72 局部姓名低优先级兜底
+
+历史版本说明；该宽松姓名提及规则已由 v73 关闭。
+
+当明确署名、动作/引语结构和有界回指均没有候选时，闭合引语可使用同句及紧邻前后句内、引号外的已知角色名；多个姓名按文本先后取第一个。该能力只作为标题兜底，遇到另一明确主体、并列动作、书面载体、思考文本或新场景时放弃。角色名须在同聊天的两条不同消息中被高置信署名后，才可在最近 8 条消息内复用；新场景开始后失效。实验发现单次锚点会传播误解析，因此维持双消息门槛。它不创建角色身份，不改正文或分页。实现边界及历史回放见 `GALGAME_SPEAKER_ATTRIBUTION_V72_TASKSPEC_2026-10-09.md`。
+
+## 2026-10-09 v70 邻句已知姓名+发声线索末级兜底
+
+标题识别只在所有既有归属规则无候选时，才尝试用目标句/紧邻句中的唯一已知角色名与明确发声线索补回目标引语。只有人名提及不够；多姓名或不同人物主体无法消歧时保持旁白兜底。它不改正文和分页。详见 `GALGAME_SPEAKER_ATTRIBUTION_V70_TASKSPEC_2026-10-09.md`。
+
+## 2026-10-09 v69 说话人署名检索边界
+
+标题归属可在当前 quote 附近前后各两句内寻找明确署名；当前 quote 直接绑定署名优先，普通邻近人名不作为候选，跨对白/场景/书面载体不继承，同级冲突继续兜底。此规则只影响展示标题，不更改正文和分页；实施细节见 `GALGAME_SPEAKER_ATTRIBUTION_V69_TASKSPEC_2026-10-09.md`。
+
+## 2026-10-09 v68 同句主体动作与引语闭合
+
+角色主体在同一消息内通过动作、物品传递、工具使用、身体/表情状态直接引出冒号引语时，展示标题可归到唯一主体；引语载体、同句竞争主体与单独的外貌/情绪描写继续旁白兜底。该规则仅用于可重算的标题 evidence，不建立角色身份或头像绑定；不改变原文和分页。详见 v68 TaskSpec。
+
+## 2026-10-09 v67 闭合引语后的代词承接
+
+标题归属可沿既有显式说话人锚点，通过最近一页的“她/他 + 动作或发声”句承接到下一句独立引语；唯一具名动作主体也可与引语后的同一代词形成有限回指。仅影响展示标题，不创建角色身份或头像绑定。载体文字、场景边界、竞争说话人和歧义仍保持旁白兜底。v67 全历史回放只显示旁白兜底减少 3 页，准确率仍缺完整人工 gold；详情见 v67 TaskSpec。
+
+## 2026-10-09 v65 修正同 cue 姓名边界误冲突（实现回放完成，独立 A1 待审）
+
+v64 剩下的两条 unresolved 实际均由完整引语账本明确指向“瑞恩”；页级解析把声音修饰语并进 Han 姓名，错误地产生第二个 speaker 冲突。v65 对同一 source quote、同一 cue evidence span 和同一起点的姓名边界候选，沿用完整 quote resolver 已选结果；不同起点/证据仍拒判。冲突 fallback 的证据跨度限制在当前页，回放按 page 相交 quoteEvidence 诊断。回放的 2 条 unresolved 消失，候选覆盖变化不代表 accuracy。只改标题归属投影，不改游戏正文和分页，不建立身份/头像。独立 A1 待审。详见 v65 TaskSpec。
+
+## 2026-10-09 v64 quote resolver 与推测标题安全门（实现回放完成，整体独立 A1 证据不足）
+
+同一页内的明确姓名、发声 cue 与引语作为 source-bound 候选，和当前 quote 的唯一 top decision 进入同一 resolver；同级冲突拒判。只保留胜者摘要或冲突 rank。segmenter 原有四字段 probable hint 仍是 display-only `姓名（推测）`，对应 quote 已归属他人或冲突时会被挡住，不建立角色身份或头像绑定。全历史只读 replay：158 chats、950 assistant messages、18,562 pages、6,094 candidates（3,937 attributed、223 anonymous、1,932 narrator fallback、2 unresolved）；digest `sha256:5b77a344284bcdccfa8c3df54e2fbfb0bf9fb289e5fc915b3031915022626a20`；所有历史 chat 的 roster scope unavailable。748 hints 均通过 source span 验证，539 被 quote 决议门挡住、209 未被此门阻断；这不是已显示数或准确率，accuracy 仍 `INSUFFICIENT_EVIDENCE`。source unchanged、无聊天写回、无 provider 调用。adapter 1/1、speaker 60/60、runtime 58/58、player/admin build、DOM smoke、diff-check 通过；静态架构审计未执行（任务限制）。独立 A1 未发现 resolver 缺陷，但分页起点 hash 无法独立核验，整体仍 `INSUFFICIENT_EVIDENCE`。冻结 segmenter slice 3,453 bytes，SHA-256 `a88752786dd13250fa269d75b9489b374931429c90164de6c18f41b41a1eae3d`；浏览器/移动端未验收。详见 v64 TaskSpec。
+
+## 2026-10-09 v63 当前引语优先级修正（回放完成，独立 A1 待复审）
+
+v63 明确优先使用当前 production page 相交引语的 source decision：当前 quote 已归属其他说话人时，不得被前页 title/pronoun bridge 覆盖；当前 quote 同级冲突时也不得由旧标题填补。只有无当前归属/冲突决议的普通未归属引语，才可沿用既有唯一连续关系。全量分桶保持 6,094 candidates（3,998 attributed、213 anonymous、1,883 narrator fallback、0 unresolved），source digest `sha256:5b77a344284bcdccfa8c3df54e2fbfb0bf9fb289e5fc915b3031915022626a20`；158 chats / 18,562 pages 的 roster scope unavailable；`sourceUnchanged=true`、`chatWriteback=false`、`externalProviderCalls=0`。分桶仅是 coverage，不代表准确率；无代表性 gold，`INSUFFICIENT_EVIDENCE`。adapter 1/1、speaker replay 60/60、runtime 57/57、player/admin build、static audit、DOM smoke 通过；冻结分页函数 hash 保持 `a88752786dd13250fa269d75b9489b374931429c90164de6c18f41b41a1eae3d`。真实 browser/mobile UI 未验收，独立 A1 复审待执行。细节见 v63 TaskSpec。
+
+v63 player/admin build 由 `node frontend/build-static.mjs` 复现。关键产物 SHA-256：`public/game/app.js` `A7AEF9E1F2C23D2D3FF8A8BB9578CC11098512F930C463B38D85F321D69EBD69`、`public/game/index.html` `8216F83DABFF9EB30B313B00515ADDCD0E3A29DAE4F7F22BBF8A00E4E436FD25`、共享 adapter `3C4EA09E05CF4BF35A0490F3ABEC059B55B7AAC54BCA026D3AB28031213AC63E`；`public/game-admin/app.js` `1045A549033948C22B889B488997B64398D01F5004B33FFCD515F8121857CD81`、`public/game-admin/index.html` `35F12C72AB18231363EA6A43075EA83CA1FE3CB033B48C298BDE55D718A2CB91`。
+
+## 2026-10-08 v60 逐引语说话人标题
+
+对白标题按每段完整引语及其来源上下文统一判断：明确署名/发声线索优先，其次为唯一动作主体，再考虑相邻句和前一至前两张既有页中的显式发言锚或句法明确的唯一动作主体。出现多个名字时，按句法中的发声主体优先于宾语、领属者、载体文字和单纯提及者；静态姓名介绍不能单独决定归属。引语未闭合时仍分析可用上下文并保留未闭合状态。证据冲突、书面载体、音效或场景边界会阻断推断，证据不足继续兜底。此规则只决定展示标题，不改变正文、分页、语义类别、角色身份、队伍状态或图片绑定。详见 v60 TaskSpec。
+
+## 2026-10-08 v59 局部说话人续接
+
+只有当新页的代词动作框架和引语与同一原版消息前两页中的唯一显式 speaker anchor 构成连续证据时，标题才可沿用该角色。前页标题若无 source anchor、存在多位候选人、场景/记录已切换或当前有新说话人线索，就不继承。该规则只帮助显示标题，不生成角色身份或状态；其证据门槛见 v59 TaskSpec。
+
+## 2026-10-08 v57 局部动作与引语续接
+
+同一消息内，唯一具名动作主体紧邻闭合对白时，标题可归给该主体；原始引语跨既有页面时，只在同一引语 source span 上续接原归属。未署名动作、文书内容、无说话谓词的物件交接、场景切换、分句后的新事件/主体或下一位说话人均不继承旧角色。声音拟声词只是叙事音效，不创建角色标题；音效后的逗号/分句会结束旧角色连续性。该行为只呈现标题证据，不更改剧情正文、分页、身份、队伍、头像或 SillyTavern 运行语义。
+
+v57 4 条真实历史页归属通过，7 个负例和一个直接动作续接正例通过。SFX 只可通过紧邻显式动作谓词或窄范围声音框架续接唯一局部主体，新名词事件切断关联。只读全历史回放得到 6,112 dialogue candidates（4,046 attributed、148 anonymous、1,918 narrator fallback、0 unresolved），source set digest 未变、无聊天写回和模型调用。v56 与 v57 的覆盖分桶差异不代表准确率变化；准确率仍为 `INSUFFICIENT_EVIDENCE`。测试和边界详见 v57 TaskSpec。
+
+## 2026-10-08 parser v56 匿名首次发声标题
+
+若一个无名角色在同一条剧情消息中先有语言对白，随后以“它/他/她”等代词加清楚的发声谓词承接，紧跟的闭合语言引语可显示为“？？？”。若角色名字只在这段自述中出现，不能据此把名字当作外部确认身份。这个判断只改变标题显示，不创建角色、队伍成员或头像身份。报告、公告、书信等载体中的文字仍归旁白；单纯拟声或声响描述而没有语言引语不生成匿名说话人。明确角色归属和场景冲突规则优先，其他未唯一归属闭合对白仍按现有“旁白”显示兜底。精确历史例与边界见 v56 TaskSpec/历史回放计划。
+
+v56 实测分布：全历史 6,240 个对白候选中，4,524 归属角色/群体、140 为匿名首次发声标题、1,576 为旁白显示兜底、0 unresolved；变化只反映标题覆盖分类。22 个新增匿名页是同一历史内容的归档副本（归一化页指纹一致），不可视为 22 个独立准确率样例。回归和哈希证据见 TaskSpec。
+
+## 2026-10-08 parser v54 标题归属补充
+
+标题侧车识别通用的同消息结构证据：具名声音/发声谓词、具名动作引出对白、真实未闭合的同一引语跨既有页续接，以及最近唯一同场景角色的代词说话 cue。说话人 span 必须回指完整姓名，不能吸收“也/则/把”等句法粒子。报告或账本上的文字、仅有物件传递动作、匿名声线描述和冲突/多义上下文不生成角色标题；未能唯一判断时使用现有中性旁白 display fallback。此规则仅适配正文的标题，不改变正文、语义类型、人物身份、队伍状态和分页。
+
+六条真实历史页面 gold 全部通过（6/6）。全历史 158 chats、950 assistant messages、18,562 pages、6,242 dialogue candidates：4,519 attributed、118 anonymous、1,605 narrator display fallback、0 unresolved。相比 v53 仅有 19 页从 fallback 转为 attribution；这不是准确率结论，完整语料准确率仍 `INSUFFICIENT_EVIDENCE`。测试结果和来源冻结证明见 Native-first 与历史回放计划。
+
 > 最新冲突标记：自 2026-07-24 起，凡本文提到由定制层重做角色卡、世界书、预设、上下文构造、聊天历史、生成语义、前端固定剧情、前端分支/结局或平行剧情状态的内容，均以 `docs/GALGAME_NATIVE_FIRST_DEVELOPMENT_SPEC.md` 为准并视为作废。最新原则是：SillyTavern 原版负责后端能力、资源和运行语义；玩家必须使用我们自定义的 Galgame 前端 UI，而不是被送回原版复杂 UI。
 
 > 文档状态：最终方向基线 v1.1
 > 生效日期：2026-07-24
 > 适用范围：玩家端、管理员端、剧本内容、AI 运行逻辑、媒体事件
 > 配套文档：`docs/GALGAME_FRONTEND_DEVELOPMENT_SPEC.md`
+
+## 2026-10-08 parser v53 A2 bounded scope 与最新回放结果
+
+v53 A2 将聊天内 observed-name 词表限制在最近八个调用方消息位置，并在场景/标题边界清空；词表只为当前消息本地完整说话/动作 cue 提供候选名，不携带说话人所有权或代词。传递报告后有直接 `说` cue 时，按动作边界截取完整语法主语，禁止生成`马库斯把`一类截断署名；文书载体、无明确说话 cue 的交接动作仍走旁白显示 fallback。
+
+最终只读回放：158 chats、950 assistant messages、18,562 unchanged pages、6,242 dialogue candidates；4,500 attributed、118 anonymous、1,624 narrator display fallbacks、0 unresolved display rows。candidate fallback reason 合计 1,624（no-unique 1,610、narrative quote 2、ambiguous local 2、dialogue shape without speaker 10）。相对冻结 v52，candidate −160、attributed −471、anonymous +15、fallback +296，说明限制姓名借用范围显著扩大了保守 fallback；不代表准确率提高或所有内容都是真旁白。source unchanged/no-writeback/no-provider flags 均通过，`speakerAccuracy=INSUFFICIENT_EVIDENCE`。分桶、六条真实 gold、测试和构建证据见 TaskSpec 和历史 replay 报告；本规则不改变正文/分页/身份或原版代码。
+
+## 2026-10-08 parser v52 标题证据回溯（由 v53 A2 更新）
+
+标题解析可在同一原版 assistant 消息内回看直接署名、具名动作/说话 cue，以及同场景最近唯一角色锚，再精确投影到既有生产页。只允许真正未闭合的同一配对引语跨页续接；闭合引语不会仅因相邻而继承。场景边界、最近不同角色或多个竞争锚会停止回指。不得跨消息/聊天借用说话人或改变既有生产页、正文、顺序、source span、身份和队伍状态。引号外明确玩家发话才显示“你”；NPC 引号内“我”不是玩家。文书载体文字归旁白；群体标题“人群”需同消息明确群体来源与连续匿名引语，单纯多条引语不够。
+
+v52 当前全历史只读回放：158 chats、950 assistant messages、18,562 pages、6,402 dialogue candidates；4,971 attributed、103 anonymous first appearances、1,328 closed-speech narrator fallbacks。v51→v52 候选净变化 +23（归属 +63、匿名 −2、fallback −38），是分类覆盖变化，不代表准确率；无完整逐页人工 gold 时准确率仍 `INSUFFICIENT_EVIDENCE`。fallback 候选原因按 1,328 分母独立计数；非候选叙述诊断另行统计。详情与冻结 digest 见 Native-first 规范及历史回放报告。
+
+以下 v51 display-only narrator fallback 的角色/语义/头像边界继续有效；v52 仅补充它之前的证据检索优先级与统计口径。
+
+## 2026-10-08 parser v51 闭合对白显示兜底（由 v52 补充）
+
+已闭合/完整、但没有唯一 speaker 的对白，其显示标题与视觉上下文走用户确认的“旁白”fallback：renderer 可给该显示页 `role=narrator`，但只使用已有中性 `CORE_NARRATOR_PLACEHOLDER_URL`/`narrator` channel，不使用角色 catalog 头像。该规则只是 display classification/fallback，不把语义 segment 改写成 narration；speaker identity 仍 unresolved，不创建人物身份、roster、角色头像绑定或持久状态。明确 speaker/group evidence 优先；匿名首次出现显示“？？？”；未闭合引语保持“未识别”。本条 supersedes 本文早期“缺少 speaker evidence 必须 unknown/未识别、不能用旁白标题”的旧显示标题约束，不改变 semantic annotation、正文、segment/page/span、分页或原版 SillyTavern。详细 renderer 合同见 `docs/GALGAME_FRONTEND_DEVELOPMENT_SPEC.md`；权威边界见 `docs/GALGAME_NATIVE_FIRST_DEVELOPMENT_SPEC.md`。
+
+## 2026-10-07 标题分类校准
+
+结构化标题把明确的玩家对白显示为“你”，把明确由多人共同引出的对白显示为具体群体名（如“守卫（群体）”）；物品铭文/书信引文与游戏检定、数值、状态信息统一使用“旁白”标题，编号行动选项保留“选项”。这些标题不据此新建角色身份或状态；speaker/group 明确证据优先；闭合/完整但无法唯一归属的对白按 v51 显示“旁白”fallback，未闭合引语保持“未识别”，匿名首次登场保持“？？？”。Native-first 文档定义最终边界。
+
+可定位的角色名/称谓在冒号前承担动作并引出引语时，该引语标题归动作主体；必须由当前消息的原文跨度支持。
+
+复合说话谓语（如“补充道”“提醒道”）按完整词组识别，不截断前置角色名；代词或泛指短语不作为新角色身份。该规则仅用于展示标题。
+
+2026-10-07 parser v18：标题只在剧情推进开头使用；非开头的标题样式文本显示为旁白。独立拟声词引语和经验/数值汇总归旁白。角色名加动作或反应并以冒号引出引语时归该角色，避免截断较长角色名。未归属的闭合对白依 v51 显示“旁白”fallback；未闭合引语仍显示“未识别”。
+
+2026-10-07 parser v20 澄清：只有每条剧情回复的第一个可见页能显示“标题”；其后的 Markdown、括号、书名号或冒号式标题外观一律作为“旁白”，即使 Markdown 显式标记也不例外。精确角色署名仍按说话人证据展示。该规则为 display-only，不影响正文分页或身份。
+
+2026-10-07 parser v21 补充中文全角括号 `（…）` 和书名号 `《…》` 为标题外观；它们只有在剧情推进开头才标“标题”，后续位置一律标“旁白”，包括底层对白页类型。明确角色署名仍优先。
+
+2026-10-07 parser v22：角色名后跟常见动作/反应再接冒号引语时，归属该角色；短拟声词从对白候选中排除，动作句里的拟声词不切断其后对白的主体回溯。普通短对白仍需归属证据。该能力只调整展示标题，不改正文分页或身份。
+
+2026-10-08 parser v32 补充：人工复核摘录里的“上一页/当前页”和括号说明是外部标注，不属于原文；评审以当前页正文为目标，必要上下文从完整原版消息单独读取。运行时不得全局删除真实正文中的“上一页”。角色标题可由唯一局部动作/反应及同消息的明确锚点支持；显示表面文字与独立 campaign 元信息统一归旁白。描述性新角色称谓仅作为当前显示标题，不能自动创建持久身份、头像或队伍状态。玩家动作不等于玩家发言。完整边界见 Native-first spec v32。
+
+## 2026-10-06 说话人标题 Demo 产品边界
+
+玩家当前页可先显示有明确原文归属证据的说话人标题；speaker identity 不明时不猜人物；闭合对白显示“旁白”fallback，未闭合引语仍为“未识别”，匿名首次登场为“？？？”。普通无标记正文允许使用粗略“旁白”标题 fallback，但不得据此创建 narrator identity、头像或队伍状态。该标题优化只用于呈现，不改变故事正文、角色身份、头像、队伍或存档。仅就标题补充而言，本条窄例外 supersedes 本文长回复分页段落中的“只给 source-only unknown base page 附加 label evidence”限制，允许补当前实际显示页的 unknown 投影段；page-window 结果必须按同消息索引和完整消息 hash，与唯一实际显示页 `sourceSpan` 精确相等后才可附加，否则保留原标题/unknown。已归属引语在页边界处按现有 v5 合同续接；parser v10 对同一未归属引语跨度的 probable 标题仅回看同一消息的即时前一或前两张生产页，必须对当前页所有未归属 quote span 唯一命中同一有效 seed；不滚动使用 derived continuation。相邻关系、前页普通标题和消息作者名均不能单独作为推断依据。结构快路与语义注释的优先级及开发清单见 `docs/GALGAME_SPEAKER_LABEL_HYBRID_DEMO_DEVELOPMENT_SPEC_2026-10-06.md`。
+
+2026-10-06 当日补充：为恢复基本叙述标题，未带引号、非行首对白格式、且无疑似姓名冒号前缀的普通 character 正文可临时显示“旁白”。这是刻意粗略的标题 fallback；它不修改段落语义、speaker identity、头像或 roster。语义结果一旦识别为对白，此标题不得保留。未加引号的对白可能暂时误显示为旁白，歧义闭合对白按 v51 显示“旁白”fallback；未闭合引语仍显示“未识别”。
+
+2026-10-06 v7 边界修订：普通“旁白”标题只适用于可明确作为普通 prose 的显示页；独立标题/括号标签、多行键值状态块、已闭合但未能唯一归属的引语按 v51 显示“旁白”fallback；未闭合引语保持“未识别”。英文词内所有格撇号不等于对白引号。结构和语义标题都是分页后的展示标签，不得影响原文分段、正文内容、顺序、source span、角色身份、队伍、存档或剧情状态。语义模块可以补标题/视觉提示，但必须与正文分页独立运行；详细契约见 Frontend 与 Native-first 开发规范。
 
 > 历史视觉条款（2026-09-05，已被取代）：`VISUAL-RUNTIME-1` 曾允许 visual-asset-service 用独立 LLM 对白理解并以固定分数阈值展示图片。此行为不构成当前启用授权；以最新 `GALGAME_NATIVE_FIRST_DEVELOPMENT_SPEC.md` 及 `GALGAME_VISUAL_MATCHING_RECOVERY_DEVELOPMENT_SPEC.md` 为准：呈现 annotation 保持 shadow/gate，必须用证据绑定的 projection 和已校验的 catalog 决策；未经整语言/整剧本 gate 的语义理解不得用于声称泛化匹配成功。
 
@@ -381,13 +541,25 @@ AI 不负责：
 
 SillyTavern 原版聊天、上下文和生成语义是玩家剧情的唯一来源。自定义前端只能把原版运行结果转换成 Galgame 的可见层：说话人、对白段落、历史列表、舞台提示和媒体占位。
 
-自定义前端不得定义 `SceneResult`、节点跳转、固定选项、固定结局、好感度、物品、世界事实或其他平行剧情状态。为了符合视觉小说阅读节奏，玩家端可以把原版返回的过长单条文本自动分页展示；分页只改变显示节奏，不改变文本内容和剧情来源。说话人分类不能以固定句式、动作词白名单或角色名称表作为通用语义识别方案；消息作者也不能代替正文内说话人。无法归属的对白要保留为“未归属对白”，不误标为旁白；新角色身份先作为聊天局部临时身份，再独立解析是否有足够视觉证据选图。说话人证据可以引用同一可见消息内位于对白 segment 之外的明确署名子句，但必须覆盖原文人物提及并由确定性 validator 限定在该消息内；不能为了满足 span 校验把叙述署名混入对白。身份、头像和队伍/状态都必须从已展示原版聊天重算，不写回原版聊天、manifest、存档或 prompt。详细的版本化标注、身份连续性、保守头像匹配和状态回放方案见 `docs/GALGAME_PRESENTATION_IDENTITY_AND_STATE_PROJECTION_DEVELOPMENT_SPEC.md`；本段取代本文件中旧有的专属句式/词表判断示例。
+自定义前端不得定义 `SceneResult`、节点跳转、固定选项、固定结局、好感度、物品、世界事实或其他平行剧情状态。为了符合视觉小说阅读节奏，玩家端可以把原版返回的过长单条文本自动分页展示；分页只改变显示节奏，不改变文本内容和剧情来源。说话人分类不能以固定句式、动作词白名单或角色名称表作为通用语义识别方案；消息作者也不能代替正文内说话人。语义层无法归属的对白仍保留为“未归属对白”，不把 semantic type 改成 narration；已闭合/完整且无唯一 speaker 的对白仅在 display title/context 按 v51 显示中性“旁白”fallback；新角色身份先作为聊天局部临时身份，再独立解析是否有足够视觉证据选图。说话人证据可以引用同一可见消息内位于对白 segment 之外的明确署名子句，但必须覆盖原文人物提及并由确定性 validator 限定在该消息内；不能为了满足 span 校验把叙述署名混入对白。身份、头像和队伍/状态都必须从已展示原版聊天重算，不写回原版聊天、manifest、存档或 prompt。详细的版本化标注、身份连续性、保守头像匹配和状态回放方案见 `docs/GALGAME_PRESENTATION_IDENTITY_AND_STATE_PROJECTION_DEVELOPMENT_SPEC.md`；本段取代本文件中旧有的专属句式/词表判断示例。
 
 分析 provider 返回内部 semantic candidate：对 segment 只复制每个起点两侧相邻的短原文锚点，对证据复制精确 quote，不回传整段正文或数值偏移。分析服务将唯一边界锚点按顺序绑定到原文、将证据 quote 唯一定位，再本地生成 code-point spans 与源消息/segment 哈希，校验后产生稳定的 annotation v1 响应。重复或无法定位的锚点/quote 在有界重试后 fail closed，不猜偏移。该内部候选 DTO 不改变浏览器合同、剧情生成协议或 SillyTavern 原版运行语义。
 
 跨分页的发言归属只能延续有证据的对话状态：若某个已识别对白在显示切分页边界仍有未闭合的引号，后续片段可暂沿用该说话人及同一身份，直到对应闭合引号，或本段出现更强的另一位明确说话人归属。引号闭合只是辅助连续性信号，不独自证明说话人；注释身份/显式署名始终优先。玩家端可把同一原版消息中连续且各自有有效 identityRef 的对白段组成一个只读“多人对话页”，但不得跨越旁白、未归属对白、未知身份、系统/玩家/动作段、来源跨度缺口或消息边界；原文顺序和全部文字必须保留。多人页标题使用中性的“多人对话”，角色立绘区域只在至少两位角色均有已验证头像时每 3 秒轮换该页内按 identityRef 去重的头像。若不足两张已验证头像，整个多人页显示中性群像占位，不能固定展示唯一成功的单人头像；缺图角色不得借用他人图片。多人页标题始终为“多人对话”，不能随头像轮换把整页标为某一角色。不能把只出现在相邻独立分页的说话人并入轮播。只有一位说话人时不聚合/轮换。处于前一段未闭合引语中的延续页必须独立显示并锁定前一说话人的头像，不参与轮播。旁白、玩家、系统、未知角色不进入角色轮播。轮播不改写剧情正文或创建剧情状态，并在翻页、切换聊天/舞台或离开多人对话页时立即停止。
 
+历史记录（parser v9–v11）：较早版本分别允许局部推测标题和仅对 unmatched opener 使用两句 cap；v46 曾把 cap 扩展到所有引语，现已由 v49 supersede。当前配对引语扫描到真实闭合标记；只有 unmatched opener 才在第二个句末结束并重扫 suffix。标题 evidence 不改正文、页边界或 page sourceSpan；精确边界见 Native-first v49。
+
+### 2026-10-08 说话人标题校准（parser v46）
+
+具名动作后无署名对白可在同消息中向上查找唯一姓名；直接 `—姓名：` 行视为明确说话标签；“她/他说”只从同消息唯一已归属前句续接，若候选角色不唯一则保持未识别。配对引语延续到闭合符；未配对引语在第二个句末兜底结束。所有规则仅作用于分页后的标题展示。
+
+2026-10-07 parser v10 边界：probable continuation 的 seed 只允许来自同一消息紧邻的前两张生产页；derived continuation 不作为新 seed。回放必须附带 unresolved candidate 性质计数，但结构/覆盖计数不构成 gold accuracy，也不能把没有 speaker seed 的对白 candidate 推定为旁白。
+
 首期 annotation v1 只覆盖文本片段/说话人/实体与队伍 roster，默认 shadow；没有按语言及整剧本留出的指标报告不得启用自动身份合并、动态头像锁定或 roster 覆盖。标注服务失败时原文不丢，未确认角色显示 neutral/unknown，不能走已知会错分的旧切段器。完整 roster snapshot 可以移除未列成员；局部 snapshot 只改变明确列出的成员。冲突成员状态显式显示为“状态待确认”；聊天时间线编辑、swipe 或删除会立即使相关派生身份/roster projection 失效。头像一局一绑定账本只存派生 entity/asset 标识并按 chat/release 隔离，Arc 切换不重置占用；一旦同一人物资产不一致或另一人物重复占用，当前新匹配回退为未知占位。
+
+语义试运行只对当前活动 cursor 的一条非空 assistant 消息做 singleton 分析，不做历史多目标批量回填。当前显示消息若有通过 Annotation v1 全量校验、并与当前原文/hash、chat/scenario/version/release/arc、消息索引、cursor/prefix、analyzer scope、context digest、已发布 known-entities fingerprint 及 singleton provenance 一致的 speaker evidence，可立即显示精确来源 mention 作为标题；在全局 projection 不完整时仍必须保持 `identityRef=unknown`，不能据此匹配或锁定头像。玩家回看使旧行成为活动 target 后才单独分析；未访问的旧行可继续显示“未识别”。多目标 batch 注释不得完成身份/roster projection、改变 roster 或覆盖 singleton memo。缓存命中须用当前单条原文与 known entities 重新通过 Annotation v1 validator；无效缓存按 cache miss 处理，旧 IndexedDB batch cache 保留但不会作为 singleton 命中。任何编辑、swipe、替换或 cursor 改变都会使当前注释绑定失效，直到新的匹配注释可用。
+
+长回复分页必须先确定与语义无关的 source-only base pages，并原样保留页数、正文和 sourceSpan。超过 6000 Unicode code points 或超过 8 个 base pages 的消息只按当前活动页分析：viewText 由当前页 core 和同一消息紧邻的前一页 lookbehind 组成，不带其他聊天历史，也不预取未访问页；超过 Annotation v1 请求上限的 view 保持 unknown。准确 viewText 必须完整通过 Annotation v1 validator。标题归纳覆盖所有与 core 相交的分类段，且每段都要有完全位于 core 内的分类 evidence；唯一明确人物 speaker 显示其原文名，多个人物显示“多人对话”，纯旁白/动作/状态/选项/正文仅在分类一致且证据完整时使用现有标签。speaker ref/evidence 必须经过 validator 并映射到同一原消息；仅允许紧邻 lookbehind 中的同消息 mention 支持当前页 speaker，不得按引号或前页标签推断。证据不足、冲突、无效或 span 映射失败时保持 unknown。页标题结果只给 source-only unknown base page 附加 label evidence；不得改变正文、页面边界、segment type、identityRef、头像、roster 或 projection 完成状态；若存在完整消息 projection，它仍优先。每个页请求绑定完整消息与 core/view span/hash、timeline prefix、scenario/release/arc、known-entities/context digest 和 analyzer scope；缓存隔离到 page-window v1 命名空间，命中重新按准确 view request 校验。页光标/聊天/文本变化会取消请求或丢弃迟到结果，未访问历史页保留 unknown。 页窗口分析与完整 singleton projection 共用当前消息分析 run 和页光标，不由 render/翻页启动并行 page-only controller；短消息仍保留最多四条前序 character context。
 
 运行失败时不得播放本地固定剧情、固定选择或 scripted fallback。玩家端只能保留当前舞台、输入和显示上下文，显示重试/恢复状态，并记录不含提示词、密钥、角色卡正文或世界书正文的诊断信息。
 
@@ -505,6 +677,8 @@ SillyTavern 原版聊天、上下文和生成语义是玩家剧情的唯一来�
 若故事入口绑定 `chatSeedId`，管理员校验还必须通过 SillyTavern 原版聊天列表确认该聊天种子真实存在。缺失或为空的聊天种子不得发布给玩家；玩家端也不得用本地固定台词补齐开场。
 
 ### 10.5 运行检查
+
+Windows 本机复位管理器应并发探测固定服务，向所有符合条件的未运行服务派发白名单启动入口后立即返回逐服务状态；不得串行等待多个服务的启动超时。玩家端继续进行有界健康重探，将语义分析器启动中纳入视觉链路确认，并且只在健康检查成功后显示已恢复。复位期间短暂的未知状态不能覆盖最后一次确认的断开状态；视觉链路从断开恢复后须重新投影当前可见页。监听中的不健康进程继续保留并报告未恢复。
 
 发布前自动检查：
 
@@ -650,4 +824,151 @@ MVP 必须完成：
 当前页背景更新使用 `GALGAME_VISUAL_PAGE_CONTINUITY_RESTORE_2026-10-04.md` 约定的 evidence-bound 可见页标注。只有当前页的高置信度当前地点和转场原文跨度均经 hash/scope/span 校验后，才向视觉资源服务查询新背景；地点回忆、计划、旁述和无证据内容不切图。分析或资源选择不确定时保持当前已验证背景；只有同 scope 明确 changed 但没有可用唯一素材时回到作品默认背景。该规则仅恢复舞台显示，不修改 SillyTavern 原文或剧情语义，不作为全语言/全题材准确率声明，也不启用角色身份/队伍 annotation。
 每个待处理分析都绑定当前可见页。翻页或切换聊天后，较新的页面立即开始自己的分析，旧页面的未完成请求会被取消；仅相同页面 cursor 的重复刷新可以复用在途请求。取消信号传递至分析服务上游，过期响应不能覆盖当前背景。
 分析来源必须是原版角色可见回复；按原版消息标志 `is_system===true`→system、否则 `is_user===true`→player、仅原版 assistant/character→character 归一，来源不明时不创建请求。玩家输入和 system 页不得调用 provider 或消费场景投影；视觉标签必须由 exact span 绑定在当前地点 span 内，无当前地点时为空，防止提及地点误导背景选择。服务端对非 character 的防御性响应为 low confidence 且所有地点与标签字段为空，并回填本请求 ID 与页面哈希。
-页面刷新或复位若当前显示 player/system 消息，不得分析该消息；先校验同一 chat/release/arc/catalog scope 的连续性账本。账本缺失时，播放器先显示当前页，再在后台从当前页之前最多 128 个原版角色可见历史候选按同一场景协议只读回放；不超过 4000 code point 的早期完整消息按一个候选分析，超限消息按原版显示页处理。每批最多 12 个候选，provider 请求至少间隔 2.1 秒，不使用会早于完整候选窗口所需时长的整轮硬超时。每条完成后保存只含哈希和调度偏移的恢复检查点；刷新时仅在聊天 scope、cursor、候选集合、analyzer scope 完全一致时续跑，失败候选在下次恢复时重试。聊天或可见页变化取消当前运行。找到最近有效 `changed` 锚点后，只有原可见 cursor 仍匹配才重新投影并交给 8798 匹配背景。历史候选正文会发送到已配置的视觉专用分析 provider，不发送凭据或 chat id。该恢复不调用剧情生成、不更改原版聊天或存档；player/system 不作为证据，窗口内无有效锚点时仍显示当前发布版本默认背景，不以玩家输入的地点或行动推断转场。
+页面刷新或复位若当前显示 player/system 消息，不得分析该消息；先校验同一 chat/release/arc/catalog scope 的连续性账本。账本缺失时，播放器先显示当前页，再在后台从当前页之前最多 128 个原版角色可见历史候选按同一场景协议只读回放；不超过 4000 code point 的早期完整消息按一个候选分析，超限消息按原版显示页处理。每批最多 12 个候选，provider 请求至少间隔 2.1 秒，不使用会早于完整候选窗口所需时长的整轮硬超时。每条完成后保存只含哈希和调度偏移的恢复检查点；刷新时仅在聊天 scope、cursor、候选集合、analyzer scope 完全一致时续跑，失败候选在下次恢复时重试。聊天或可见页变化取消当前运行。找到最近有效 `changed` 锚点后，只有原可见 cursor 仍匹配才重新投影并交给 8798 匹配背景。历史候选正文会发送到已配置的Claude 文本分析 provider（凭据来自独立的本地语义分析配置，且与剧情生成密钥和视觉密钥分离），不发送凭据或 chat id。该恢复不调用剧情生成、不更改原版聊天或存档；player/system 不作为证据，窗口内无有效锚点时仍显示当前发布版本默认背景，不以玩家输入的地点或行动推断转场。
+
+## 2026-10-06 结构标题与回测补充
+
+规则边界补充：当前显示页中，唯一开放至页尾的引语可由同页直接署名标出当前页标题；这只初始化该页的说话人。后续页必须通过同消息的相邻 source span、完整原文 hash 和引号状态检查，不能只继承标题。
+
+玩家端标题识别按 `docs/GALGAME_STRUCTURAL_SPEAKER_TITLE_BACKTEST_DEVELOPMENT_SPEC_2026-10-06.md` 采用可定位原文的结构规则优先路径。解析结果只是当前显示页的标题提示，不代表该页每一段都已完成语义分类。结构明确时可以显示角色原文名或“多人对话”；含有无法归属的对白、候选冲突或证据不完整时，speaker identity 仍 unresolved；闭合/完整对白标题按 v51 显示“旁白”fallback，未闭合引语仍显示“未识别”。既有有效语义标题保持优先。此项不改变对白正文、分页、身份、头像、roster、Annotation v1、剧情状态或 SillyTavern 聊天；结构规则回测使用只读、无 provider 的 replay，准确率只按人工核验 gold 计算。本补充取代本文件同日 Demo 对标题快路的窄枚举，不取代“不得将固定句式/动作词表作为通用语义识别”的原边界。
+
+2026-10-07 覆盖面校正规则：行内叙述中的书名/物品名等引用短语不单独算作对白；直接说话 cue 支持有限的语法修饰，而不维护固定语气词字典。有效的 semantic `unattributed-dialogue` 仍保持 semantic type=unattributed-dialogue 与 identity=unknown；闭合对白的 display title 按 v51 显示“旁白”fallback；有明确署名的角色对白可为同页标题，即使同页另有旁白或未归属引语，该未归属引语的 semantic identity 仍 unknown。明确冲突的说话人或证据不完整时，semantic identity 保持 unknown；闭合对白标题按 v51 显示“旁白”fallback，未闭合引语保持“未识别”。以 Native-first 2026-10-07 补充及后续 v40 规则为权威；正文和原版分页完全不变。
+
+## 2026-10-07 全消息证据与原页投影补充
+
+标题扫描可以读取同一条原版角色消息的完整可见正文，解析直接署名及其明确对白范围；它必须把结果投影到既有生产页的精确 `sourceSpan`，不得将一个消息级说话人套给整条消息。若本文件较早的标题段落将证据范围限为当前页或要求只能依赖相邻页标题续接，则该限制由 `docs/GALGAME_NATIVE_FIRST_DEVELOPMENT_SPEC.md` 的 2026-10-07 补充取代。直接署名须由姓名与直接说话 cue 构成；仅提到角色名、姓名后接动作/地点/关系叙述再出现对白、以及相互冲突的前后署名，均不能归为该人物。经验证的语义 `unattributed-dialogue` 保持原 semantic type 和 unknown identity/visual；若全部可检测对白有无冲突的结构署名，显示标题可以按 Native-first §2026-10-07 补充只显示结构姓名，否则仍显示“未识别”。该更新只涉及显示标题证据，不涉及身份、角色视觉、roster、语义协议或剧情状态；语义上下文窗口、正文分页及 SillyTavern 源码冻结不变，并取代本节较早的 2026-10-06 相邻页续接限定。
+
+更保守的 cue 与 U+2019 处理见 Native-first §2026-10-07：未发布汉字候选名不能只靠单字通用说话 cue；Latin 词内撇号与 `‘…’` 需要依配对边界区分，包括引号后紧接中文叙述的情况。它们只影响 display-only 标题 evidence。
+
+
+## 2026-10-07 代词回溯与未知首次自介标题（parser v12）
+
+首次自我介绍在没有外部署名时显示“？？？”，但仍保持 unattributed-dialogue 和 unknown visual role，不从引语自报名称创建 speaker、identity、头像或 roster。姓名式检测要求中文姓名式自介后接标点，或英文 My name is 加姓名；普通“我是不会让步的”“I am ready”不触发。已发布角色 Celestia 的明确同句说话 cue 可显示姓名。她/他代词引语只允许在同一原版 assistant 消息最多两句内回溯唯一已发布角色句首/主语；若无新主体，才可延续唯一近邻直接署名 anchor。新句首主体优先于更早闭合的发言；竞争候选、缺 roster、空行段落、已识别场景标题或跨消息时保持未识别。显示证据必须绑定原文真实姓名跨度。规则只附加 title sidecar，不修改正文、formatter、segmenter、分页、identity/avatar/roster、聊天、存档或 SillyTavern 原版源码；详细反例见说话候选开发规范 §13.7。
+
+## 2026-10-07 v13 叙述框架与首页标题校准
+
+按 Native-first §2026-10-07 v13 增补，用户金标确认的代词动作子句引语、无姓名的泛指对象说话描写显示旁白；其余无署名引语仍按 unknown-safe，具名 roster speaker 的直接归属继续胜出。首页 `治疗与审问：格雷戈的情报` 按标题显示，不由“审问”末尾的“问”触发对白。结构标题只给既有页增加 display label：旁白框架不生成身份，首页标题显示“标题”且不匹配旁白/人物头像；正文和分页保持不变。详见说话候选规范 §13.9。
+
+## 2026-10-07 说话人结构归属扩展（parser v26）
+
+说话人标题只根据当前原版消息中可定位的原文证据生成。明确说话谓词、唯一角色主体后接动作描写与冒号引语、间接发话谓词、`角色名的回合：` 这类对白轮次标记可支持标题；相同句子中多个并列行动主体无法安全归属单人时保持未识别。地图、图表、信件、账本、铭文、系统提示和状态/检定记录等来源框架优先作为旁白，避免把附近执行动作的角色误认成信息发言人；直接说话谓词仍可明确建立人物对白。玩家破折号引语显示为“你”。
+
+标题仅附加于既有生产页，不改变正文、分页、段落、顺序、source span、身份、头像绑定、队伍或剧情状态。不能证明唯一说话人的对白仍保持 unresolved identity；闭合对白标题按 v51 显示“旁白”fallback，未闭合引语保持“未识别”；该覆盖结果是结构覆盖，不代表准确率。v26 与 v25 同源快照回放：158 chats、950 assistant messages、18,562 pages；5,548→5,662 个对白候选页，2,606→2,969 个明确归属页，2,687→2,482 个未决候选页，唯一未决引语跨度 2,831→2,600。活跃剧本聊天同快照：未决候选页 1,536→1,285。无逐页金标，speaker accuracy 仍为 `INSUFFICIENT_EVIDENCE`；回放只读、无聊天写回、无外部模型调用。细节见 `docs/GALGAME_FRONTEND_DEVELOPMENT_SPEC.md` 与 `docs/GALGAME_SPEAKER_CANDIDATE_SHAPE_AND_REPLAY_DEVELOPMENT_SPEC_2026-10-07.md`。
+### 2026-10-07 结构说话人归属收敛（parser v27）
+
+结构识别使用有界句法关系，而非角色专名规则：仅当 roster 中的明确主体与动作/说话线索、引语及当前消息局部结构一致时，才产生显示标题证据。内心思考、地图展示/递交等可能引出物件文字的来源框架不作为口头对白归属；多人主体、代词竞争、新角色描述仍保守未归属。已有获确认的“角色动作引出引语”（如翻开账本/地图后直接对白）继续支持。
+
+该改动只影响对话页标题投影，不改变原始正文、分段、分页、角色身份、队伍状态或 SillyTavern 运行语义。历史回放只读，不写回聊天、不调用模型。无独立逐页金标时，只报告覆盖计数，不宣称准确率。
+
+### 2026-10-07 结构标题补充（parser v28）
+
+展示标题可以使用明确的动作后说话 cue、引号后的显式姓名/玩家说话 cue，以及带明确发言谓词的角色群体；仍须有唯一主体和可定位的原文姓名跨度。不得从心声、墙面/系统文本、无锚点引语、单纯身份描述或无唯一先行项的代词推断说话人。该补充仅更新标题提示，不代表对白语义或角色身份改变。
+
+同 digest 历史回放中，v27→v28 全历史候选 5,671→5,695、明确归属 3,012→3,056、未解决候选 2,457→2,437；活动聊天候选 4,242→4,266、明确归属 2,991→3,033。当前活动聊天仍有 1,046 未解决候选和 1,097 个唯一未解决引语跨度。统计是覆盖变化，不是准确率；回放未写聊天、未调用模型，正文分页和 SillyTavern 源码保持在规则边界之外。
+
+### Parser v29 元数据标签优先级
+
+行首 `System:`/`SYSTEM:` 在没有有效 speaker anchor 时视为系统元数据而非对白。若标签精确匹配已发布角色并由结构索引确认其说话证据，角色 anchor 优先。该变化只调整展示分类，并使结构标题缓存键升级到 v29；不改生产正文或分页。
+
+### Parser v30 说话标题补充（2026-10-08）
+
+唯一人物主体有明确发话谓词并引出引语时，可在缺少完整 roster 的场景显示其原文姓名；墙面/地图/记录/系统等来源、心声、多人主体及没有发声 cue 的玩家动作不因此变成人物发言。标题只作为现有剧情页的显示信息，不能改变正文或角色/队伍状态。v30 的同 digest 覆盖变化及只读边界见 Native-first spec 和 speaker replay 开发规范；覆盖计数不等于识别准确率。
+
+### Parser v31 标题识别边界（2026-10-08）
+
+具体报告“角色第一句话”的句式，以及唯一具名主体连续动作后引出的对白，可以为现有剧情页增加姓名标题。系统/地图/记录等来源、心声、多人主体、无锚点引语仍不能显示成角色发言。此规则不改变正文和角色状态；v31 的历史覆盖统计与审计边界见 speaker candidate/replay 开发规范 §19。
+
+### 结构标题 v33 补充（2026-10-08）
+
+剧情页标题区分人物对白与物件载体文字：明确刻在徽记、写在纸张或标在地图上的内容、叙述中的引用短语/拟声词显示为旁白；唯一人物以明确动作直接引出的引语可标为该人物，唯一姓名也可在同段落内支持紧随的代词对白。首次自我介绍显示“？？？”而不建立身份。规则只补充显示标题，不生成剧情、修改角色状态或改变分页；证据不唯一时保留未知。
+
+### 结构标题 v34 补充（2026-10-08）
+
+明确的言语动作“骂了一句/骂了一声”直接引出引语时可归属到唯一前置角色/单位。代词开头的动作引语仅在同一消息、最多两句、唯一角色/单位主体、无场景边界的条件下回指；竞争主体或匿名主体保持未归属。完整消息结构锚点优先于弱旁白形状判断。此规则只用于展示标题，本轮不编辑正文分页函数。
+
+### Speaker title structural rules v35 (2026-10-08)
+
+The display-only speaker index now applies three bounded rules: (1) an anonymous first-appearance voice or shout is titled `？？？`; this is a neutral title only and does not create a roster entry or visual identity; (2) a standalone quote immediately following one unique character's observable action may inherit that actor when no competing actor, information source, or scene boundary intervenes; (3) an explicit action-to-laughter construction such as a role subject followed by a direct quoted line is attributed to that subject, after ignoring a preceding turn header. Pronoun continuation can reuse the local actor anchor.
+
+These rules only change the title projection. They do not rewrite chat text, infer persistent identity, or alter the existing display segment/page spans. Parser version is `full-message-speaker-index.v35`. The current replay remains structural coverage evidence, not measured accuracy: historical speaker rosters and per-page human gold are incomplete.
+
+v35 audit refinement: recent-action backreference now requires the named character to head an action clause, rather than merely being mentioned before an action word. Passive/possessive forms and later competing subjects such as `有人` or `守卫` keep the quote unresolved. Regression examples cover both false-attribution patterns found in independent review.
+
+### Speaker title structural rules v36 (2026-10-08)
+
+Quote recognition is fault-isolated by utterance: clear dialogue can retain its display speaker even when a different quote in the same message cannot be attributed. The semantic speaker identity remains unresolved; a closed utterance uses the v51 narrator display fallback, while an unclosed quote remains `未识别`, and a displayed page that overlaps it is not assigned another quote's speaker. A narrow direct-action pattern adds obvious name/action/quote cases without creating persistent identity or changing source text and pagination.
+
+### Speaker title structural rules v37 (2026-10-08)
+
+Add the six latest user-confirmed title examples to regression coverage: Grayson through a unique title/name subject followed by a pronoun-led action, `“铁臂”卡尔` through an appositive nickname/name action, Karl after organization possessive plus direct action, 亚龙 through a local non-human anchor and same-message `它` continuation, and `你` for the confirmed short-question/reaction form. Keep unanchored entity pronouns and non-question player reactions unresolved. This remains title-sidecar-only; no original body, identity, or pagination behavior changed in the v37 speaker delta. Historical coverage increased by five attributed pages (to 3,972) and reduced unresolved candidates by five (to 1,975); accuracy remains unverified without page-level gold labels.
+
+### Speaker title structural rules v38 (2026-10-08)
+
+Extend observable name/action/quote attribution to common actor actions and ASCII nickname quotes. Bind `它` to the nearest explicit creature mention in the current scene while excluding creature names inside quoted dialogue. The active chat's latest eight assistant messages replayed with 129/129 dialogue candidate pages titled, including the reviewed Durik, Grayson, Karl, Alia, and dragon examples. The full replay covered 6,050 dialogue candidates: 3,979 attributed, 12 anonymous introductions, 89 probable display titles, and 1,970 unresolved. These are coverage counts only; without complete chat rosters and per-page gold they do not prove accuracy. Chat text, persistent identity, original SillyTavern code, and pagination remain untouched.
+
+### Speaker title structural rules v39 (2026-10-08)
+
+An immediately preceding named-unit introduction outranks older names when resolving `它`; short surprise/denial dialogue may use the target of the nearest explicit failure/hit action. A named group report displays both reported characters, an anonymous first appearance remains `？？？`, and an isolated scream remains narration. A missing local name in the bounded entity/reaction cases falls back to narration; this rule does not grant a distant status/roster mention speaker status. The parser only adds display evidence and leaves chat content, page segmentation, and character identity intact.
+
+### Speaker title structural rules v40 (2026-10-08)
+
+When a displayed page includes a clear character utterance, attribute the title to that speaker even if the same page also contains narration or another unresolved quote. Prefer the closer explicit quote/action attribution over a broad roster-prefix or turn-header cue; equal-strength conflicting speakers remain unresolved. Support a bounded local named speech cue after a comma, quoted character-reaction framing, and an explicit name plus speech predicate at the start of a page when the quote continues beyond that page. Anonymous/pronoun subjects remain excluded. The English goblin item marked by the user as a fault is excluded from calibration. These are display-only structural rules: do not change source text, page spans, pagination, persistent identity, or SillyTavern-owned code.
+
+### Speaker title structural rules v41 (2026-10-08)
+
+Recognize a bounded verbal predicate with an utterance complement, including `骂了一声` and `骂了一句`, after a locally named subject/action and before that subject's quote. A nearby narration clause does not replace a direct speaker found in the quoted-speech clause. Action without a tied utterance cue remains insufficient. This is title-only and does not alter message bodies or pagination.
+
+### Speaker title structural rules v42 (2026-10-08)
+
+Allow a short narration clause followed by an explicit connective and a pronoun-led speech predicate (for example `声响清脆……，紧接着他捏着嗓子喊：“……”`) to refer to one nearby explicit speaker anchor across the existing display split. The connective lead is bounded to 48 characters, contains no published character name, and still requires a unique nearby explicit anchor; competing anchors remain unresolved. Never treat the connective-plus-pronoun phrase itself (such as `紧接着他`) as an unrostered character name. A resolved open quotation can carry the same title onto its existing continuation page. This changes title evidence only; original text, page segmentation, pagination, and SillyTavern source remain unchanged.
+
+### Speaker title structural rules v43 (2026-10-08)
+
+Apply the latest seven user-calibrated labels through title evidence projected onto the existing SillyTavern display spans: player action followed by first-person quoted declaration → `你`; a newly introduced unnamed voice → `？？？`; a spirit's first-person farewell may inherit the uniquely named spirit from the immediately preceding spirit-action clause; a named action subject before a colon quote retains its full compound name (including `·`); a nearby explicit speaker may carry through `它 + creature-specific object/action + quote` when unique; and a quoted laugh followed by that same named actor's laugh/speech remains attributed to the actor. Keep generic narration distinct from a first-appearance unknown speaker. Competing action subjects, source/system-information frames, non-unique nearby anchors, or missing explicit evidence remain unassigned/narration-safe. This changes display title evidence only; do not change message text, page spans, pagination, persistent identity, or original SillyTavern source.
+
+### Speaker title structural rules v44 (2026-10-08)
+
+用户确认的龙类归属采用有界、同场景规则：只有附近唯一出现过的复合龙名，且引语和局部正文具有龙类语境，才把对白归到该龙；Markdown 标题、分隔线和明确场景/地点标记会截断回溯；未具名龙类称谓不是角色名。名字未出现、超出局部窗口或附近存在多个候选时保留“？？？”。首次自我介绍允许用完整复合名覆盖泛称“巨龙/龙”。明确的玩家自述仍归“你”；明确短名动作对白使用动作前角色名。仅影响标题证据，不改变聊天正文、页序、既有 source spans、分页逻辑、持久角色身份或 SillyTavern 原版代码。
+### Speaker title structural rules v45 (2026-10-08)
+
+Title attribution now covers directly speech-bound role and creature labels, explicit nearby player actions, and pronoun-led player continuations. An unnamed first appearance remains `？？？`. Reject indefinite descriptions and voice/manner terms as speaker identities. All behavior remains a presentation projection; source dialogue, display segmentation, pagination, and upstream SillyTavern code are outside the change.
+补充通用说话线索：支持“终于开口”和明确说话 cue 后直接以逗号引出对白。声线、语气不充当人物身份。
+
+### 2026-10-08 说话人标题校准（parser v47）
+
+破折号署名的独立说话提示句，如 `—Andrei低声说。 “……”`，在紧邻引语时归署名人物；`—God缓声说。 “……”` 同理。只在同消息的短句、明确说话谓词和精确署名同时成立时生效；动作句/普通姓名提及/无破折号提示仍不自动归属。只影响标题呈现，不改变剧情正文、分页、角色状态和身份。详细边界见 Native-first 规范 v47。
+
+### 2026-10-08 说话人标题校准（parser v48）
+
+破折号后紧跟清晰姓名的独立短句，只要紧接引语，就按该姓名归属；不要求“说/道”谓词，动作句也计入。该署名优先于引语内容或同句其他人的语义猜测。规则只作用于局部标题证据，不改变正文、分页、角色状态、身份或 SillyTavern 原版代码；详情见 Native-first 规范 v48。
+
+### 2026-10-08 说话人标题校准（parser v49）
+
+完整配对的引号必须扫描到真实闭合符；“最多两句后强制结束”只适用于扫描后仍未闭合的引号。新增玩家第一人称宣言、唯一显式说话者的“它”动作续接、攻击结果短句旁白、具备群体欢呼上下文的多条引语、人群类别、场景拟声“咔”以及动作词“咬牙”等粗规则。玩家礼貌收束语后紧跟握手动作时归“你”。只用于标题显示；不动原文、分页、source span、聊天、身份或游戏状态。详情和边界见 Native-first 规范 v49。
+
+### 2026-10-08 说话人标题校准（parser v50）
+
+八条新金标支持全员集体动作、玩家动作引出的直接引语、接待员/格雷森等局部动作主体、引语后的紧邻署名、跨既有分页的消息/传闻转述引语旁白，以及开场标题后的短命令旁白。多人协同行动只引出一段对白、但没有唯一说话 cue 时按用户允许的旁白兜底；匿名首次出场及未闭合引语维持既有保护。仅用于展示标题与分析回放，不改变剧情正文、分段、分页或身份状态。详见 Native-first 规范 v50。
+
+### 2026-10-08 行尾孤立引号恢复（parser v51）
+
+无活动引号时，行尾孤立 ASCII 双引号不再被当作新开引号，以免把后续对话的开闭配对整体错位。后续有效的 `角色说："正文"` 仍按原样解析；真正未闭合且无唯一说话人证据的引语仍显示“未识别”。修复只作用于结构归属和展示标题，不改原文、既有 segmenter、页面数/顺序/span、身份或 SillyTavern 源码。
+
+### 2026-10-08 真实历史标题校准（parser v53）
+
+六条真实历史标题使用原聊天 message hash、生产 page index 与精确 source span 固定，作为实际页面回归。归属规则只读当前原消息内可验证的结构证据：具名角色动作/反应后接冒号引语；唯一具名受击目标后紧接代词反应；引号外第一人称动作前缀（如“我压低声音：”）可显示为玩家“你”；唯一具名说话锚后、同一动作链再跨结构小节标题的引语连续；人物爵位称谓只从可见标题中剥离。玩家映射专用 rule ID `player-first-person-action`，必须同时验证 `speaker.sourceText=我`、精确 source span、显示字段 `speaker.text/displayText/title=你`、消息 hash 和当前页 span；不映射引号内 NPC 的第一人称，不创建 identity/avatar。
+
+爵位标题别名只允许 `honorific-display-title`：在 `speaker.sourceText` 和 source span 保留完整原始称谓，在 `speaker.text/displayText/title` 去掉识别出的称谓后缀；只适用于当前消息内人物动作直接引出对白的精确证据，不作用于文书或普通提及。主验证器核验原文 span，renderer 核验规则 ID、表面/显示值和绑定的消息 hash/页 span。
+
+聊天 observed-name 词表只保留最近八个调用方提供的位置，并在首屏 Markdown/中文场景标题前清空；实时快照中的玩家/空消息消耗位置但不提供姓名证据。它仅参与解析当前消息自己的完整局部说话/动作 cue，不携带 speaker owner 或 pronoun；标题、roster 和任意姓名提及单独不能建立归属。传递报告/物件时，显式`说`cue可归给动作边界前的完整人名，不能把`把`或物件文字并入说话人；`报告上写着`等载体文案仍为旁白。匿名首次登场仍是“？？？”，未闭合引语仍为“未识别”；闭合但无法唯一归属的对白继续使用 display-only“旁白”，并保留 unresolved 身份诊断。只更新既有生产页标题投影；绝不改剧情正文、段落分割/分页、页序、source span、身份、头像、聊天数据或 SillyTavern 原版代码。v53 精确历史 gold 与覆盖分布见 TaskSpec / 历史回放计划，不代表全历史准确率。
+
+### 2026-10-08 同消息连续对白校准（parser v55）
+
+v55 对真实历史生产页增加有界 title evidence：明确角色动作紧接带语言内容的引语时可归属该角色；同一仍未闭合的引语跨既有生产页时沿用同一 source quote 的锚点；同消息匿名自我介绍后的唯一“她/他 + 动作/声线 cue + 引语”仅在前置唯一具名动作主体且无场景/竞争角色/文书载体边界时归属该主体。匿名自我介绍页仍为“？？？”。纯口哨/拟声、账本/报告载体文字和新场景/角色不继承归属。该增量只改显示标题证据，不改语义类别、正文或分页，不创建 identity/roster/avatar。详细 source hash/span、负例和回放数据见 v55 TaskSpec 与历史回放计划；覆盖数不是准确率。
+## 2026-10-08 v58 人工校准归并
+
+将人工确认的说话归属统一为五类证据：直接署名、唯一具名主体的动作/发言、受约束的代词回指、同一闭合边界前的引语续页、匿名发声。记录、统计、书面载体、拟声、首屏以外的疑似标题以及歧义保持旁白兜底。说话 cue 词表不是 speaker 决策本身，候选必须同时满足局部主体和引语证据。详见 v58 TaskSpec。
+
+### 2026-10-09 v66 标题兜底与同一引语续页
+
+标题归属先使用当前原消息中的完整引语及其直接动作主体；可继续查同一原消息前两张既有页面。明确角色动作和匿名角色描述分开显示，匿名首次发声显示“？？？”。跨页但仍属同一 source quote 时保持同一说话者。有限回溯后仍无唯一证据的开放引语归旁白，诊断保留在侧车数据中，不再显示“未识别”。规则不改变剧情正文、分页、角色身份或聊天；实现及验证边界见 v66 TaskSpec。

@@ -1,12 +1,20 @@
 # Galgame 叙事说话人、角色身份与状态投影开发规范
 
-> 状态：v1 组件和修订审计项已实现；2026-10-05 历史回放发现 speaker evidence 跨 segment 的 validator 缺口并已形成修复；生产仍为 shadow，跨剧本报告和玩家端验收未完成
+> 状态：v1 组件已接线；当前 `zh-CN` 为用户指定、尚无 gold 报告的 assisted 试运行；跨剧本准确率和玩家端验收未完成
 > 范围：只读呈现层；不改变 SillyTavern 聊天内容、Generate 语义或运行时状态
 > 权威依据：`AGENTS.md`、`docs/GALGAME_NATIVE_FIRST_DEVELOPMENT_SPEC.md`
 > 配套视觉契约：`docs/AI_GALGAME_VISUAL_RUNTIME_INTELLIGENCE_DEVELOPMENT_SPEC.md`
 > 可执行文件清单、闭合 DTO、命令、staging/回滚和验收 gate：`docs/GALGAME_PRESENTATION_PROJECTION_IMPLEMENTATION_PLAYBOOK.md`
 
-> 当前实施边界（2026-10-02）：实现了版本化标注 DTO/校验、身份与 roster 确定性投影、独立分析服务/浏览器 adapter、派生数据缓存、player gated render 接线和隔离 QA harness。`PRESENTATION_ANNOTATION_MODE` 仍为 `shadow` 且 production gate 许可表为空；所以真实玩家 UI 仍使用当前分类结果。真实 provider/生产只读聊天回放未配置或未完成，见实施 playbook 的阶段记录和限制。
+> 当前实施边界（2026-10-06）：代码允许 `zh-CN` 走 assisted 呈现，`PRESENTATION_GATE_REPORTS` 仍为空，属于用户指定的未验证试运行，不等同于金标准 gate 或跨剧本准确率验收。完整有效注释与身份/roster 投影仍按本规范的 source/hash/scope/timeline 校验执行；标题 Demo 的窄范围快速提示只补缺失/unknown 标题，不建立 identity、头像绑定或 roster 状态，见 `GALGAME_SPEAKER_LABEL_HYBRID_DEMO_DEVELOPMENT_SPEC_2026-10-06.md`。
+
+## 2026-10-06 说话人标题 Demo 与身份投影隔离
+
+标题 Demo 只增加原文可定位的 display-only 说话人提示。已有完整有效投影为当前页提供的标题仍优先；不能仅凭完整段数组的存在认定该页已有有效标题。显式结构提示或 page-window Annotation 只能填补当前页缺失/unknown 的标题，包括附加到当前页 identityRef=unknown 的投影段；这仅对标题覆盖旧文“page-window 只补 source-only unknown base page”的范围限制，不改变段正文、分页、source span、identityRef、角色视觉候选、头像唯一绑定、roster、Annotation v1 或聊天/存档。page-window 结果须以相同 message index/full hash，且 `coreSpan` 与一个当前实际显示页 `sourceSpan` 完全相等且只匹配一个页面，才可附加；不完全对齐时保留原标题/unknown。跨页引语续接只允许使用前一相邻页已有的来源/hash/page-span 均有效的单一说话人标题证据；续接页的 classification span 必须在当前 core 的引语内容内，姓名 span 可在 lookbehind 内。该窄例外只修正标题显示优先级，不改变本规范的 identity/roster 完整性门槛。具体输入模式、处理顺序、文件清单及验收用例见 `docs/GALGAME_SPEAKER_LABEL_HYBRID_DEMO_DEVELOPMENT_SPEC_2026-10-06.md`。
+
+2026-10-07 标题证据来源补充：上述“相邻页”限制只描述旧路径，已被 `docs/GALGAME_NATIVE_FIRST_DEVELOPMENT_SPEC.md` 的完整消息证据索引条款取代。标题可以使用同一原版消息中的直接署名锚点投影跨页的同一对白，但仍须满足精确 source/hash/span 校验及 unknown-safe；不改变 identity、avatar 或 roster 投影，也不将结构证据送入语义上下文。
+
+2026-10-06 修正：未被语义结果认作对白的无引号普通正文可以暂时显示旁白标题。该推断严格停留在 display-only title；segment 仍可为 `unknown`，identity 仍 unknown，不得因此使用 narrator 视觉资源、绑定角色或写入 roster。长消息即便先显示粗旁白标题，当前页的 page-window Annotation 仍须执行；有效语义结果标为 dialogue/unattributed-dialogue 时覆盖粗标题。身份投影仍遵循下文更严格的 fail-closed 与 gold-set gate。
 
 ## 1. 目标
 
@@ -76,7 +84,7 @@
 
 对关键证据做 fail-closed 校验：区间须在文本边界内且不得切开代理对；对白证据必须引用同一消息中实际存在的文本；段落区间不可重叠、乱序或覆盖不到原文；实体/属性必须附原文证据。校验失败时该部分退回未知/旁白保守呈现，不接受模型补写。
 
-标注器区分“明确旁白”与“明确对白但说话人不明”。只有模型对叙述类型有足够把握时才显示旁白；直接引语无法归属时显示未知说话人。不能因陌生名、未发布角色或没有命中正则而自动判成旁白。
+语义标注器区分“明确旁白”与“明确对白但说话人不明”。只有模型对叙述类型有足够把握时，Annotation segment 才标为 narration；直接引语无法归属时标为未知说话人。玩家标题另外存在一个 demo 级 plain-prose fallback：符合条件的未标记普通正文可暂时显示“旁白”，但 segment 与 identity 仍保持 unknown，且不触发 narrator 视觉 channel；见本规范顶部的 2026-10-06 补充。不能因陌生名或未发布角色而创建人物身份，也不能把粗标题当成语义标注结果。
 
 #### 跨分页引语连续性兜底
 
@@ -86,6 +94,8 @@
 角色身份投影的稳定范围是进行中的原版 chat/存档游玩会话和绑定的 scenario release；Arc 是分析上下文和缓存失效因子，但同一存档切换 Arc 不自动销毁已解析身份或头像绑定。开始新局/新 chat 才创建全新身份空间。输入是有序的可见消息注释和发布 cast aliases。发布角色精确命中优先于新实体聚类。首期 v1 只允许 published alias 精确命中及无同消息重名/可见属性冲突的唯一规范化人名复用；同名出现歧义时整组重放拆成 occurrence-local identity。模型的 alias/coreference candidate 仅诊断，不得自动合并。代词、语义相似、性别/种族/职业都不能单独用于合并。跨名 alias/coreference 自动合并属于未来版本，须单独具备按剧本隔离的 calibration/holdout 报告与校准器审计后才可定义。通用名词（守卫、商人、队伍）默认不是永久唯一人物；不能仅凭“守卫”把两次出现合并。
 
 身份投影必须可从聊天重放。实现可以对 `messageHash + annotationVersion` 缓存分析结果，但缓存不能成为事实源。渲染任何 assisted projection 前，必须将完整 assistant 时间线逐条与当前 snapshot 对照：raw index、确切展示文本、作者标签、注释哈希和聊天作用域必须一致。前序消息编辑、swipe、删除、分支或作者变化时，旧身份/roster projection 立即失效；重新分析完成前使用原文与 unknown-safe 呈现，不得在异步分析窗口沿用旧结果。不得跨 chat、新局或不兼容的 scenario release 继承临时 ID；Arc 变更需重算依赖 Arc 语境的注释，但同一 chat 的稳定 identity key 和已验证绑定可延续。
+
+**当前消息标签与完整身份投影是两个验收门槛。** 当前活动 assistant 消息只以一个 target message 单独请求 Annotation v1；结果完整有效，且 exact source text/hash、chat/scenario/version/release/arc、消息索引、活动 cursor 及完整时间线前缀、analyzer scope、context digest、发布 known-entities fingerprint 与 singleton provenance 都匹配，才可从 `speakerMentionRef → person entity.surfaceSpan` 显示原文 speaker 标题。该证据不足以产生稳定的 `published`/`chat-local` identityRef：若完整时间线 projection 不完整，segment 必须维持 unknown identity，不得触发角色视觉候选、头像唯一绑定或 roster 删除/完整化。更早的消息不做后台批量回填；玩家回看并使其成为活动 target 时才单独分析，没访问过的历史行可以继续 unknown。前缀编辑、swipe、替换、切 chat、cursor 变化、scope/context 变化均使 memo 失效。没有当前有效证据时保留 unknown-safe；不得使用文本正则推断 identityRef、角色身份、头像或 roster。唯一窄例外是 2026-10-06 Demo 规范明示的 display-only 标题快路：它只可按明确格式补当前页标题，不构成语义身份推断，也不得用于任何 identity/visual/roster 决策。
 
 ### 4.4 头像和视觉资产分配
 
@@ -124,7 +134,8 @@
 
 - 分析输入仅包括玩家已经看到的消息、有限最近可见上下文和必要的发布 cast alias/资产标签；不包含隐藏思考、ST prompt/配置、资源正文或 API 密钥。
 - provider token 只存在外接服务端；浏览器只调用闭合版本化的展示标注 API。
-- 请求/缓存键至少绑定 `chatId`、消息哈希、所需历史哈希、manifest/version、Arc、annotation version、prompt/model scope，防止旧角色身份或旧分支结果复用。
+- 请求/缓存键至少绑定 `chatId`、scenarioId/version、release/Arc、消息哈希、完整可见时间线前缀哈希、当前发布 known-entities 的规范化 fingerprint、annotation version、prompt/model scope，防止旧角色身份或旧分支结果复用。历史 memo 还必须逐项匹配当前 scenarioId/version 与 known-entities fingerprint；上述任一不一致时该行 annotation 视为缺失，identity projection 与 roster 保持 incomplete。完整时间线前缀哈希已覆盖该行之前的可见消息，因而可用来证明窗口外历史上下文仍一致，无需逐条重算每条旧消息的最近四条 context digest。
+- 每次读取持久缓存后，都将单条缓存结果包装为 Annotation v1 响应，并以当前精确 source message 与该请求的 known entities 再跑完整 validator。验证失败即删除该缓存项并按 cache miss 处理；不能把未验证缓存写入内存 memo、身份投影或 roster。只有 `current-message-singleton.v1` provenance 可写入新 cache namespace；此前可能由 multi-message batch 生成的旧 namespace 缓存不会被清空，也永不读作 singleton。内存 memo 也必须带同一 provenance；批量结果不能晋升投影、覆盖 singleton memo 或让 roster 完整。
 - 分析异步执行；聊天原文即时展示。旧注释不能覆盖新消息/新 segment；通过 request generation token 和 source hash 防止晚到响应应用到另一段。
 - 服务不可用：保留原文；有已验证精确绑定则照常显示；未识别对白用未知占位；状态面板显示最后一次可验证投影或未知，不伪造“实时”状态。
 
@@ -138,7 +149,7 @@
 
 ### P1：只读标注契约和影子比较
 
-实现闭合标注响应、偏移/哈希验证、缓存及诊断。与现有切分器并行 shadow-run，对比结果但不改变玩家界面。审计误识、漏识、属性串人、跨消息身份漂移和分析延迟；不写聊天、不应用新头像。
+实现闭合标注响应、偏移/哈希验证、缓存及诊断。shadow-run 的分析结果和对比结果不参与玩家界面、不应用新头像；同时，独立于 shadow 结果的安全展示 fallback 必须遵循上位产品规范：未通过对应语言 gate、缺少有效注释或注释失效时，保留 assistant/character 可见正文并保持 neutral/unknown identity。标题是否显示 demo 级“旁白”按本规范顶部的窄规则处理，不代表应用 shadow 标注，也不改变 identity 或 avatar。审计误识、漏识、属性串人、跨消息身份漂移和分析延迟；不写聊天。
 
 ### P2：片段身份与头像
 
@@ -172,3 +183,9 @@
 ## 2026-10-04 scene presentation projection 范围隔离
 
 `presentation-annotation.v1` 的说话人、人物 identity 与 roster gate 不因视觉恢复而改变。页面场景连续性使用独立 `scene-continuity-analysis.v1` contract，只用于可见舞台背景；它不创建人物 identity，不合并角色，不更新 roster，也不替代原版剧情状态。用户要求恢复视觉后，scene producer 可按 `GALGAME_VISUAL_PAGE_CONTINUITY_RESTORE_2026-10-04.md` 的高置信度、当前页证据门槛运行；该例外不得被误读为允许打开整条 annotation v1 speaker/identity/roster 流程。
+
+## 2026-10-05 用户指定的 annotation v1 试运行覆盖
+
+用户随后明确要求启用语义识别，并对历史文本回测。当前唯一发布语言 `zh-CN` 临时走 `assisted` renderer；这覆盖本规范“未达金标准时保持 shadow”的默认 rollout 决策，但不改变 gold 指标、人工复核和整剧本留出要求，也不制造 gate report。只允许消费通过既有闭合 schema、source span、哈希、scope、timeline 与 identity resolver 校验的结果；无效/未归属内容继续 unknown-safe。该运行状态是未验证试运行，不表示说话人准确率、身份连续性或 roster 事件达到第 6 节门槛。回测报告须分别列出准确率（仅在有人审 gold 时）、有效注释覆盖、超时和延迟；若回测表现不足，renderer 仍保持未知兜底并将限制明确交付。
+
+为控制回测已观察到的高延迟且确保 provenance 可重放，试运行只单独分析当前活动 cursor 的一条非空 assistant 消息，不调用历史多目标批量回填。更早且未访问的正文继续 unknown-safe；玩家回看使某条历史消息成为活动 target 后，才为该消息发起 singleton 分析。整段身份/roster projection 只能由逐条 singleton provenance 的有效注释完成；旧 IndexedDB batch cache 保留但因 cache key namespace 变化而不再命中，刷新后只会重新分析当前目标，不会把历史正文写入本地缓存。

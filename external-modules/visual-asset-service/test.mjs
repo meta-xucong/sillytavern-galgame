@@ -565,13 +565,17 @@ async function testControlledLauncherStaticSecurity() {
     "$childEnvironment['GALGAME_VISUAL_RUNTIME_BASE_URL'] = $analyzerBaseUrl",
     "$childEnvironment['GALGAME_VISUAL_RUNTIME_MODEL'] = $analyzerModel",
     "$childEnvironment['GALGAME_VISUAL_RUNTIME_REQUEST_STYLE'] = $runtimeRequestStyle",
-    "$childEnvironment['GALGAME_VISUAL_ANALYZER_CACHE_SCOPE'] = 'controlled-analyzer-test-doubao-v1'",
-    "$childEnvironment['GALGAME_VISUAL_RUNTIME_CACHE_SCOPE'] = 'controlled-runtime-live-v1'",
+    "$childEnvironment['GALGAME_VISUAL_ANALYZER_CACHE_SCOPE'] = 'controlled-analyzer-test-doubao-seed-2.0-pro-v2'",
+    "$childEnvironment['GALGAME_VISUAL_RUNTIME_CACHE_SCOPE'] = 'controlled-runtime-live-doubao-seed-2.0-pro-v2'",
     '$childEnvironment[$tokenVariable] = $plainToken',
     '$childEnvironment[$runtimeTokenVariable] = $plainToken',
     '$childEnvironment.Remove($tokenVariable)',
     '$childEnvironment.Remove($runtimeTokenVariable)',
   ]) assert.ok(controlled.includes(value), `controlled launcher missing: ${value}`);
+  assert.match(controlled, /\$fallbackModel = 'doubao-seed-2\.0-pro'/, 'the hidden-prompt fallback stays on the probed Pro model');
+  assert.match(controlled, /\$requestStyle = 'openai_chat_completions_vision'/, 'the Pro fallback uses the probed OpenAI-compatible vision endpoint');
+  assert.match(controlled, /\$runtimeRequestStyle = 'openai_chat_completions_text'/, 'the Pro fallback uses the matching text endpoint');
+  assert.doesNotMatch(controlled, /doubao-seed-2-0-lite-260428/, 'the controlled launcher has no stale Lite fallback');
   assertControlledLauncherLifecycle(controlled);
   assert.throws(() => assertControlledLauncherLifecycle(controlled.replace('-ArgumentList', '-OtherArgument')), /quoted script path/);
   assert.throws(() => assertControlledLauncherLifecycle(controlled.replace('$childEnvironment.Remove($tokenVariable)', '# $childEnvironment.Remove($tokenVariable)')), /managed token reference/);
@@ -2646,6 +2650,10 @@ async function testPresentationAnalysisBrowserProxy() {
   const origin = CORE_DEFAULT_ORIGIN;
   const allowedOrigins = new Set([origin]);
   assert.equal(resolvePresentationAnalysisProxyRoute('GET', '/v1/presentation/health')?.upstreamPath, '/v1/health');
+  assert.equal(resolvePresentationAnalysisProxyRoute('POST', '/v1/presentation/annotations')?.timeoutMs, 130_000,
+    'annotation proxy deadline exceeds the player adapter budget');
+  assert.equal(resolvePresentationAnalysisProxyRoute('POST', '/v1/presentation/scene-continuity')?.timeoutMs, 65_000,
+    'scene-continuity proxy deadline remains unchanged');
   assert.equal(resolvePresentationAnalysisProxyRoute('POST', '/v1/presentation/scene-continuity')?.versionHeader,
     'x-galgame-scene-continuity-version');
   assert.equal(resolvePresentationAnalysisProxyRoute('POST', '/v1/presentation/../admin')?.upstreamPath, undefined,

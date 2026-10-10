@@ -273,6 +273,7 @@ await checkFrozenBoundary();
 await checkOriginalRuntimeBridgeSecurity();
 await checkPresentationCacheSafety();
 await checkPresentationGateReports();
+await checkSafePresentationFallback();
 
 const classificationSummary = summarize(findings, 'classification');
 const categorySummary = summarize(findings, 'category');
@@ -641,6 +642,9 @@ function classifyEndpoint(rel, endpoint, source = '') {
             ? 'allowed-adapter'
             : 'needs-review';
     }
+    if (endpoint === '/api/worldinfo/get') {
+        return isSpeakerCandidateWorldbookEndpoint(rel, source) ? 'allowed-adapter' : 'needs-review';
+    }
     if (isAdapter(rel)) {
         if (isPresentationAnalysisAdapter(rel)) {
             return endpoint === '/v1/presentation/annotations' || endpoint === '/v1/health'
@@ -894,18 +898,136 @@ async function checkBuiltModuleGraph(entryFile, outputRoot) {
 }
 
 async function checkPresentationGateReports() {
-    const { PRESENTATION_ANNOTATION_MODE, PRESENTATION_GATE_REPORTS } = await import('../player/src/presentation-renderer.js');
+    const { MAX_ASSISTED_PRESENTATION_MESSAGES, PRESENTATION_ANNOTATION_MODE, PRESENTATION_GATE_REPORTS, PRESENTATION_UNVERIFIED_ASSISTED_LANGUAGES, resolvePresentationMode } = await import('../player/src/presentation-renderer.js');
     const { verifyPresentationGateReports } = await import('../shared/src/presentation-gate.js');
     const modeValid = ['off', 'shadow', 'assisted'].includes(PRESENTATION_ANNOTATION_MODE);
+    const experimentalRolloutValid = Array.isArray(PRESENTATION_UNVERIFIED_ASSISTED_LANGUAGES)
+        && PRESENTATION_UNVERIFIED_ASSISTED_LANGUAGES.length === 1
+        && PRESENTATION_UNVERIFIED_ASSISTED_LANGUAGES[0] === 'zh-CN'
+        && MAX_ASSISTED_PRESENTATION_MESSAGES === 12
+        && resolvePresentationMode('zh-CN') === 'assisted'
+        && resolvePresentationMode('en') === 'shadow';
     const validation = await verifyPresentationGateReports({
         reports: PRESENTATION_GATE_REPORTS,
         readText: (relativePath) => readRepoFile(relativePath),
         sha256: (value) => createHash('sha256').update(value, 'utf8').digest('hex'),
     });
     checks.push({
-        name: 'presentation-gate-reports',
-        ok: modeValid && validation.valid,
-        details: { modeValid, languageCount: validation.languages?.length || 0, errors: validation.errors },
+        name: 'presentation-gate-and-explicit-experiment-rollout',
+        ok: modeValid && validation.valid && experimentalRolloutValid,
+        details: { modeValid, experimentalRolloutValid, languageCount: validation.languages?.length || 0, errors: validation.errors },
+    });
+}
+
+function isSpeakerCandidateWorldbookEndpoint(rel, source = '') {
+    const normalizedPath = rel.replaceAll('\\', '/');
+    const allowedFiles = new Set([
+        'frontend/shared/src/sillytavern-adapter.js',
+        'public/game/shared/sillytavern-adapter.js',
+        'public/game-admin/shared/sillytavern-adapter.js',
+    ]);
+    if (!allowedFiles.has(normalizedPath)) return false;
+
+    const routeConstant = "const SPEAKER_CANDIDATE_WORLD_INFO_GET_ENDPOINT = '/api/worldinfo/get';";
+    const classDeclaration = 'export class SillyTavernSpeakerCandidateAdapter';
+    const routeReference = 'SPEAKER_CANDIDATE_WORLD_INFO_GET_ENDPOINT';
+    const classStart = source.indexOf(classDeclaration);
+    const classBodyStart = classStart < 0 ? -1 : source.indexOf('{', classStart + classDeclaration.length);
+    const classBodyEnd = classBodyStart < 0 ? -1 : findMatchingJavaScriptBrace(source, classBodyStart);
+    const candidateClassBody = classBodyEnd < 0 ? '' : source.slice(classBodyStart, classBodyEnd + 1);
+    return source.includes(routeConstant)
+        && classStart >= 0
+        && classBodyEnd >= classBodyStart
+        && source.split('/api/worldinfo/get').length === 2
+        && source.split(routeReference).length === 3
+        && source.split('this.client.url(SPEAKER_CANDIDATE_WORLD_INFO_GET_ENDPOINT)').length === 2
+        && candidateClassBody.split('this.client.url(SPEAKER_CANDIDATE_WORLD_INFO_GET_ENDPOINT)').length === 2;
+}
+
+function findMatchingJavaScriptBrace(source, openingIndex) {
+    let depth = 0;
+    let quote = '';
+    let escaped = false;
+    let lineComment = false;
+    let blockComment = false;
+    for (let index = openingIndex; index < source.length; index += 1) {
+        const character = source[index];
+        const next = source[index + 1];
+        if (lineComment) {
+            if (character === '\n') lineComment = false;
+            continue;
+        }
+        if (blockComment) {
+            if (character === '*' && next === '/') {
+                blockComment = false;
+                index += 1;
+            }
+            continue;
+        }
+        if (quote) {
+            if (escaped) {
+                escaped = false;
+            } else if (character === '\\') {
+                escaped = true;
+            } else if (character === quote) {
+                quote = '';
+            }
+            continue;
+        }
+        if (character === '/' && next === '/') {
+            lineComment = true;
+            index += 1;
+            continue;
+        }
+        if (character === '/' && next === '*') {
+            blockComment = true;
+            index += 1;
+            continue;
+        }
+        if (character === "'" || character === '"' || character === '`') {
+            quote = character;
+            continue;
+        }
+        if (character === '{') depth += 1;
+        if (character === '}') {
+            depth -= 1;
+            if (depth === 0) return index;
+        }
+    }
+    return -1;
+}
+
+async function checkSafePresentationFallback() {
+    const source = await readRepoFile('frontend/player/src/main.js');
+    const start = source.indexOf('function createPresentationPagesForMessage(');
+    const end = source.indexOf('\nfunction renderChatSnapshot(', start);
+    const renderPath = source.slice(start, end);
+    const basePagesIndex = renderPath.indexOf('const basePages = nonEmptySegments;');
+    const semanticIndex = renderPath.indexOf('getAssistedPresentationSegments(');
+    const sourceBodyPipeline = renderPath.slice(0, basePagesIndex < 0 ? renderPath.length : basePagesIndex);
+    const usesOriginalFormatter = sourceBodyPipeline.includes('const sourceText = formatVisualNovelDisplayText(visibleText);');
+    const importsLegacyParser = /\bcreateVisualNovelDisplaySegments\b/u.test(source);
+    const usesOriginalDisplaySplitter = sourceBodyPipeline.includes('createVisualNovelDisplaySegments(visibleText,');
+    const sourceSegmentsBecomePagesDirectly = basePagesIndex >= 0
+        && !renderPath.includes('createPresentationPages(');
+    const semanticRunsAfterBase = semanticIndex > basePagesIndex && basePagesIndex >= 0;
+    const semanticAbsentFromBodyPipeline = !sourceBodyPipeline.includes('projectedSegments')
+        && !sourceBodyPipeline.includes('getAssistedPresentationSegments(');
+    const semanticMetadataIsSeparate = renderPath.includes('semanticPresentation: {')
+        && !renderPath.includes('\n            type: segment.type,')
+        && !renderPath.includes('\n            speaker: segment.speaker,')
+        && !renderPath.includes('\n            identityRef: segment.identityRef,')
+        && !renderPath.includes('\n            text: segment.text,')
+        && !renderPath.includes('\n            sourceSpan: segment.sourceSpan,');
+    const renderer = await readRepoFile('frontend/player/src/presentation-renderer.js');
+    const sourceBoundariesOnly = renderer.includes('source.slice(span.start, span.end).join(\'\')');
+    checks.push({
+        name: 'presentation-safe-fallback',
+        ok: start >= 0 && end > start && usesOriginalFormatter && importsLegacyParser && usesOriginalDisplaySplitter
+            && sourceSegmentsBecomePagesDirectly && semanticRunsAfterBase && semanticAbsentFromBodyPipeline
+            && semanticMetadataIsSeparate && sourceBoundariesOnly,
+        details: { usesOriginalFormatter, importsLegacyParser, usesOriginalDisplaySplitter, sourceSegmentsBecomePagesDirectly,
+            semanticRunsAfterBase, semanticAbsentFromBodyPipeline, semanticMetadataIsSeparate, sourceBoundariesOnly },
     });
 }
 

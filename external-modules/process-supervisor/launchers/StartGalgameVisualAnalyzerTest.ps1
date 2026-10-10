@@ -158,17 +158,17 @@ try {
     $childEnvironment['GALGAME_VISUAL_ASSET_ADMIN_TOKEN'] = ''
     $childEnvironment['GALGAME_VISUAL_ASSET_ADMIN_ORIGINS'] = ''
     $fallbackBaseUrl = 'https://aiself.vip/v1'
-    $fallbackModel = 'doubao-seed-2-0-lite-260428'
+    $fallbackModel = 'doubao-seed-2.0-pro'
     $analyzerBaseUrl = if ($providerConfigLoaded) { $configuredProviderBaseUrl } else { $fallbackBaseUrl }
     $analyzerModel = if ($providerConfigLoaded) { $configuredProviderModel } else { $fallbackModel }
-    $requestStyle = if ($providerConfigLoaded) { 'openai_chat_completions_vision' } else { 'anthropic_messages_vision' }
-    $runtimeRequestStyle = if ($providerConfigLoaded) { 'openai_chat_completions_text' } else { 'anthropic_messages_text' }
+    $requestStyle = 'openai_chat_completions_vision'
+    $runtimeRequestStyle = 'openai_chat_completions_text'
     $childEnvironment['GALGAME_VISUAL_ANALYZER_BASE_URL'] = $analyzerBaseUrl
     $childEnvironment['GALGAME_VISUAL_ANALYZER_MODEL'] = $analyzerModel
     $childEnvironment['GALGAME_VISUAL_ANALYZER_REQUEST_STYLE'] = $requestStyle
     # Keep this controlled run isolated from earlier unavailable/timeout
     # cache records created by the ordinary launcher or short probe runs.
-    $childEnvironment['GALGAME_VISUAL_ANALYZER_CACHE_SCOPE'] = 'controlled-analyzer-test-doubao-v1'
+    $childEnvironment['GALGAME_VISUAL_ANALYZER_CACHE_SCOPE'] = 'controlled-analyzer-test-doubao-seed-2.0-pro-v2'
     $childEnvironment['GALGAME_VISUAL_ANALYZER_TIMEOUT_MS'] = '30000'
     $childEnvironment[$tokenVariable] = $plainToken
     $childEnvironment['GALGAME_VISUAL_RUNTIME_BASE_URL'] = $analyzerBaseUrl
@@ -178,7 +178,7 @@ try {
     # the timeout bounded while allowing the configured provider to complete.
     $childEnvironment['GALGAME_VISUAL_RUNTIME_TIMEOUT_MS'] = '15000'
     $childEnvironment['GALGAME_VISUAL_RUNTIME_RETRY_SCHEMA_INVALID'] = 'true'
-    $childEnvironment['GALGAME_VISUAL_RUNTIME_CACHE_SCOPE'] = 'controlled-runtime-live-v1'
+    $childEnvironment['GALGAME_VISUAL_RUNTIME_CACHE_SCOPE'] = 'controlled-runtime-live-doubao-seed-2.0-pro-v2'
     $childEnvironment[$runtimeTokenVariable] = $plainToken
 
     $previousChildEnvironment = @{}

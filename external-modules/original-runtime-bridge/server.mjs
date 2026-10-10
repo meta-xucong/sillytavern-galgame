@@ -40,7 +40,7 @@ function readRuntimeProviderSettings() {
 
 export function createOriginalRuntimeBridgeServer({
     runtime = null,
-    sillyTavernBaseUrl = process.env.SILLYTAVERN_BASE_URL || 'http://127.0.0.1:8000',
+    sillyTavernBaseUrl = process.env.SILLYTAVERN_BASE_URL || 'http://127.0.0.1:8001',
     allowedOrigins = parseAllowedOrigins(process.env.GALGAME_ALLOWED_ORIGINS),
     host = process.env.HOST || '127.0.0.1',
     authToken = process.env.GALGAME_BRIDGE_TOKEN || process.env.GALGAME_BRIDGE_AUTH_TOKEN || '',
@@ -277,6 +277,14 @@ export function createOriginalRuntimeBridgeServer({
                     return;
                 }
                 const runtimeStatus = runtimeBridge.getStatus?.() || {};
+                if (runtimeStatus.recoveryRequired) {
+                    sendJson(response, 503, {
+                        ok: false,
+                        errorCode: 'BRIDGE_RECOVERY_REQUIRED',
+                        diagnostics: { connectionState: runtimeStatus.connectionState },
+                    });
+                    return;
+                }
                 if (runtimeStatus.pending) {
                     sendJson(response, runtimeStatus.stale ? 504 : 409, {
                         ok: false,
@@ -425,6 +433,7 @@ export class BrowserOriginalRuntimeBridge {
         this.queue = Promise.resolve();
         this.pendingTask = null;
         this.stopping = false;
+        this.recoveryRequired = false;
         this.lastGeneration = {
             state: 'never',
             at: 0,
@@ -452,6 +461,8 @@ export class BrowserOriginalRuntimeBridge {
         const stale = Boolean(this.pendingTask) && pendingSinceMs >= this.pendingStaleAfterMs;
         const connectionState = this.stopping
             ? 'stopping'
+            : this.recoveryRequired
+                ? 'recovery-required'
             : stale
                 ? 'stale'
                 : this.pendingTask
@@ -461,11 +472,13 @@ export class BrowserOriginalRuntimeBridge {
                         : 'idle';
         return {
             stopping: this.stopping,
+            recoveryRequired: this.recoveryRequired,
+            errorCode: this.recoveryRequired ? 'BRIDGE_RECOVERY_REQUIRED' : '',
             pending: Boolean(this.pendingTask),
             pendingSinceMs,
             pendingStaleAfterMs: this.pendingStaleAfterMs,
             stale,
-            ready: !this.stopping && !stale && !this.pendingTask,
+            ready: !this.stopping && !this.recoveryRequired && !stale && !this.pendingTask,
             connectionState,
             lastGeneration: { ...this.lastGeneration },
         };
@@ -476,10 +489,16 @@ export class BrowserOriginalRuntimeBridge {
     }
 
     async generateReply(request) {
+        if (this.recoveryRequired) {
+            throw createBridgeError('BRIDGE_RECOVERY_REQUIRED');
+        }
         if (this.stopping) {
             throw createBridgeError('BRIDGE_STOPPING');
         }
         const task = this.queue.then(async () => {
+            if (this.recoveryRequired) {
+                throw createBridgeError('BRIDGE_RECOVERY_REQUIRED');
+            }
             if (this.stopping) {
                 throw createBridgeError('BRIDGE_STOPPING');
             }
@@ -570,10 +589,13 @@ export class BrowserOriginalRuntimeBridge {
         } catch (error) {
             if (error?.code === 'CDP_EVALUATION_TIMEOUT') {
                 this.stopping = true;
+                this.recoveryRequired = true;
                 try {
                     await this.close();
-                    // The timed-out reply remains a failure. The next explicit
-                    // retry reloads the exact original chat before Generate().
+                    // A CDP timeout leaves renderer state ambiguous. Require a
+                    // fresh bridge process before retrying; the player first
+                    // syncs the exact chat, so an already-written reply is not
+                    // generated twice.
                     this.stopping = false;
                 } catch (closeError) {
                     this.logger.warn?.('[original-runtime-bridge] timed-out browser exit was not confirmed', {
@@ -586,6 +608,7 @@ export class BrowserOriginalRuntimeBridge {
         if (!result?.ok) {
             if (result?.errorCode === 'ORIGINAL_GENERATION_STOP_UNCONFIRMED') {
                 this.stopping = true;
+                this.recoveryRequired = true;
                 await this.close();
             }
             const error = new Error(result?.errorCode || 'ORIGINAL_RUNTIME_GENERATE_FAILED');
@@ -1851,6 +1874,8 @@ function parseAllowedOrigins(value) {
         return [
             'http://127.0.0.1:8000',
             'http://localhost:8000',
+            'http://127.0.0.1:8001',
+            'http://localhost:8001',
         ];
     }
     return String(value).split(',').map((item) => item.trim()).filter(Boolean);

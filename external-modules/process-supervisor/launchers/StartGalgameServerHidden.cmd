@@ -7,5 +7,5 @@ if /i not "%~1"=="--galgame-hidden-child" (
 shift
 setlocal
 cd /d "%GALGAME_ROOT%"
-call "%GALGAME_ROOT%\Start.bat" %*
+node.exe "%GALGAME_ROOT%\server.js" --port 8001
 exit /b %ERRORLEVEL%

@@ -116,7 +116,8 @@ runtime data are not read or sent. Without an independent analyzer
 configuration, production uploads remain usable and record
 `analysisStatus=unavailable`.
 
-For the separately supplied deployment, the controlled service process may set
+For a separately supplied legacy deployment (not the current repo-local
+launcher), the service process may set
 `GALGAME_VISUAL_ANALYZER_BASE_URL=https://aiself.vip/v1`,
 `GALGAME_VISUAL_ANALYZER_MODEL=doubao-seed-2-0-lite-260428` and
 `GALGAME_VISUAL_ANALYZER_REQUEST_STYLE=anthropic_messages_vision`. The token is
@@ -124,27 +125,33 @@ an operator-provided server-only environment value; it must never be written
 to this repository, a browser bundle, an API response, local storage, logs or
 evidence. A missing token intentionally leaves analysis unavailable.
 
-For a one-command Windows controlled run that uses the same independent
-Anthropic Messages credential for upload-time vision and runtime visible-text
-hints, use:
+For a one-command Windows controlled run that uses the separate visual
+credential for upload-time image analysis and runtime visible-text hints, use:
 
 ```text
 external-modules/process-supervisor/launchers/StartGalgameVisualAnalyzerTest.cmd
 ```
 
-The wrapper prompts once for `视觉服务密钥（隐藏输入）`, starts the child service on
-loopback and opens `http://127.0.0.1:8798/game-admin/`. Only the child process
-receives the configured analyzer/runtime endpoints, models, request styles,
-bounded cache scopes and the prompted value in both corresponding token
-variables. The wrapper clears inherited copies of both token variables before
-constructing the child environment, never puts the token in command-line
-arguments, and clears its temporary string/BSTR/environment references on
-exit. It records only non-sensitive PID/health diagnostics.
+When `.env.local` contains valid `REFERENCE_VISION_BASE_URL`,
+`REFERENCE_VISION_API_KEY`, and `REFERENCE_VISION_MODEL` values, the launcher
+uses them without prompting; otherwise it prompts once for a hidden visual
+credential and uses the probed Aiself OpenAI-compatible Doubao Seed 2.0 Pro
+fallback. It starts the child service on loopback and opens
+`http://127.0.0.1:8798/game-admin/` when invoked with `-OpenAdmin`. Only the
+child process receives the configured analyzer/runtime endpoints, models,
+request styles, bounded cache scopes and secret token variables. The wrapper
+clears inherited token copies before constructing the child environment, never
+puts a token in command-line arguments, clears temporary references on exit,
+and records only non-sensitive PID/health diagnostics. The current local
+`.env.local` selects the OpenAI-compatible `doubao-seed-2.0-pro` model alias;
+its credential remains separate from the Claude gameplay credential.
 
-The ordinary `external-modules/process-supervisor/launchers/StartGalgameVisualAssetService.cmd` explicitly clears both token
-variables and therefore remains a no-provider launcher unless a separate
-server-side deployment supplies configuration. Do not paste a token into a
-browser field, URL, command argument, repository file or evidence record.
+The ordinary `external-modules/process-supervisor/launchers/StartGalgameVisualAssetService.cmd`
+uses the controlled launcher when `.env.local` is present; without that file it
+starts the no-provider local service. `Start_Galgame_All.ps1` and the recovery
+supervisor both use this fixed launcher, so the configured model is loaded on
+normal startup and recovery. Do not paste a token into a browser field, URL,
+command argument, repository file or evidence record.
 
 Each asset stores a closed `galgame.visual-asset-analysis.v1` object and a
 matching top-level `analysisStatus` of `ready`, `unavailable` or `failed`.

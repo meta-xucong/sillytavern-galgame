@@ -6,8 +6,8 @@ import {
     materializeManifestForArc,
     validateActiveReleaseManifestBinding,
     validateScenarioManifest,
-} from './protocol.js?v=auto-b19af4e9a9f8';
-import { LocalReleaseStore } from './storage.js?v=auto-b19af4e9a9f8';
+} from './protocol.js?v=galgame-2026-10-10-speaker-title-v4';
+import { LocalReleaseStore } from './storage.js?v=galgame-2026-10-10-speaker-title-v4';
 
 export const CONFIG_SERVICE_PROTOCOL_VERSION = '1.0';
 

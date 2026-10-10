@@ -36,7 +36,7 @@ const stageHeroineElement = createStubElement();
 const visualIconStripElement = createStubElement();
 const visualStatusElement = createStubElement();
 const VISUAL_PLACEHOLDER_URL = './assets/visual-placeholder.svg';
-const NARRATOR_PLACEHOLDER_URL = './assets/narrator-placeholder.svg';
+const UNKNOWN_PLACEHOLDER_URL = './assets/unknown-speaker-placeholder.svg';
 const PLAYER_PLACEHOLDER_URL = './assets/player-placeholder.svg';
 let visualCoreServiceMeta = '';
 let sceneContinuityMode = 'changed';
@@ -299,7 +299,7 @@ await new Promise((resolve) => setTimeout(resolve, 0));
 
 assert.equal(fetchCalls.length, 0);
 assert.equal(stageBackdropElement.style.backgroundImage, 'url("/assets/default-background.png")');
-assert.equal(stageHeroineElement.style.backgroundImage, `url("${NARRATOR_PLACEHOLDER_URL}")`);
+assert.equal(stageHeroineElement.style.backgroundImage, `url("${UNKNOWN_PLACEHOLDER_URL}")`);
 assert.equal(stageBackdropElement.classList.contains('is-visual-active'), false);
 assert.equal(stageHeroineElement.classList.contains('is-visual-active'), false);
 assert.equal(stageHeroineElement.classList.contains('is-visual-unknown'), false);
@@ -390,9 +390,9 @@ await waitForCoreDecision();
 
 assert.equal(fetchCalls.filter((call) => call.url.endsWith('/v1/core/visual-decisions')).length, 1);
 assert.equal(stageBackdropElement.style.backgroundImage, 'url("http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_scene_player_route/1/content")');
-assert.equal(stageHeroineElement.style.backgroundImage, 'url("http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_character_player_route/1/content")');
+assert.equal(stageHeroineElement.style.backgroundImage, `url("${UNKNOWN_PLACEHOLDER_URL}")`);
 assert.equal(stageBackdropElement.classList.contains('is-visual-active'), true);
-assert.equal(stageHeroineElement.classList.contains('is-visual-active'), true);
+assert.equal(stageHeroineElement.classList.contains('is-visual-active'), false);
 assert.equal(visualIconStripElement.children.length, 3);
 assert.deepEqual(visualIconStripElement.children.map((item) => item.children[0].src), [
     'http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_equipment_player_route/1/content',
@@ -520,7 +520,7 @@ globalThis.__GALGAME_TEST_RENDER_CHAT__({
     }],
 }, { messageIndex: 0 });
 await waitForCoreDecision();
-assert.equal(stageHeroineElement.style.backgroundImage, `url("${VISUAL_PLACEHOLDER_URL}")`, 'a local character binding declared as narrator in the active catalog must fail closed');
+assert.equal(stageHeroineElement.style.backgroundImage, `url("${UNKNOWN_PLACEHOLDER_URL}")`, 'a local character binding declared as narrator in the active catalog must fail closed');
 assert.equal(fetchCalls.some((call) => call.url.includes('/assets/asset_character_1b4268f70a37/1/content')), false);
 coreDecisionMode = 'ok';
 coreCatalogCharacterChannels = [
@@ -657,7 +657,7 @@ globalThis.__GALGAME_TEST_RENDER_CHAT__({
 }, { messageIndex: 0 });
 await waitForCoreDecision();
 const narrationRequest = JSON.parse(fetchCalls.find((call) => call.url.endsWith('/v1/core/visual-decisions')).options.body);
-assert.equal(narrationRequest.visibleContext.current.role, 'narrator');
+assert.equal(narrationRequest.visibleContext.current.role, 'character', 'unknown stays local; the DTO preserves original author role');
 assert.equal(narrationRequest.projection.entities.some((entity) => entity.entityType === 'character'), false);
 
 fetchCalls = [];
@@ -674,14 +674,12 @@ globalThis.__GALGAME_TEST_RENDER_CHAT__({
 }, { messageIndex: 0 });
 await waitForCoreDecision();
 const inferredSpeakerRequest = JSON.parse(fetchCalls.find((call) => call.url.endsWith('/v1/core/visual-decisions')).options.body);
+assert.equal(fetchCalls.some((call) => /\/assets\/asset_character_/u.test(call.url)), false, 'unknown never requests portrait bytes');
 assert.equal(inferredSpeakerRequest.visibleContext.current.role, 'character');
-const inferredCharacterEntity = inferredSpeakerRequest.projection.entities.find((entity) => entity.entityType === 'character');
-assert.ok(inferredCharacterEntity);
-assert.equal(inferredCharacterEntity.displayLabel, 'Celestia');
-assert.equal(inferredCharacterEntity.confidenceBand, 'probable');
-assert.equal(inferredCharacterEntity.visibleAttributes.some((attribute) => (
-    attribute.code === 'character-explicit-name' && attribute.value === 'Celestia'
-)), true);
+assert.equal(inferredSpeakerRequest.projection.entities.some((entity) => entity.entityType === 'character'), false,
+    'shadow mode never converts guessed speaker text into a character entity');
+assert.equal(elements.get('#speakerName').textContent, '未识别');
+assert.equal(stageHeroineElement.style.backgroundImage, `url("${UNKNOWN_PLACEHOLDER_URL}")`);
 
 fetchCalls = [];
 globalThis.__GALGAME_TEST_RENDER_CHAT__({
@@ -702,8 +700,8 @@ assert.equal(playerRequest.projection.entities.some((entity) => entity.entityTyp
 
 for (const [text, expectedRole] of [
     ['系统：当前无法继续。', 'system'],
-    ['—Unknown NPC 站在门口。', 'narrator'],
-    ['Unknown NPC：我不认识你。', 'narrator'],
+    ['—Unknown NPC 站在门口。', 'character'],
+    ['Unknown NPC：我不认识你。', 'character'],
 ]) {
     fetchCalls = [];
     globalThis.__GALGAME_TEST_RENDER_CHAT__({
@@ -740,7 +738,7 @@ globalThis.__GALGAME_TEST_RENDER_CHAT__({
 }, { messageIndex: 0 });
 await waitForCoreDecision();
 assert.equal(stageBackdropElement.style.backgroundImage, 'url("http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_scene_player_route/1/content")');
-assert.equal(stageHeroineElement.style.backgroundImage, `url("${NARRATOR_PLACEHOLDER_URL}")`);
+assert.equal(stageHeroineElement.style.backgroundImage, `url("${UNKNOWN_PLACEHOLDER_URL}")`);
 assert.deepEqual(visualIconStripElement.children.map((item) => item.children[0].src), [
     'http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_equipment_player_route/1/content',
     'http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_item_player_route/1/content',
@@ -790,7 +788,7 @@ assert.equal(fetchCalls.filter((call) => call.url.endsWith('/v1/core/visual-deci
 assert.equal(stageBackdropElement.style.backgroundImage, 'url("/assets/default-background.png")');
 assert.equal(stageBackdropElement.classList.contains('is-visual-active'), false);
 
-assert.equal(stageHeroineElement.dataset.visualAssetIdentity, 'asset_character_1b4268f70a37:1', 'published exact portrait survives analyzer failure');
+assert.equal(stageHeroineElement.dataset.visualAssetIdentity, undefined, 'unknown cannot borrow an author-bound exact portrait during analyzer failure');
 const drawerText = (element) => [element?.textContent || '', ...(element?.children || []).map(drawerText)].join(' ');
 for (const [type, label] of [['equipment', '银盾'], ['item', '钥匙'], ['skill', '守护']]) {
     const icon = visualIconStripElement.children.find((entry) => entry.dataset.visualType === type);
@@ -804,7 +802,7 @@ globalThis.__GALGAME_TEST_RENDER_CHAT__({
     messages: [{ role: 'character', speaker: 'Unbound Stranger', text: '角色: 陌生来客', displayText: '角色: 陌生来客' }],
 }, { messageIndex: 0, instant: true });
 await waitForCoreDecision();
-assert.equal(stageHeroineElement.style.backgroundImage, `url("${VISUAL_PLACEHOLDER_URL}")`, 'unbound speaker cannot inherit the previous exact portrait');
+assert.equal(stageHeroineElement.style.backgroundImage, `url("${UNKNOWN_PLACEHOLDER_URL}")`, 'unbound speaker cannot inherit the previous exact portrait');
 
 // Establish a verified scene, then prove that a same-scope continued page
 // ignores an empty scene decision and keeps that background.
@@ -1027,7 +1025,7 @@ globalThis.__GALGAME_TEST_RENDER_CHAT__({
 }, { messageIndex: 0 });
 await waitForCoreDecision();
 assert.equal(stageBackdropElement.style.backgroundImage, 'url("/assets/default-background.png")', 'a rejected scene URL falls back to the release default instead of retaining an outdated matched scene');
-assert.equal(stageHeroineElement.style.backgroundImage, 'url(\"http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_character_1b4268f70a37/1/content\")');
+assert.equal(stageHeroineElement.style.backgroundImage, `url("${UNKNOWN_PLACEHOLDER_URL}")`);
 assert.deepEqual(visualIconStripElement.children.map((item) => item.className), [
     'visual-icon visual-icon-equipment is-unavailable is-placeholder',
     'visual-icon visual-icon-item is-unavailable is-placeholder',
@@ -1075,7 +1073,7 @@ globalThis.__GALGAME_TEST_RENDER_CHAT__({
     }],
 }, { messageIndex: 0 });
 await waitForCoreDecision();
-assert.equal(stageHeroineElement.style.backgroundImage, `url("${NARRATOR_PLACEHOLDER_URL}")`, 'dynamic portrait fails closed when its uniqueness ledger cannot be read');
+assert.equal(stageHeroineElement.style.backgroundImage, `url("${UNKNOWN_PLACEHOLDER_URL}")`, 'dynamic portrait fails closed when its uniqueness ledger cannot be read');
 assert.equal(fetchCalls.some((call) => call.url.includes('/assets/asset_character_player_route/1/content')), false, 'unpersisted portrait is never rendered');
 portraitStorageMode = 'ready';
 
@@ -1138,19 +1136,18 @@ globalThis.__GALGAME_TEST_RENDER_CHAT__({
     }],
 }, { messageIndex: 0, instant: true });
 await new Promise((resolve) => setTimeout(resolve, 50));
-assert.equal(elements.get('#speakerName').textContent, '多人对话');
-assert.equal(carouselIntervalMs, 3000, 'portrait carousel advances every three seconds');
-assert.equal(stageHeroineElement.style.backgroundImage, 'url("http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_character_1b4268f70a37/1/content")');
-carouselCallback?.();
-await new Promise((resolve) => setTimeout(resolve, 25));
-assert.equal(stageHeroineElement.style.backgroundImage, 'url("http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_character_player_route/1/content")');
+assert.equal(elements.get('#speakerName').textContent, '未识别', 'ungated multi-speaker text is not classified by the legacy parser');
+assert.equal(carouselIntervalMs, null, 'shadow text cannot start an attributed carousel');
+assert.equal(stageHeroineElement.style.backgroundImage, `url("${UNKNOWN_PLACEHOLDER_URL}")`);
+assert.equal(portraitStorageItems.size, 0, 'unknown never reserves a portrait binding');
+assert.equal(fetchCalls.filter((call) => call.url.endsWith('/v1/core/visual-decisions')).every((call) => !JSON.parse(call.options.body).projection.entities.some((entity) => entity.entityType === 'character')), true, 'unknown text cannot send a character visual candidate');
 globalThis.__GALGAME_TEST_RENDER_CHAT__({
     ok: true,
     fileName: 'chat-visual-carousel.json',
     writable: true,
     messages: [{ role: 'character', speaker: 'Test Heroine', displayText: '“我继续处理。”', text: '“我继续处理。”' }],
 }, { messageIndex: 0, instant: true });
-assert.ok(carouselClearCount >= 1, 'rendering a continuation page clears the previous group carousel');
+assert.equal(carouselClearCount, 0, 'unknown text never installs a carousel to clear');
 assert.equal(carouselCallback, null, 'a single-speaker continuation does not install a new carousel');
 globalThis.__GALGAME_TEST_RENDER_CHAT__({
     ok: true,
@@ -1164,8 +1161,8 @@ globalThis.__GALGAME_TEST_RENDER_CHAT__({
     }],
 }, { messageIndex: 0, pageIndex: 1, instant: true });
 await new Promise((resolve) => setTimeout(resolve, 40));
-assert.equal(elements.get('#speakerName').textContent, 'Test Heroine', 'the continuation page keeps the exact attributed speaker');
-assert.equal(stageHeroineElement.style.backgroundImage, 'url("http://visual-core.test/v1/core/catalogs/catalog_core_player/1/assets/asset_character_1b4268f70a37/1/content")', 'the continuation page remains pinned to that speaker portrait');
+assert.equal(elements.get('#speakerName').textContent, '未识别', 'an ungated quote continuation cannot invent an attributed identity');
+assert.equal(stageHeroineElement.style.backgroundImage, `url("${UNKNOWN_PLACEHOLDER_URL}")`, 'unknown continuation stays outside the portrait channel');
 assert.equal(carouselCallback, null, 'a quote continuation page never starts group rotation');
 
 playerModule.restoreDefaultVisualLayers();

@@ -100,7 +100,8 @@
       for (let i = 0; i < results.length; i++) all.push(...createPresentationDisplaySegments({ text: texts[i], annotation: results[i], projection: identity.projection, sourceMessageIndex: i }));
       addCheck('production renderer 输出旁白/对白/未归属对白类型', all.some((x) => x.type === 'dialogue') && all.some((x) => x.type === 'narration') && all.some((x) => x.type === 'unattributed-dialogue'));
       addCheck('未归属对白保持中性 unknown，旁白不冒充玩家或角色', all.some((x) => x.type === 'unattributed-dialogue' && x.speaker === '未识别' && x.identityRef.type === 'unknown') && all.some((x) => x.type === 'narration' && x.speaker === '旁白' && x.identityRef === null));
-      addCheck(`生产模式仍为 ${resolvePresentationMode('en')}; harness 未提供 assisted bypass`, resolvePresentationMode('en') === 'shadow');
+      addCheck(`中文试运行语义呈现已启用，其他语言仍走 gate：${resolvePresentationMode('zh-CN')}/${resolvePresentationMode('en')}`,
+        resolvePresentationMode('zh-CN') === 'assisted' && resolvePresentationMode('en') === 'shadow');
 
       let bindings = [];
       const firstBinding = bindUniquePresentationAsset(bindings, 'published:cast-celestia', 'fixture-portrait-a');

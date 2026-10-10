@@ -82,7 +82,7 @@ const stageHeroineElement = createStubElement('div');
 const visualIconStripElement = createStubElement('div');
 const visualStatusElement = createStubElement('p');
 const VISUAL_PLACEHOLDER_URL = './assets/visual-placeholder.svg';
-const NARRATOR_PLACEHOLDER_URL = './assets/narrator-placeholder.svg';
+const UNKNOWN_PLACEHOLDER_URL = './assets/unknown-speaker-placeholder.svg';
 let visualCoreServiceMeta = '';
 elements.set('#stageBackdrop', stageBackdropElement);
 elements.set('.stage-heroine', stageHeroineElement);
@@ -235,7 +235,7 @@ await withServer(unavailableService, async (baseUrl) => {
         ],
     });
     assert.equal(stageBackdropElement.style.backgroundImage.includes(catalogContentPath('scene')), true);
-    assert.equal(stageHeroineElement.style.backgroundImage, `url("${VISUAL_PLACEHOLDER_URL}")`);
+    assert.equal(stageHeroineElement.style.backgroundImage, `url("${UNKNOWN_PLACEHOLDER_URL}")`);
     assert.deepEqual(visualIconStripElement.children.map((item) => item.children[0].src), [
         VISUAL_PLACEHOLDER_URL,
         `${baseUrl}${catalogContentPath('item')}`,
@@ -322,21 +322,22 @@ await withServer(analyzerService, async (baseUrl) => {
         && !Object.values(request).some((value) => String(value).includes('ST key'))
     )), true);
 
-    await renderMessage(acceptanceMessage(), { expectedDecisionReads: 1, expectedContentReads: 5 });
+    await renderMessage(acceptanceMessage(), { expectedDecisionReads: 1, expectedContentReads: 4 });
 
     assert.equal(fetchCount('/v1/core/visual-decisions'), 1);
     assert.deepEqual(activeVisualClasses(), {
         backdrop: true,
-        heroine: true,
+        heroine: false,
         icons: ['visual-icon visual-icon-equipment is-visual-active', 'visual-icon visual-icon-item is-visual-active', 'visual-icon visual-icon-skill is-visual-active'],
     });
     assert.equal(stageBackdropElement.style.backgroundImage.includes(catalogContentPath('scene')), true);
-    assert.equal(stageHeroineElement.style.backgroundImage.includes(catalogContentPath('character')), true);
-    assert.deepEqual(contentReadsByType().sort(), ['character', 'equipment', 'item', 'scene', 'skill']);
+    assert.equal(stageHeroineElement.style.backgroundImage, `url("${UNKNOWN_PLACEHOLDER_URL}")`, 'ungated character text cannot use a matched character portrait');
+    assert.deepEqual(contentReadsByType().sort(), ['equipment', 'item', 'scene', 'skill']);
 
     const decisionBodies = networkEvidence.filter((entry) => entry.url.endsWith('/v1/core/visual-decisions'));
     assert.equal(decisionBodies.every((entry) => entry.contentType.includes('application/json')), true);
-    assert.deepEqual([...new Set(decisionBodies.at(-1).requestSummary.entityTypes)].sort(), ['character', 'equipment', 'item', 'scene', 'skill']);
+    assert.deepEqual([...new Set(decisionBodies.at(-1).requestSummary.entityTypes)].sort(), ['equipment', 'item', 'scene', 'skill']);
+    assert.equal(decisionBodies.at(-1).responseSummary.decisions.some((decision) => decision.entityType === 'character'), false, 'unknown text never requests a character decision');
     assert.equal(decisionBodies.at(-1).responseSummary.decisions
         .filter((decision) => decision.entityType !== 'character')
         .every((decision) => decision.reasonCodes.includes('tag-overlap')), true);
@@ -347,20 +348,22 @@ await withServer(analyzerService, async (baseUrl) => {
         text: '她望向雨幕，台词没有任何视觉素材标签。',
     }, { history: [acceptanceMessage()], expectedDecisionReads: 1, expectedContentReads: 0 });
     assert.equal(stageBackdropElement.style.backgroundImage.includes(catalogContentPath('scene')), true);
-    assert.equal(stageHeroineElement.style.backgroundImage, `url("${NARRATOR_PLACEHOLDER_URL}")`);
+    assert.equal(stageHeroineElement.style.backgroundImage, `url("${UNKNOWN_PLACEHOLDER_URL}")`);
     assert.deepEqual(visualIconStripElement.children.map((item) => item.className), [
         'visual-icon visual-icon-equipment is-visual-active',
         'visual-icon visual-icon-item is-visual-active',
         'visual-icon visual-icon-skill is-visual-active',
     ]);
 
+    // A denied portrait image must remain unreachable for unknown text.
     failImagePathFragment = catalogContentPath('character');
     await renderMessage(acceptanceMessage(), { expectedDecisionReads: 1, expectedContentReads: 3 });
-    assert.equal(stageHeroineElement.style.backgroundImage, `url("${VISUAL_PLACEHOLDER_URL}")`);
+    assert.equal(stageHeroineElement.style.backgroundImage, `url("${UNKNOWN_PLACEHOLDER_URL}")`);
+    assert.equal(contentReadsByType().includes('character'), false, 'unknown does not fetch portrait content');
     assert.equal(stageBackdropElement.classList.contains('is-visual-active'), true);
 
     failImagePathFragment = catalogContentPath('equipment');
-    await renderMessage(acceptanceMessage(), { expectedDecisionReads: 1, expectedContentReads: 3 });
+    await renderMessage(acceptanceMessage(), { expectedDecisionReads: 1, expectedContentReads: 2 });
     assert.equal(visualIconStripElement.children[0].className, 'visual-icon visual-icon-equipment is-visual-active');
     assert.equal(visualIconStripElement.children[0].children[0].src.includes(catalogContentPath('equipment')), true);
     assert.equal(visualIconStripElement.children[1].className, 'visual-icon visual-icon-item is-visual-active');
@@ -373,7 +376,7 @@ await withServer(analyzerService, async (baseUrl) => {
     }, { expectedDecisionReads: 0, expectedContentReads: 0 });
     await new Promise((resolve) => setTimeout(resolve, 25));
     assert.equal(stageBackdropElement.style.backgroundImage.includes('/v1/core/catalogs/'), true);
-    assert.equal(stageHeroineElement.style.backgroundImage, `url(\"${NARRATOR_PLACEHOLDER_URL}\")`);
+    assert.equal(stageHeroineElement.style.backgroundImage, `url(\"${UNKNOWN_PLACEHOLDER_URL}\")`);
     assert.equal(visualStatusElement.hidden, true);
 });
 
@@ -381,7 +384,7 @@ const playerSource = await readFile(new URL('../src/main.js', import.meta.url), 
 assert.equal(/playerVisualSessionReader|visual-bundle|visual-assets|projection-proof|restore-proof|\/v1\/visual-match/i.test(playerSource), false);
 assert.match(playerSource, /runtimeBridge\.generateReply/);
     assert.equal(stageBackdropElement.style.backgroundImage.includes('/v1/core/catalogs/'), true);
-    assert.equal(stageHeroineElement.style.backgroundImage, `url(\"${NARRATOR_PLACEHOLDER_URL}\")`);
+    assert.equal(stageHeroineElement.style.backgroundImage, `url(\"${UNKNOWN_PLACEHOLDER_URL}\")`);
 
 console.log('CORE-5 focused final acceptance tests passed: unavailable fallback and test-only analyzer overlap paths');
 

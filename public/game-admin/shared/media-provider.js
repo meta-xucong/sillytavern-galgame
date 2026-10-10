@@ -1,4 +1,4 @@
-import { buildMediaJobRequest, createMediaIdempotencyKey, getAssetUrl } from './protocol.js?v=auto-b19af4e9a9f8';
+import { buildMediaJobRequest, createMediaIdempotencyKey, getAssetUrl } from './protocol.js?v=galgame-2026-10-09-speaker-v86';
 
 export class ExternalMediaProvider {
     constructor(config = {}) {

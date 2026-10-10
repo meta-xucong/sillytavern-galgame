@@ -1,9 +1,9 @@
 # Galgame process supervisor
 
 The optional loopback service on `127.0.0.1:8790` backs the player **Reset**
-button. It checks the fixed core services on ports 8000, 8791, 8795, and 8798.
+button. It checks the fixed core services on ports 8001, 8791, 8795, and 8798.
 If a core port is not listening, it starts only that service from the
-repository's existing launcher (or starts SillyTavern with `node server.js`).
+repository's existing launcher (or starts SillyTavern with `node server.js --port 8001`).
 The presentation analysis service on port 8801 is checked and reported under
 `diagnostics.presentationAnalysis`; if it is not listening or is running without
 an analyzer, Reset starts it using the fixed
@@ -18,8 +18,24 @@ readiness is diagnostic only.
 The supervisor does not stop a process merely because its health endpoint is
 unhealthy. A runtime
 bridge explicitly marked as both stale and pending, and not stopping, is the
-only exception: the existing bridge launcher restarts that timed-out bridge.
-An ordinary pending generation is never restarted.
+first recoverable failure: the existing bridge launcher restarts that timed-out
+bridge. A bridge that reports `recoveryRequired=true` after an ambiguous CDP or
+unconfirmed-stop failure is also replaced, but only after its generation is no
+longer pending. The launcher matches and terminates only this checkout's exact
+bridge entry and its dedicated Chrome profile. An ordinary pending generation
+is never restarted.
+
+On an explicit Reset request, the supervisor also calls the runtime bridge's
+existing `/v1/llm-health` endpoint when the bridge is ready and idle. It
+replaces only that bridge when the probe reports `LLM_UPSTREAM_UNREACHABLE` or
+`LLM_UPSTREAM_TIMEOUT`; provider HTTP errors (including authentication, rate
+limit, and upstream server responses) remain diagnostics and do not cause a
+restart loop. The PowerShell launcher requires the one-shot supervisor signal
+and rechecks that the bridge is ready, idle, non-stale, and not stopping before
+terminating its exact process and dedicated Chrome profile. The signal is
+removed before the replacement Node process starts. The LLM result returned to
+the player includes only provider/model, bounded latency/time, and a stable
+error code; credentials and response bodies are never returned.
 
 The recovery endpoint accepts one fixed protocol, has no arbitrary command or
 PID input, binds only to loopback, and permits browser requests only from the
@@ -27,12 +43,40 @@ local SillyTavern/Galgame origins. Recovery logs contain service names and
 health states only, including the optional analyzer's ready/configured
 booleans; they never contain provider keys or chat content.
 
+Recovery probes the fixed core services concurrently and dispatches eligible
+launchers without waiting serially for every service's health timeout. It
+returns per-service `starting` states promptly; the player then confirms startup
+through bounded health probes (including the optional analyzer through visual
+aggregate health). A dispatched launcher is never reported as healthy before
+its health probe succeeds.
+
+The player adapter preserves supervisor request failures as stable status
+codes instead of collapsing HTTP refusal, protocol mismatch, timeout, and
+network unavailability into the same empty result. Player health checks still
+run independently if the optional supervisor is unavailable.
+
 Project-owned Windows launchers live under
-external-modules/process-supervisor/launchers/. Start the complete local stack
-with .\external-modules\process-supervisor\launchers\Start_Galgame_All.bat.
+external-modules/process-supervisor/launchers/. Double-click
+`Start_Galgame_All.bat` to start the complete local stack. It keeps the command
+windows hidden, starts the loopback process supervisor if needed, and delegates
+service recovery to that supervisor so healthy instances are reused and missing
+ones are started once. It opens the player page only after the game page,
+configuration proof, runtime bridge, visual service, presentation analyzer, and
+live LLM health probe all report ready. On failure it shows a short dialog with
+the non-sensitive log location at `.codex-longrun/start-galgame-all.log`; service
+credentials and response bodies are never written there. `-NoBrowser` is the
+only supported optional argument and suppresses opening the browser while still
+performing the same readiness checks. Loopback probes explicitly bypass the
+system HTTP proxy so a proxy error cannot masquerade as a local service result.
+
 The services-only launcher targets an already-running SillyTavern on port 8001;
 its health verifier requires the config proof issuer and bridge proof verifier
 to report configured before returning success.
+
+The runtime bridge starts Node with `--use-env-proxy` so its native `fetch`
+honors the current user's `HTTP_PROXY`/`HTTPS_PROXY` settings. This is required
+for Claude API requests on machines where outbound access goes through a local
+proxy; the flag is applied only to the runtime bridge process.
 The Origin/header check is a browser CSRF guard, not user authentication. The
 manager is a single-user loopback utility and exposes only this bounded,
 fixed-service recovery operation; it is not intended for a shared or remote
@@ -54,8 +98,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\external-modules\process-s
 
 The task can be started again from Task Scheduler without touching SillyTavern
 chats or player saves. When an already-listening service fails its health
-probe, Reset reports the remaining issue and preserves that process for
-diagnosis instead of force-killing it.
+probe, Reset normally reports the remaining issue and preserves that process for
+diagnosis. The bridge's explicit `recoveryRequired` signal is the narrow
+exception: its renderer state is ambiguous, so Reset replaces the isolated
+bridge process and waits for a healthy new instance before reporting recovery.
 
 ## One-click shutdown
 

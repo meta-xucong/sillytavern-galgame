@@ -1,5 +1,5 @@
-import { sha256Hex } from './presentation-annotation.js?v=auto-b19af4e9a9f8';
-import { createSceneContinuityProjection } from './presentation-projection.js?v=auto-b19af4e9a9f8';
+import { sha256Hex } from './presentation-annotation.js?v=galgame-2026-10-10-speaker-title-v4';
+import { createSceneContinuityProjection } from './presentation-projection.js?v=galgame-2026-10-10-speaker-title-v4';
 
 export const SCENE_CONTINUITY_ANALYSIS_REQUEST_VERSION = 'galgame.scene-continuity-analysis-request.v1';
 export const SCENE_CONTINUITY_ANALYSIS_RESPONSE_VERSION = 'galgame.scene-continuity-analysis.v1';

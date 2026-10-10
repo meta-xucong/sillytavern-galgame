@@ -21,7 +21,7 @@ if ($FixturePath) {
     $repoRoot = [IO.Path]::GetFullPath($env:GALGAME_SUPERVISOR_REPO_ROOT)
 }
 $external = Join-Path $repoRoot 'external-modules'
-$servicePorts = [ordered]@{ sillyTavern = 8000; configService = 8791; runtimeBridge = 8795; visualService = 8798; presentationAnalysis = 8801 }
+$servicePorts = [ordered]@{ sillyTavern = 8001; configService = 8791; runtimeBridge = 8795; visualService = 8798; presentationAnalysis = 8801 }
 $targets = [ordered]@{
     sillyTavern = Join-Path $repoRoot 'server.js'
     configService = Join-Path $external 'game-config-service\server.mjs'
@@ -217,7 +217,15 @@ function Get-CommandLineArguments([string]$commandLine) {
 
 function Test-StrictNodeScriptEntry($item, [string]$scriptPath) {
     try { $args = @(Get-CommandLineArguments ([string]$item.CommandLine)) } catch { return $false }
-    if ($args.Count -lt 2 -or $args.Count -gt 3) { return $false }
+    if ($args.Count -lt 2) { return $false }
+    if ($scriptPath -ieq $targets.sillyTavern -and $args.Count -ge 4) {
+        $last = [string]$args[$args.Count - 2]
+        $value = [string]$args[$args.Count - 1]
+        if ($last -ceq '--port' -and $value -ceq '8001') {
+            $args = @($args[0..($args.Count - 3)])
+        }
+    }
+    if ($args.Count -gt 3) { return $false }
     $exe = Normalize-CommandLine ([IO.Path]::GetFullPath([string]$item.ExecutablePath))
     $firstArgument = Normalize-CommandLine ([string]$args[0])
     if ($firstArgument -ne $exe -and [IO.Path]::GetFileName($firstArgument) -ine 'node.exe') { return $false }

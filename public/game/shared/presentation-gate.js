@@ -2,7 +2,7 @@ import {
     PRESENTATION_ANNOTATION_VERSION,
     PRESENTATION_IDENTITY_PROJECTION_VERSION,
     PRESENTATION_ROSTER_PROJECTION_VERSION,
-} from './presentation-annotation.js?v=auto-b19af4e9a9f8';
+} from './presentation-annotation.js?v=galgame-2026-10-10-speaker-title-v4';
 
 const HASH_PATTERN = /^(?:sha256:)?[a-f0-9]{64}$/u;
 const METRIC_NAMES = Object.freeze([

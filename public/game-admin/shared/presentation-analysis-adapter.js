@@ -3,12 +3,12 @@ import {
     createPresentationAnnotationRequest,
     validatePresentationAnnotationRequestAsync,
     validatePresentationAnnotationResponse,
-} from './presentation-annotation.js?v=auto-b19af4e9a9f8';
+} from './presentation-annotation.js?v=galgame-2026-10-09-speaker-v86';
 import {
     createSceneContinuityAnalysisRequest,
     validateSceneContinuityAnalysisRequest,
     validateSceneContinuityAnalysisResponse,
-} from './scene-continuity-analysis.js?v=auto-b19af4e9a9f8';
+} from './scene-continuity-analysis.js?v=galgame-2026-10-09-speaker-v86';
 
 const HEALTH_REQUEST_TIMEOUT_MS = 2_000;
 const HEALTH_RETRY_DELAY_MS = 180;
@@ -26,10 +26,11 @@ export class PresentationAnalysisError extends Error {
 }
 
 export class PresentationAnalysisAdapter {
-    constructor({ baseUrl = 'http://127.0.0.1:8798', fetchImpl = globalThis.fetch, timeoutMs = 60_000 } = {}) {
+    constructor({ baseUrl = 'http://127.0.0.1:8798', fetchImpl = globalThis.fetch, timeoutMs = 60_000, annotationTimeoutMs = 125_000 } = {}) {
         this.baseUrl = String(baseUrl).replace(/\/$/u, '');
         this.fetchImpl = typeof fetchImpl === 'function' ? fetchImpl.bind(globalThis) : fetchImpl;
         this.timeoutMs = timeoutMs;
+        this.annotationTimeoutMs = annotationTimeoutMs;
     }
 
     async healthCheck(signal) {
@@ -110,7 +111,7 @@ export class PresentationAnalysisAdapter {
         for (const request of batches) {
             if (signal?.aborted) throw new PresentationAnalysisError('ABORTED');
             const timeout = new AbortController();
-            const timer = setTimeout(() => timeout.abort(), this.timeoutMs);
+            const timer = setTimeout(() => timeout.abort(), this.annotationTimeoutMs);
             const forwardAbort = () => timeout.abort();
             signal?.addEventListener('abort', forwardAbort, { once: true });
             try {
@@ -271,11 +272,16 @@ export async function createPresentationBatches({ scope, messages = [], contextM
             knownEntities: selectRelevantKnownEntities([...pending, message], contextMessages, knownEntities),
         });
         let validation = await validatePresentationAnnotationRequestAsync(request);
-        if (!validation.valid && (pending.length || validation.errors.includes('request.body-too-large'))) {
+        if (!validation.valid) {
             if (pending.length) {
                 result.push(await makeRequest(scope, pending, contextMessages, knownEntities));
                 pending = [];
             }
+            // A single optional context row can violate a per-message limit
+            // without exceeding the aggregate body budget. Route every
+            // invalid single-message candidate through makeRequest so its
+            // existing deterministic context/entity reduction runs before we
+            // reject the target message itself.
             request = await makeRequest(scope, [message], contextMessages, knownEntities);
             validation = await validatePresentationAnnotationRequestAsync(request);
         }

@@ -1,5 +1,5 @@
-import { extractHudPresentationFromText } from './shared/adaptive-presentation.js?v=auto-b19af4e9a9f8';
-import { formatVisualNovelDisplayText } from './shared/sillytavern-adapter.js?v=auto-b19af4e9a9f8';
+import { extractHudPresentationFromText } from './shared/adaptive-presentation.js?v=galgame-2026-10-10-speaker-title-v4';
+import { formatVisualNovelDisplayText } from './shared/sillytavern-adapter.js?v=galgame-2026-10-10-speaker-title-v4';
 
 /** Rebuild display-only records from the current visible branch; never persist game state. */
 export function collectVisibleHudRecords(snapshot, messageIndex, profile) {

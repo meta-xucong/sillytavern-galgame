@@ -102,7 +102,7 @@ await test('bridge requires restart when original stop is unconfirmed', async ()
     assert.equal(closed, true);
     assert.equal(bridge.getStatus().ready, false);
 });
-await test('CDP timeout contains the old browser and returns the bridge to idle', async () => {
+await test('CDP timeout contains the old browser and requires a fresh bridge process', async () => {
     const bridge = new BrowserOriginalRuntimeBridge({ chromePath: 'test-only-no-browser', providerRetryDelaysMs: [] });
     let evaluations = 0;
     let closeCount = 0;
@@ -131,14 +131,15 @@ await test('CDP timeout contains the old browser and returns the bridge to idle'
     assert.equal(closeCount, 1);
     assert.equal(bridge.getStatus().stopping, false);
     assert.equal(bridge.getStatus().pending, false);
-    assert.equal(bridge.getStatus().ready, true);
+    assert.equal(bridge.getStatus().ready, false);
+    assert.equal(bridge.getStatus().recoveryRequired, true);
+    assert.equal(bridge.getStatus().connectionState, 'recovery-required');
     assert.equal(bridge.lastGeneration.errorCode, 'CDP_EVALUATION_TIMEOUT');
 
-    const retried = await bridge.generateReply({
+    await assert.rejects(bridge.generateReply({
         sillyTavernBaseUrl: 'http://127.0.0.1:8000', avatar: 'test.png', chatId: 'retry-chat',
-    });
-    assert.equal(retried.generatedText, 'new original reply');
-    assert.equal(evaluations, 2);
+    }), code('BRIDGE_RECOVERY_REQUIRED'));
+    assert.equal(evaluations, 1, 'the ambiguous renderer is never reused for another generation');
 });
 await test('bridge confirms isolated browser exit before completing close', async () => {
     const bridge = new BrowserOriginalRuntimeBridge({ chromePath: 'test-only-no-browser' });

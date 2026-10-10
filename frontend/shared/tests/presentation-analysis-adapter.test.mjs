@@ -62,6 +62,30 @@ assert.ok(new TextEncoder().encode(JSON.stringify(bodyBoundedSingleMessage[0])).
 assert.deepEqual((await validatePresentationAnnotationRequestAsync(bodyBoundedSingleMessage[0])).errors, [],
     'the reduced request retains valid source hashes and context digest');
 
+const individuallyOversizedContextText = '界'.repeat(PRESENTATION_LIMITS.maxContextMessageCodePoints + 1);
+const individuallyOversizedContext = [{
+    sourceMessageIndex: 30,
+    sourceMessageHash: await createVisibleMessageHash(individuallyOversizedContextText),
+    visibleText: individuallyOversizedContextText,
+}];
+const shortTargetText = '目标消息保持完整。';
+const shortTargetMessage = {
+    sourceMessageIndex: 31,
+    sourceMessageHash: await createVisibleMessageHash(shortTargetText),
+    authorLabel: '',
+    visibleText: shortTargetText,
+};
+const perMessageBoundedBatch = await createPresentationBatches({
+    scope,
+    messages: [shortTargetMessage],
+    contextMessages: individuallyOversizedContext,
+});
+assert.equal(perMessageBoundedBatch.length, 1, 'an overlong context row is reduced before rejecting a valid target');
+assert.equal(perMessageBoundedBatch[0].messages[0].visibleText, shortTargetText, 'context repair never changes target text');
+assert.deepEqual(perMessageBoundedBatch[0].contextMessages, [], 'a context row above its code-point limit is omitted atomically');
+assert.deepEqual((await validatePresentationAnnotationRequestAsync(perMessageBoundedBatch[0])).errors, [],
+    'the repaired request remains a valid v1 request with matching hashes');
+
 const responseFor = async (request) => ({
     ok: true,
     status: 200,
@@ -93,6 +117,10 @@ const adapter = new PresentationAnalysisAdapter({ fetchImpl: async (_url, init) 
     return responseFor(JSON.parse(init.body));
 } });
 assert.equal(new PresentationAnalysisAdapter().baseUrl, 'http://127.0.0.1:8798', 'browser adapter uses the established visual-service port');
+assert.equal(new PresentationAnalysisAdapter().annotationTimeoutMs, 125_000,
+    'semantic annotation has enough client time for the analyzer shared deadline');
+assert.equal(new PresentationAnalysisAdapter().timeoutMs, 60_000,
+    'scene continuity retains its existing timeout budget');
 const annotations = await adapter.annotate({ scope, messages });
 assert.equal(annotations.length, 10);
 

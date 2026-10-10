@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 export const repoRoot = path.resolve(moduleDir, '../..');
-export const PROCESS_SUPERVISOR_SERVICE_PORTS = Object.freeze({ sillyTavern: 8000, configService: 8791, runtimeBridge: 8795, visualService: 8798 });
+export const PROCESS_SUPERVISOR_SERVICE_PORTS = Object.freeze({ sillyTavern: 8001, configService: 8791, runtimeBridge: 8795, visualService: 8798 });
 export const PROCESS_SUPERVISOR_SHUTDOWN_PROTOCOL = 'galgame.process-supervisor-shutdown.v1';
 export const ORIGINAL_RUNTIME_SHUTDOWN_GATE_PROTOCOL = 'galgame.original-runtime-shutdown-gate.v1';
 export const PROCESS_SUPERVISOR_SHUTDOWN_SERVICE_KEYS = Object.freeze([
@@ -17,15 +17,18 @@ export const PROCESS_SUPERVISOR_SHUTDOWN_SERVICE_KEYS = Object.freeze([
 export const PROCESS_SUPERVISOR_SHUTDOWN_OPERATION_LIMIT = 32;
 export const PROCESS_SUPERVISOR_SHUTDOWN_OPERATION_TTL_MS = 5 * 60_000;
 const shutdownFinalErrorCodes = new Set(['RUNTIME_BRIDGE_STATE_CHANGED', 'SHUTDOWN_GATE_RENEWAL_FAILED', 'SHUTDOWN_PARTIAL_FAILURE', 'SHUTDOWN_EXECUTION_FAILED', 'WINDOWS_SHUTDOWN_UNAVAILABLE']);
-const healthPaths = Object.freeze({ sillyTavern: '/', configService: '/v1/health', runtimeBridge: '/health', visualService: '/v1/health' });
+const healthPaths = Object.freeze({ sillyTavern: '/game/', configService: '/v1/health', runtimeBridge: '/health', visualService: '/v1/health' });
 const optionalServicePorts = Object.freeze({ presentationAnalysis: 8801 });
 const optionalHealthPaths = Object.freeze({ presentationAnalysis: '/v1/health' });
 const startupScripts = Object.freeze({
     configService: path.join('external-modules', 'process-supervisor', 'launchers', 'StartGalgameConfigService.cmd'),
     runtimeBridge: path.join('external-modules', 'process-supervisor', 'launchers', 'StartGalgameRuntimeBridge.cmd'),
-    presentationAnalysis: path.join('external-modules', 'presentation-analysis-service', 'StartGalgamePresentationAnalysisService.cmd'),
+    presentationAnalysis: path.join('external-modules', 'presentation-analysis-service', 'StartGalgamePresentationAnalysisService.ps1'),
 });
 const logDir = path.join(repoRoot, '.codex-longrun');
+const windowsRoot = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
+const commandProcessorPath = path.join(windowsRoot, 'System32', 'cmd.exe');
+const powerShellPath = path.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 
 export function createProcessSupervisor({
     allowedOrigins = getAllowedOrigins(),
@@ -35,7 +38,9 @@ export function createProcessSupervisor({
     listenerPort = Number(process.env.GALGAME_PROCESS_SUPERVISOR_PORT || 8790),
     startupConfirmationTimeoutMs = 15_000,
     startupProbeIntervalMs = 300,
+    llmRestartConfirmationTimeoutMs = 15_000,
     launcher = launchAllowlistedService,
+    llmProbe = null,
     bridgeShutdownHealthProbe = probeRuntimeBridgeForShutdown,
     bridgeShutdownGate = acquireRuntimeBridgeShutdownGate,
     bridgeShutdownGateRenew = renewRuntimeBridgeShutdownGate,
@@ -180,15 +185,89 @@ export function createProcessSupervisor({
         }
 
         const results = {};
-        for (const name of Object.keys(PROCESS_SUPERVISOR_SERVICE_PORTS)) {
-            const probe = await probes[name]().catch(() => ({ reachable: false, healthy: false, errorCode: 'PROBE_FAILED' }));
+        // Probe fixed services concurrently so a down stack cannot consume one
+        // full network timeout per service before the browser gets a response.
+        const serviceProbes = await Promise.all(Object.keys(PROCESS_SUPERVISOR_SERVICE_PORTS).map(async (name) => ({
+            name,
+            probe: await probes[name]().catch(() => ({ reachable: false, healthy: false, errorCode: 'PROBE_FAILED' })),
+        })));
+        const bridgeProbe = serviceProbes.find(({ name }) => name === 'runtimeBridge')?.probe;
+        let llmDiagnostic = null;
+        let llmRestartAttempted = false;
+        let llmRestartReady = false;
+        const canProbeLlm = typeof llmProbe === 'function'
+            && bridgeProbe?.reachable === true
+            && bridgeProbe.healthy === true
+            && bridgeProbe.pending !== true
+            && bridgeProbe.stale !== true
+            && bridgeProbe.stopping !== true;
+        if (canProbeLlm) {
+            llmDiagnostic = await llmProbe().catch(() => ({
+                protocolVersion: 'galgame.llm-health.v1',
+                ok: false,
+                errorCode: 'LLM_RECOVERY_PROBE_FAILED',
+            }));
+        }
+        for (const { name, probe } of serviceProbes) {
+            const llmTransportNeedsBridgeRestart = name === 'runtimeBridge'
+                && canProbeLlm
+                && llmDiagnostic?.ok !== true
+                && ['LLM_UPSTREAM_UNREACHABLE', 'LLM_UPSTREAM_TIMEOUT'].includes(llmDiagnostic?.errorCode)
+                && probe.reachable === true
+                && probe.pending !== true
+                && probe.stale !== true
+                && probe.stopping !== true;
+            if (llmTransportNeedsBridgeRestart) {
+                let gate = null;
+                try {
+                    gate = await bridgeShutdownGate();
+                } catch { gate = null; }
+                if (!gate?.ok || typeof gate.gateId !== 'string' || !gate.gateId
+                    || gate.pending !== false || gate.stale !== false || gate.stopping !== false) {
+                    results[name] = { status: 'running-unhealthy', started: false, restarted: false, errorCode: 'LLM_RECOVERY_GATE_REFUSED' };
+                    continue;
+                }
+                try {
+                    const launchResult = await launcher(name, { restartForLlmFailure: true });
+                    const started = launchResult?.started === true;
+                    const alreadyRunning = launchResult?.alreadyRunning === true;
+                    if (started || alreadyRunning) {
+                        // The helper replaces the exact gated bridge asynchronously.
+                        // Wait for a fresh ready health response before probing LLM.
+                        llmRestartReady = await waitForHealthyService(probes[name], { timeoutMs: llmRestartConfirmationTimeoutMs, intervalMs: startupProbeIntervalMs });
+                        if (llmRestartReady) {
+                            results[name] = recoveryResult(launchResult, true, 'restarting', true);
+                        } else {
+                            // If the helper failed before replacing the old
+                            // process, release its lease so it cannot remain
+                            // permanently shutdown-gated. If it was replaced,
+                            // the old endpoint simply no longer accepts release.
+                            await Promise.resolve(bridgeShutdownGateRelease(gate.gateId)).catch(() => false);
+                            results[name] = {
+                                status: 'starting', started: true, restarted: true,
+                                errorCode: 'BRIDGE_STARTUP_CONFIRMATION_PENDING',
+                            };
+                        }
+                        llmRestartAttempted = true;
+                    } else {
+                        await Promise.resolve(bridgeShutdownGateRelease(gate.gateId)).catch(() => false);
+                        results[name] = recoveryResult(launchResult, false, 'restarting', true);
+                    }
+                } catch {
+                    await Promise.resolve(bridgeShutdownGateRelease(gate.gateId)).catch(() => false);
+                    results[name] = { status: 'not-started', started: false, restarted: false, errorCode: 'SERVICE_START_FAILED' };
+                }
+                continue;
+            }
             const staleBridgeCanRestart = name === 'runtimeBridge'
                 && probe.reachable && probe.stale === true && probe.pending === true && probe.stopping !== true;
-            if (staleBridgeCanRestart) {
+            const failedBridgeCanRestart = name === 'runtimeBridge'
+                && probe.reachable && probe.recoveryRequired === true && probe.pending !== true;
+            if (staleBridgeCanRestart || failedBridgeCanRestart) {
                 try {
                     const launchResult = await launcher(name);
                     const started = launchResult?.started === true;
-                    const confirmed = (started || launchResult?.alreadyRunning === true)
+                    const confirmed = startupConfirmationTimeoutMs > 0 && (started || launchResult?.alreadyRunning === true)
                         ? await waitForHealthyService(probes[name], { timeoutMs: startupConfirmationTimeoutMs, intervalMs: startupProbeIntervalMs })
                         : null;
                     results[name] = recoveryResult(launchResult, confirmed, 'restarting', true);
@@ -204,7 +283,7 @@ export function createProcessSupervisor({
             try {
                 const launchResult = await launcher(name);
                 const started = launchResult?.started === true;
-                const confirmed = (started || launchResult?.alreadyRunning === true)
+                const confirmed = startupConfirmationTimeoutMs > 0 && (started || launchResult?.alreadyRunning === true)
                     ? await waitForHealthyService(probes[name], { timeoutMs: startupConfirmationTimeoutMs, intervalMs: startupProbeIntervalMs })
                     : null;
                 results[name] = recoveryResult(launchResult, confirmed, 'starting', false);
@@ -220,7 +299,7 @@ export function createProcessSupervisor({
                     try {
                         const launchResult = await launcher(name);
                         const started = launchResult?.started === true;
-                        const confirmed = started
+                        const confirmed = started && startupConfirmationTimeoutMs > 0
                             ? await waitForConfiguredOptionalService(optionalProbes[name], { timeoutMs: startupConfirmationTimeoutMs, intervalMs: startupProbeIntervalMs })
                             : null;
                         optionalDiagnostics[name] = {
@@ -258,6 +337,28 @@ export function createProcessSupervisor({
             } catch {
                 optionalDiagnostics[name] = { status: 'not-started', reachable: false, serviceReady: false, analyzerConfigured: false, errorCode: 'SERVICE_START_FAILED' };
             }
+        }
+        if (llmRestartAttempted && !llmRestartReady) {
+            llmDiagnostic = {
+                protocolVersion: 'galgame.llm-health.v1',
+                ok: false,
+                errorCode: 'LLM_RECOVERY_BRIDGE_STARTING',
+                pending: true,
+            };
+        } else if (typeof llmProbe === 'function' && (!llmDiagnostic || llmRestartAttempted) && (canProbeLlm || llmRestartReady)) {
+            llmDiagnostic = await llmProbe().catch(() => ({
+                protocolVersion: 'galgame.llm-health.v1',
+                ok: false,
+                errorCode: 'LLM_RECOVERY_POSTCHECK_FAILED',
+            }));
+        }
+        const safeLlmDiagnostic = sanitizeLlmDiagnostic(llmDiagnostic);
+        if (safeLlmDiagnostic) {
+            optionalDiagnostics.llm = {
+                ...safeLlmDiagnostic,
+                ...(llmDiagnostic?.pending === true ? { pending: true } : {}),
+                restartAttempted: llmRestartAttempted,
+            };
         }
         writeRecoveryLog({ ...results, diagnostics: optionalDiagnostics });
         return sendJson(response, 200, {
@@ -584,16 +685,23 @@ function createDefaultProbes() {
         try {
             const response = await fetch(`${base}${healthPaths[name]}`, { signal: controller.signal, cache: 'no-store' });
             let body = null;
-            if (name !== 'sillyTavern') body = await response.json().catch(() => null);
+            let playerDocument = '';
+            if (name === 'sillyTavern') playerDocument = await response.text().catch(() => '');
+            else body = await response.json().catch(() => null);
             const reachable = true;
-            const healthy = response.ok && (name === 'sillyTavern' || body?.ok === true && (name !== 'runtimeBridge' || body.ready !== false));
+            const healthy = response.ok && (name === 'sillyTavern'
+                ? isGalgamePlayerDocument(playerDocument)
+                : body?.ok === true && (name !== 'runtimeBridge' || body.ready !== false));
             return {
                 reachable,
                 healthy,
                 stale: name === 'runtimeBridge' && body?.stale === true,
                 pending: name === 'runtimeBridge' && body?.pending === true,
                 stopping: name === 'runtimeBridge' && body?.stopping === true,
-                errorCode: healthy ? '' : body?.errorCode || `HTTP_${response.status}`,
+                recoveryRequired: name === 'runtimeBridge' && body?.recoveryRequired === true,
+                errorCode: healthy ? '' : body?.errorCode || (response.ok && name === 'sillyTavern'
+                    ? 'SILLYTAVERN_PLAYER_PAGE_MISMATCH'
+                    : `HTTP_${response.status}`),
             };
         } catch {
             const listening = await isTcpListening(port);
@@ -602,6 +710,12 @@ function createDefaultProbes() {
             clearTimeout(timeout);
         }
     }]));
+}
+
+export function isGalgamePlayerDocument(value) {
+    const html = String(value || '');
+    return /<title>\s*Galgame Player\s*<\/title>/iu.test(html)
+        && /\bid=["']titleScreen["']/iu.test(html);
 }
 
 function createDefaultOptionalProbes() {
@@ -627,10 +741,65 @@ function createDefaultOptionalProbes() {
     }]));
 }
 
-async function launchAllowlistedService(name) {
+export async function probeRuntimeBridgeLlm({ fetchImpl = globalThis.fetch, timeoutMs = 22_000 } = {}) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), Math.max(250, Number(timeoutMs) || 22_000));
+    try {
+        const response = await fetchImpl('http://127.0.0.1:8795/v1/llm-health', {
+            method: 'POST',
+            cache: 'no-store',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ protocolVersion: 'galgame.llm-health.v1' }),
+            signal: controller.signal,
+        });
+        const result = await response.json().catch(() => null);
+        if (result?.protocolVersion !== 'galgame.llm-health.v1') {
+            return { protocolVersion: 'galgame.llm-health.v1', ok: false, errorCode: 'LLM_HEALTH_RESPONSE_INVALID' };
+        }
+        return {
+            protocolVersion: 'galgame.llm-health.v1',
+            ok: response.ok && result.ok === true,
+            ...(typeof result.provider === 'string' ? { provider: result.provider } : {}),
+            ...(typeof result.model === 'string' ? { model: result.model } : {}),
+            ...(typeof result.checkedAt === 'string' ? { checkedAt: result.checkedAt } : {}),
+            ...(Number.isFinite(Number(result.latencyMs)) ? { latencyMs: Number(result.latencyMs) } : {}),
+            errorCode: response.ok && result.ok === true ? '' : result.errorCode || `LLM_HEALTH_HTTP_${response.status}`,
+        };
+    } catch {
+        return {
+            protocolVersion: 'galgame.llm-health.v1',
+            ok: false,
+            errorCode: controller.signal.aborted ? 'LLM_BRIDGE_HEALTH_TIMEOUT' : 'LLM_BRIDGE_HEALTH_UNREACHABLE',
+        };
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+function sanitizeLlmDiagnostic(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return {
+        protocolVersion: 'galgame.llm-health.v1',
+        ok: value.ok === true,
+        ...(typeof value.provider === 'string' ? { provider: value.provider.slice(0, 40) } : {}),
+        ...(typeof value.model === 'string' ? { model: value.model.slice(0, 120) } : {}),
+        ...(typeof value.checkedAt === 'string' ? { checkedAt: value.checkedAt.slice(0, 40) } : {}),
+        ...(Number.isFinite(Number(value.latencyMs)) ? { latencyMs: Math.max(0, Number(value.latencyMs)) } : {}),
+        errorCode: value.ok === true ? '' : sanitizeDiagnosticCode(value.errorCode || 'LLM_UNAVAILABLE'),
+    };
+}
+
+function sanitizeDiagnosticCode(value) {
+    const normalized = String(value || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80);
+    return normalized || 'LLM_UNAVAILABLE';
+}
+
+async function launchAllowlistedService(name, { restartForLlmFailure = false } = {}) {
     if (name === 'sillyTavern') {
         mkdirSync(logDir, { recursive: true });
-        const child = spawn(process.execPath, [path.join(repoRoot, 'server.js')], {
+        return spawnDetachedProcess(spawn, process.execPath, [
+            path.join(repoRoot, 'server.js'), '--port', String(PROCESS_SUPERVISOR_SERVICE_PORTS.sillyTavern),
+        ], {
             cwd: repoRoot,
             detached: true,
             windowsHide: true,
@@ -638,14 +807,21 @@ async function launchAllowlistedService(name) {
             // can contain request details, while recovery only needs health.
             stdio: 'ignore',
         });
-        child.unref();
-        return { started: true };
     }
     if (startupScripts[name]) {
         const script = path.join(repoRoot, startupScripts[name]);
         if (!existsSync(script)) return { started: false, errorCode: 'START_SCRIPT_MISSING' };
-        spawn('cmd.exe', ['/d', '/c', script], { cwd: repoRoot, detached: true, windowsHide: true, stdio: 'ignore' }).unref();
-        return { started: true };
+        if (script.toLowerCase().endsWith('.ps1')) {
+            return spawnDetachedProcess(spawn, powerShellPath, [
+                '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script,
+            ], { cwd: repoRoot, detached: true, windowsHide: true, stdio: 'ignore' });
+        }
+        return spawnDetachedProcess(spawn, commandProcessorPath, ['/d', '/c', script], {
+            cwd: repoRoot, detached: true, windowsHide: true, stdio: 'ignore',
+            ...(name === 'runtimeBridge' && restartForLlmFailure
+                ? { env: { ...process.env, GALGAME_BRIDGE_RESTART_IF_LLM_UNHEALTHY: '1' } }
+                : {}),
+        });
     }
     if (name === 'visualService') {
         return launchVisualService();
@@ -675,14 +851,55 @@ export async function launchVisualService({
             : path.join(repoRoot, 'external-modules', 'process-supervisor', 'launchers', 'StartGalgameVisualAssetService.cmd');
     if (!script || !fileExists(script)) return { started: false, errorCode: 'VISUAL_PROVIDER_CONFIGURATION_UNAVAILABLE' };
     if (script.endsWith('.ps1')) {
-        spawnProcess('powershell.exe', ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], {
+        return spawnDetachedProcess(spawnProcess, powerShellPath, ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], {
             cwd: repoRoot, detached: true, windowsHide: true, stdio: 'ignore',
             env: { ...providerEnv, GALGAME_VISUAL_PROVIDER_ENV_FILE: configuredPath },
-        }).unref();
-    } else {
-        spawnProcess('cmd.exe', ['/d', '/c', script], { cwd: repoRoot, detached: true, windowsHide: true, stdio: 'ignore' }).unref();
+        });
     }
-    return { started: true };
+    return spawnDetachedProcess(spawnProcess, commandProcessorPath, ['/d', '/c', script], {
+        cwd: repoRoot, detached: true, windowsHide: true, stdio: 'ignore',
+    });
+}
+
+function spawnDetachedProcess(spawnProcess, executable, args, options) {
+    return new Promise((resolve) => {
+        let child;
+        try {
+            const spawnOptions = { ...options };
+            const childEnv = { ...(spawnOptions.env || process.env) };
+            const pathKey = Object.keys(childEnv).find((name) => name.toLowerCase() === 'path') || 'PATH';
+            childEnv[pathKey] = [path.dirname(process.execPath), childEnv[pathKey]]
+                .filter(Boolean)
+                .join(path.delimiter);
+            spawnOptions.env = childEnv;
+            child = spawnProcess(executable, args, spawnOptions);
+        } catch {
+            resolve({ started: false, errorCode: 'SERVICE_START_FAILED' });
+            return;
+        }
+        if (typeof child?.once !== 'function') {
+            child?.unref?.();
+            resolve({ started: true });
+            return;
+        }
+        let settled = false;
+        let fallbackTimer;
+        const finish = (result) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(fallbackTimer);
+            child.off?.('spawn', onSpawn);
+            child.off?.('error', onError);
+            child.unref?.();
+            resolve(result);
+        };
+        const onSpawn = () => finish({ started: true });
+        const onError = () => finish({ started: false, errorCode: 'SERVICE_START_FAILED' });
+        child.once('spawn', onSpawn);
+        child.once('error', onError);
+        fallbackTimer = setTimeout(() => finish({ started: true }), 500);
+        fallbackTimer.unref?.();
+    });
 }
 
 function readProviderConfig(filePath) {
@@ -710,7 +927,8 @@ function readProviderConfig(filePath) {
 
 function getAllowedOrigins() {
     const names = new Set(['127.0.0.1', 'localhost', String(process.env.COMPUTERNAME || '').toLowerCase()].filter(Boolean));
-    return [...names].map((hostname) => `http://${hostname}:8000`);
+    return [...names].flatMap((hostname) => [8000, PROCESS_SUPERVISOR_SERVICE_PORTS.sillyTavern]
+        .map((port) => `http://${hostname}:${port}`));
 }
 
 function isTcpListening(port) {
@@ -754,7 +972,15 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     const host = process.env.GALGAME_PROCESS_SUPERVISOR_HOST || '127.0.0.1';
     if (host !== '127.0.0.1') throw new Error('PROCESS_SUPERVISOR_LOOPBACK_ONLY');
     const port = Number(process.env.GALGAME_PROCESS_SUPERVISOR_PORT || 8790);
-    createProcessSupervisor({ listenerHost: host, listenerPort: port }).listen(port, host, () => {
+    // The player owns bounded startup confirmation through its aggregate health
+    // monitor. Return dispatch states promptly so the browser can keep polling
+    // instead of timing out while this controller waits on several services.
+    createProcessSupervisor({
+        listenerHost: host,
+        listenerPort: port,
+        startupConfirmationTimeoutMs: 0,
+        llmProbe: probeRuntimeBridgeLlm,
+    }).listen(port, host, () => {
         console.log(`Galgame process supervisor listening at http://${host}:${port}`);
     });
 }

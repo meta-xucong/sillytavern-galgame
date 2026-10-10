@@ -1,5 +1,5 @@
-import { DEFAULT_SILLYTAVERN_SCENARIO } from './shared/demo-scenario.js?v=auto-b19af4e9a9f8';
-import { createReleaseStore } from './shared/config-service.js?v=auto-b19af4e9a9f8';
+import { DEFAULT_SILLYTAVERN_SCENARIO } from './shared/demo-scenario.js?v=galgame-2026-10-09-speaker-v86';
+import { createReleaseStore } from './shared/config-service.js?v=galgame-2026-10-09-speaker-v86';
 import {
     bindAdaptivePresentationProfileHashes,
     getDefaultArcId,
@@ -10,7 +10,7 @@ import {
     validateAdaptivePresentationProfiles,
     validateScenarioManifest,
     validateSillyTavernBindings,
-} from './shared/protocol.js?v=auto-b19af4e9a9f8';
+} from './shared/protocol.js?v=galgame-2026-10-09-speaker-v86';
 import {
     createDefaultAdaptivePresentationProfile,
     PRESENTATION_MODULES,
@@ -19,12 +19,12 @@ import {
     PRESENTATION_SAFE_WARNING_CODES,
     PRESENTATION_TEMPLATES,
     validateAdaptivePresentationProfile,
-} from './shared/adaptive-presentation-schema.js?v=auto-b19af4e9a9f8';
+} from './shared/adaptive-presentation-schema.js?v=galgame-2026-10-09-speaker-v86';
 import {
     getMediaConfig,
     saveMediaConfig,
-} from './shared/storage.js?v=auto-b19af4e9a9f8';
-import { SillyTavernAdapter } from './shared/sillytavern-adapter.js?v=auto-b19af4e9a9f8';
+} from './shared/storage.js?v=galgame-2026-10-09-speaker-v86';
+import { SillyTavernAdapter } from './shared/sillytavern-adapter.js?v=galgame-2026-10-09-speaker-v86';
 
 const releaseStore = createReleaseStore(DEFAULT_SILLYTAVERN_SCENARIO, { fallbackToLocal: true });
 const scriptAssistantState = {

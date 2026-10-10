@@ -5,12 +5,26 @@ import path from 'node:path';
 import { once } from 'node:events';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createProcessSupervisor, launchVisualService, PROCESS_SUPERVISOR_SERVICE_PORTS, PROCESS_SUPERVISOR_SHUTDOWN_PROTOCOL, PROCESS_SUPERVISOR_SHUTDOWN_SERVICE_KEYS, validateShutdownServices } from './server.mjs';
+import { createProcessSupervisor, isGalgamePlayerDocument, launchVisualService, probeRuntimeBridgeLlm, PROCESS_SUPERVISOR_SERVICE_PORTS, PROCESS_SUPERVISOR_SHUTDOWN_PROTOCOL, PROCESS_SUPERVISOR_SHUTDOWN_SERVICE_KEYS, validateShutdownServices } from './server.mjs';
 import { createOriginalRuntimeBridgeServer } from '../original-runtime-bridge/server.mjs';
 import { classifySillyTavernProcess, commandLineHasExactPathArgument, commandLineHasExactRelativeServerEntry, commandLineHasExactUserDataDir, commandLineHasStrictAbsoluteNodeScriptEntry, commandLineHasStrictNodeScriptEntry, commandLineHasStrictRelativeServerEntry, createShutdownTargetPaths, matchesSillyTavernProcess } from './shutdown-contract.mjs';
 
 const names = ['sillyTavern', 'configService', 'runtimeBridge', 'visualService'];
-assert.deepEqual(PROCESS_SUPERVISOR_SERVICE_PORTS, { sillyTavern: 8000, configService: 8791, runtimeBridge: 8795, visualService: 8798 });
+assert.deepEqual(PROCESS_SUPERVISOR_SERVICE_PORTS, { sillyTavern: 8001, configService: 8791, runtimeBridge: 8795, visualService: 8798 });
+assert.equal(isGalgamePlayerDocument('<!doctype html><html><head><title>Galgame Player</title></head><body><main id="titleScreen"></main></body></html>'), true);
+assert.equal(isGalgamePlayerDocument('<!doctype html><html><head><title>Other Local App</title></head><body></body></html>'), false, 'a healthy but unrelated service is not SillyTavern');
+const defaultOriginsServer = createProcessSupervisor();
+await new Promise((resolve) => defaultOriginsServer.listen(0, '127.0.0.1', resolve));
+try {
+    const base = `http://127.0.0.1:${defaultOriginsServer.address().port}`;
+    for (const origin of ['http://127.0.0.1:8000', 'http://127.0.0.1:8001']) {
+        const response = await fetch(base, { method: 'OPTIONS', headers: { Origin: origin } });
+        assert.equal(response.status, 204, `default process-supervisor CORS allows ${origin}`);
+        assert.equal(response.headers.get('access-control-allow-origin'), origin);
+    }
+} finally {
+    await new Promise((resolve) => defaultOriginsServer.close(resolve));
+}
 const visualProbePorts = [];
 const alreadyRunningVisual = await launchVisualService({
     tcpListenerProbe: async (port) => { visualProbePorts.push(port); return true; },
@@ -35,6 +49,10 @@ assert.equal(commandLineHasExactPathArgument('node.exe external-modules\\origina
 assert.equal(commandLineHasStrictNodeScriptEntry('node.exe "C:\\repo\\SillyTavern\\server.js"', 'C:\\Program Files\\nodejs\\node.exe', shutdownPaths.sillyTavern), true, 'an absolute SillyTavern entry is matched as the complete Node script argument');
 assert.equal(commandLineHasStrictNodeScriptEntry('node.exe other.js C:\\repo\\SillyTavern\\server.js', 'C:\\Program Files\\nodejs\\node.exe', shutdownPaths.sillyTavern), false, 'a SillyTavern path elsewhere in a different script argv is never kill eligible');
 assert.equal(commandLineHasStrictNodeScriptEntry('node.exe --inspect C:\\repo\\SillyTavern\\server.js', 'C:\\Program Files\\nodejs\\node.exe', shutdownPaths.sillyTavern), false, 'flags and extra arguments are not accepted for the ST process role');
+assert.equal(commandLineHasStrictNodeScriptEntry('node.exe "C:\\repo\\SillyTavern\\server.js" --port 8001', 'C:\\Program Files\\nodejs\\node.exe', shutdownPaths.sillyTavern), true, 'only the fixed player port override is accepted for the ST process role');
+assert.equal(commandLineHasStrictNodeScriptEntry('node.exe "C:\\repo\\SillyTavern\\server.js" --port 8000', 'C:\\Program Files\\nodejs\\node.exe', shutdownPaths.sillyTavern), false, 'the ST process matcher rejects a different port override');
+assert.equal(commandLineHasStrictAbsoluteNodeScriptEntry('node.exe "C:\\repo\\SillyTavern\\server.js" --port 8001', 'C:\\Program Files\\nodejs\\node.exe', shutdownPaths.sillyTavern), true);
+assert.equal(classifySillyTavernProcess({ name: 'node.exe', executablePath: 'C:\\Program Files\\nodejs\\node.exe', commandLine: 'node.exe "C:\\repo\\SillyTavern\\server.js" --port 8001' }, shutdownPaths), 'match', 'the configured 8001 SillyTavern process remains precisely shutdown-eligible');
 assert.equal(commandLineHasStrictAbsoluteNodeScriptEntry('node.exe other.js C:\\repo\\SillyTavern\\server.js', 'C:\\Program Files\\nodejs\\node.exe', shutdownPaths.sillyTavern), false);
 assert.equal(classifySillyTavernProcess({ name: 'node.exe', executablePath: 'C:\\Program Files\\nodejs\\node.exe', commandLine: 'node.exe other.js C:\\repo\\SillyTavern\\server.js' }, shutdownPaths), 'no-match', 'a repo path passed as a data argument is never a server role match');
 assert.equal(matchesSillyTavernProcess({
@@ -129,6 +147,35 @@ if (process.platform === 'win32') {
         const sameRepo = runFixture(repoFixture);
         assert.equal(sameRepo.services.sillyTavern.status, 'would-stop', `repo-root CWD fixture is selected by dry preview: ${JSON.stringify(sameRepo)}`);
         assert.equal(sameRepo.services.sillyTavern.repoCurrentDirectoryMatchCount, 1);
+        const portArgumentFixtures = [];
+        for (const args of [
+            ['server.js', '--port', '8001'],
+            ['server.js', '--port', '8000'],
+            ['server.js', '--port', '8001', '--inspect'],
+        ]) {
+            const child = spawn(process.execPath, args, { cwd: repoFixture, stdio: 'ignore', windowsHide: true });
+            portArgumentFixtures.push(child);
+            fixtureProcesses.push(child);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const [validPortSnapshot, wrongPortSnapshot, extraArgumentSnapshot] = portArgumentFixtures.map((child) => readSnapshot(child.pid));
+        const explicitPort = runFixture(repoFixture, {
+            processes: [validPortSnapshot],
+            portListeners: [{ LocalPort: 8001, OwningProcess: validPortSnapshot.ProcessId }],
+        });
+        assert.equal(explicitPort.services.sillyTavern.status, 'would-stop', 'the exact server.js --port 8001 process is recognized by dry preview');
+        const wrongPort = runFixture(repoFixture, {
+            processes: [wrongPortSnapshot],
+            portListeners: [{ LocalPort: 8001, OwningProcess: wrongPortSnapshot.ProcessId }],
+        });
+        assert.equal(wrongPort.services.sillyTavern.status, 'failed', 'server.js --port 8000 cannot be mistaken for the configured player process');
+        assert.equal(wrongPort.services.sillyTavern.ambiguousReasons[0], 'PORT_OWNER_PROCESS_IDENTITY_UNVERIFIED');
+        const extraArgument = runFixture(repoFixture, {
+            processes: [extraArgumentSnapshot],
+            portListeners: [{ LocalPort: 8001, OwningProcess: extraArgumentSnapshot.ProcessId }],
+        });
+        assert.equal(extraArgument.services.sillyTavern.status, 'failed', 'additional arguments after the exact port remain fail-closed');
+        assert.equal(extraArgument.services.sillyTavern.ambiguousReasons[0], 'PORT_OWNER_PROCESS_IDENTITY_UNVERIFIED');
         for (const [serviceName] of fixtureEntries) assert.equal(sameRepo.services[serviceName].status, 'would-stop', `${serviceName} target is selected through a verified same-process handle`);
         const identifiedOwner = runFixture(repoFixture, { portListeners: [{ LocalPort: 8791, OwningProcess: processIds[1] }] });
         assert.equal(identifiedOwner.services.configService.status, 'would-stop', 'a service listener owned by a strict, held-handle identity remains a recognized target');
@@ -205,7 +252,10 @@ for (const relativePath of [
     path.join('external-modules', 'process-supervisor', 'server.mjs'),
     path.join('external-modules', 'presentation-analysis-service', 'StartGalgamePresentationAnalysisService.ps1'),
 ]) {
-    const source = readFileSync(path.join(repoRootForLauncherAudit, relativePath), 'utf8');
+    const source = readFileSync(path.join(repoRootForLauncherAudit, relativePath), 'utf8')
+        // The supervisor's C:\\Windows fallback locates an OS executable; it
+        // is not a machine-specific provider/configuration path.
+        .replace(/^const windowsRoot = .*;\r?\n/mu, '');
     assert.doesNotMatch(source, /[A-Z]:[\\/]/, `${relativePath} must not embed a machine-specific provider path`);
 }
 const shutdownScriptPath = path.join(repoRootForLauncherAudit, 'external-modules', 'process-supervisor', 'shutdown-allowlist.ps1');
@@ -241,9 +291,14 @@ for (const relativePath of launcherFiles) {
 const rootStart = readFileSync(path.join(repoRootForLauncherAudit, 'Start.bat'), 'utf8');
 const hiddenServerStart = readFileSync(path.join(repoRootForLauncherAudit, 'external-modules/process-supervisor/launchers/StartGalgameServerHidden.cmd'), 'utf8');
 const hiddenBootstrap = readFileSync(path.join(repoRootForLauncherAudit, 'external-modules/process-supervisor/run-hidden.vbs'), 'utf8');
+const playerPageSource = readFileSync(path.join(repoRootForLauncherAudit, 'frontend/player/src/index.html'), 'utf8');
+assert.equal(isGalgamePlayerDocument(playerPageSource), true, 'the configured health identity matches the actual player page');
+const shutdownAllowlist = readFileSync(path.join(repoRootForLauncherAudit, 'external-modules/process-supervisor/shutdown-allowlist.ps1'), 'utf8');
+assert.match(shutdownAllowlist, /sillyTavern\s*=\s*8001/);
 assert.match(rootStart, /call npm install --no-save[\s\S]*?node server\.js %\*[\s\S]*?pause/i, 'the original SillyTavern Start.bat remains untouched');
 assert.doesNotMatch(rootStart, /run-hidden|StartGalgameServerHidden/i, 'custom hidden launchers never replace the frozen upstream Start.bat');
-assert.match(hiddenServerStart, /Start\.bat/i, 'the custom launcher delegates dependency setup and startup to the frozen upstream launcher');
+assert.match(hiddenServerStart, /node\.exe\s+"%GALGAME_ROOT%\\server\.js"\s+--port 8001/i, 'the custom launcher starts the frozen runtime on the configured Galgame port');
+assert.doesNotMatch(hiddenServerStart, /call\s+"%GALGAME_ROOT%\\Start\.bat"/i, 'the custom hidden launcher does not fall back to the original 8000 port');
 assert.match(hiddenServerStart, /run-hidden\.vbs" "%~f0" --galgame-hidden-child/i, 'direct server launcher hides its own console');
 assert.doesNotMatch(hiddenServerStart, /npm install|package-lock\.json/i, 'custom launcher does not run package installation against the frozen root lockfile');
 assert.doesNotMatch(hiddenServerStart, /\bpause\b/i);
@@ -253,6 +308,10 @@ assert.match(allServicesLauncher, /exit \/b %EXIT_CODE%/i, 'the hidden child ret
 assert.doesNotMatch(allServicesLauncher, /\bpause\b/i, 'the supported all-services launcher never leaves an interactive console open');
 const allServicesPowerShell = readFileSync(path.join(repoRootForLauncherAudit, 'external-modules/process-supervisor/launchers/Start_Galgame_All.ps1'), 'utf8');
 assert.match(allServicesPowerShell, /Failures\.Count -gt 0[\s\S]*?exit 1/i, 'startup health failures produce a non-zero exit code');
+assert.match(allServicesPowerShell, /\$sillyTavernPort\s*=\s*8001/i);
+assert.match(allServicesPowerShell, /function Test-GamePage[\s\S]*?Galgame Player[\s\S]*?titleScreen/i, 'the launcher identifies the expected player document before treating a listener as SillyTavern');
+assert.match(allServicesPowerShell, /server\.js[\s\S]*?--port[\s\S]*?\$sillyTavernPort/i, 'the all-services launcher uses the fixed Galgame port override');
+assert.match(allServicesPowerShell, /frontend 8001[\s\S]*?\$gameUrl/i);
 assert.match(allServicesPowerShell, /required runtime proof configuration is unavailable[\s\S]*?exit 1/i, 'all-services launcher fails before startup when its proof secret is missing');
 assert.match(allServicesPowerShell, /runtimeProof\.configured -eq \$true/);
 assert.match(allServicesPowerShell, /body\.ready -eq \$true/);
@@ -260,7 +319,18 @@ assert.match(allServicesPowerShell, /body\.proofRequired -eq \$true -and \$body\
 assert.match(allServicesPowerShell, /analyzerConfigured -eq \$true/);
 assert.match(allServicesPowerShell, /function Launch-Batch/);
 assert.match(allServicesPowerShell, /Launch-Batch 'presentation' 'external-modules\\presentation-analysis-service\\StartGalgamePresentationAnalysisService\.cmd'/);
+assert.match(allServicesPowerShell, /Launch-Batch 'visual' 'external-modules\\process-supervisor\\launchers\\StartGalgameVisualAssetService\.cmd'/);
+assert.doesNotMatch(allServicesPowerShell, /Launch 'visual' 'external-modules\\visual-asset-service\\server\.mjs'/, 'normal startup uses the fixed provider-aware visual launcher');
 assert.doesNotMatch(allServicesPowerShell, /Set-Env 'GALGAME_PRESENTATION_ANALYZER_API_KEY'/, 'the all-services launcher never exports the visual provider key to sibling services');
+assert.match(allServicesPowerShell, /\.env\.local/);
+assert.match(allServicesPowerShell, /GALGAME_PRESENTATION_ANALYZER_BASE_URL/);
+assert.match(allServicesPowerShell, /GALGAME_PRESENTATION_ANALYZER_API_KEY/);
+assert.match(allServicesPowerShell, /GALGAME_PRESENTATION_ANALYZER_MODEL/);
+assert.match(allServicesPowerShell, /https:\/\/aiself\.vip/);
+assert.match(allServicesPowerShell, /claude-sonnet-4-6/);
+assert.doesNotMatch(allServicesPowerShell, /OpenAI Settings\\Default\.json|chat_completion_source|claude_model|proxy_password/,
+    'all-services startup does not depend on the separate gameplay API credential');
+assert.doesNotMatch(allServicesPowerShell, /REFERENCE_VISION_API_KEY|REFERENCE_VISION_MODEL/, 'semantic launcher selection does not depend on the separate visual credential/model');
 assert.match(allServicesPowerShell, /Set-Env 'GALGAME_BRIDGE_PROOF_SECRET' ''[\s\S]*?Launch-Batch 'presentation'/, 'the runtime proof secret is cleared before presentation and visual services are launched');
 const servicesHealthVerifier = readFileSync(path.join(repoRootForLauncherAudit, 'external-modules/process-supervisor/launchers/VerifyGalgameServices.ps1'), 'utf8');
 assert.match(servicesHealthVerifier, /runtimeProof\.configured -eq \$true/, 'services-only health requires the config proof issuer to be configured');
@@ -272,8 +342,30 @@ const analysisLauncher = readFileSync(path.join(repoRootForLauncherAudit, 'exter
 assert.match(analysisLauncher, /Start-Process[\s\S]*?-WindowStyle Hidden[\s\S]*?-RedirectStandardOutput[\s\S]*?-RedirectStandardError/);
 assert.match(hiddenLauncher, /Get-CimInstance Win32_Process -ErrorAction Stop/);
 assert.match(hiddenLauncher, /Stop-Process -Id \$_.ProcessId -Force -ErrorAction Stop/);
+assert.match(hiddenLauncher, /health\.recoveryRequired -eq \$true/,
+    'the runtime bridge launcher replaces only the dedicated bridge reporting recoveryRequired');
+assert.match(hiddenLauncher, /GALGAME_BRIDGE_RESTART_IF_LLM_UNHEALTHY/,
+    'the runtime bridge launcher accepts the supervisor-only LLM recovery signal');
+assert.match(hiddenLauncher, /health\.shutdownGate -eq \$true[\s\S]*?health\.pending -ne \$true[\s\S]*?health\.stale -ne \$true[\s\S]*?health\.stopping -ne \$true/,
+    'LLM-triggered replacement requires the bridge admission gate and an idle, non-stale, non-stopping bridge');
+assert.match(hiddenLauncher, /Remove-Item Env:\\GALGAME_BRIDGE_RESTART_IF_LLM_UNHEALTHY/,
+    'the one-shot recovery authorization is not inherited by the replacement bridge');
 assert.match(analysisLauncher, /Get-CimInstance Win32_Process -ErrorAction Stop/);
 assert.match(analysisLauncher, /Stop-Process -Id \$_.ProcessId -Force -ErrorAction Stop/);
+assert.match(analysisLauncher, /\.env\.local/);
+assert.match(analysisLauncher, /GALGAME_PRESENTATION_ANALYZER_BASE_URL/);
+assert.match(analysisLauncher, /GALGAME_PRESENTATION_ANALYZER_API_KEY/);
+assert.match(analysisLauncher, /GALGAME_PRESENTATION_ANALYZER_MODEL/);
+assert.match(analysisLauncher, /childEnvironmentNameAllowlist/);
+assert.match(analysisLauncher, /inheritedVariableNames/);
+assert.match(analysisLauncher, /originalProcessEnvironment/);
+assert.match(analysisLauncher, /SetEnvironmentVariable\(\[string\]\$name/);
+assert.doesNotMatch(analysisLauncher, /Start-Process[\s\S]*?-Environment/,
+    'the hidden analyzer launcher remains compatible with Windows PowerShell 5.1');
+assert.doesNotMatch(analysisLauncher, /OpenAI Settings\\Default\.json|chat_completion_source|proxy_password|claude_model/);
+assert.match(analysisLauncher, /GALGAME_PRESENTATION_ANALYZER_PROVIDER = \$provider/);
+assert.match(analysisLauncher, /\$provider = 'anthropic'/);
+assert.doesNotMatch(analysisLauncher, /REFERENCE_VISION_API_KEY|REFERENCE_VISION_MODEL/);
 const supervisorInstaller = readFileSync(path.join(repoRootForLauncherAudit, 'external-modules/process-supervisor/InstallGalgameProcessSupervisor.ps1'), 'utf8');
 assert.match(supervisorInstaller, /System32\\wscript\.exe/i, 'scheduled supervisor task launches through hidden Windows Script Host');
 assert.match(supervisorInstaller, /run-hidden-wait\.vbs/i);
@@ -395,6 +487,184 @@ try {
 } finally {
     await new Promise((resolve) => staleServer.close(resolve));
 }
+
+const failedBridgeLaunches = [];
+const failedBridgeProbes = Object.fromEntries(names.map((name) => [name, async () => name === 'runtimeBridge'
+    ? { reachable: true, healthy: false, stale: false, pending: false, stopping: false, recoveryRequired: true }
+    : { reachable: true, healthy: true }]));
+const failedBridgeServer = createProcessSupervisor({
+    allowedOrigins: ['http://127.0.0.1:8000'],
+    probes: failedBridgeProbes,
+    optionalProbes: readyOptionalProbes,
+    startupConfirmationTimeoutMs: 0,
+    launcher: async (name) => { failedBridgeLaunches.push(name); return { started: true }; },
+});
+await new Promise((resolve) => failedBridgeServer.listen(0, '127.0.0.1', resolve));
+try {
+    const response = await fetch(`http://127.0.0.1:${failedBridgeServer.address().port}/v1/recover`, {
+        method: 'POST',
+        headers: { Origin: 'http://127.0.0.1:8000', 'Content-Type': 'application/json', 'X-Galgame-Recovery': '1' },
+        body: JSON.stringify({ protocolVersion: 'galgame.process-supervisor.v1' }),
+    });
+    const body = await response.json();
+    assert.deepEqual(failedBridgeLaunches, ['runtimeBridge']);
+    assert.equal(body.services.runtimeBridge.restarted, true,
+        'an idle bridge with a terminal CDP failure is replaced by explicit recovery');
+} finally {
+    await new Promise((resolve) => failedBridgeServer.close(resolve));
+}
+
+const llmCoreHealthyProbes = Object.fromEntries(names.map((name) => [name, async () => ({ reachable: true, healthy: true })]));
+async function runLlmRecoveryCase(llmResults, { bridgeProbeOverride = null, gateResult = null } = {}) {
+    const calls = [];
+    const lifecycle = [];
+    let llmCall = 0;
+    const llmProbes = Object.fromEntries(names.map((name) => [name, async () => bridgeProbeOverride && name === 'runtimeBridge'
+        ? bridgeProbeOverride
+        : { reachable: true, healthy: true }]));
+    const recoveryServer = createProcessSupervisor({
+        allowedOrigins: ['http://127.0.0.1:8000'],
+        probes: llmProbes,
+        optionalProbes: readyOptionalProbes,
+        startupConfirmationTimeoutMs: 0,
+        launcher: async (name, options) => { lifecycle.push('launch'); calls.push({ name, options }); return { started: true }; },
+        llmProbe: async () => llmResults[Math.min(llmCall++, llmResults.length - 1)],
+        bridgeShutdownGate: async () => {
+            lifecycle.push('gate');
+            return gateResult || { ok: true, gateId: 'mock-gate', pending: false, stale: false, stopping: false };
+        },
+        bridgeShutdownGateRelease: async () => { lifecycle.push('release'); return true; },
+    });
+    await new Promise((resolve) => recoveryServer.listen(0, '127.0.0.1', resolve));
+    try {
+        const response = await fetch(`http://127.0.0.1:${recoveryServer.address().port}/v1/recover`, {
+            method: 'POST',
+            headers: { Origin: 'http://127.0.0.1:8000', 'Content-Type': 'application/json', 'X-Galgame-Recovery': '1' },
+            body: JSON.stringify({ protocolVersion: 'galgame.process-supervisor.v1' }),
+        });
+        return { body: await response.json(), calls, lifecycle, llmCalls: llmCall };
+    } finally {
+        await new Promise((resolve) => recoveryServer.close(resolve));
+    }
+}
+
+const transportRecovery = await runLlmRecoveryCase([
+    { protocolVersion: 'galgame.llm-health.v1', ok: false, errorCode: 'LLM_UPSTREAM_UNREACHABLE' },
+    { protocolVersion: 'galgame.llm-health.v1', ok: true, provider: 'claude', model: 'claude-sonnet-4-6' },
+]);
+assert.deepEqual(transportRecovery.calls, [{ name: 'runtimeBridge', options: { restartForLlmFailure: true } }],
+    'only an idle bridge is targeted when its provider transport is unreachable');
+assert.deepEqual(transportRecovery.lifecycle, ['gate', 'launch'], 'the bridge lease is acquired before dispatching process replacement');
+assert.equal(transportRecovery.body.services.runtimeBridge.restarted, true);
+assert.equal(transportRecovery.body.diagnostics.llm.ok, true, 'post-restart health replaces the pre-restart LLM failure');
+assert.equal(transportRecovery.body.diagnostics.llm.restartAttempted, true);
+assert.equal(transportRecovery.llmCalls, 2);
+
+const providerHttpFailure = await runLlmRecoveryCase([
+    { protocolVersion: 'galgame.llm-health.v1', ok: false, errorCode: 'LLM_UPSTREAM_HTTP_401' },
+]);
+assert.deepEqual(providerHttpFailure.calls, [], 'provider HTTP errors do not trigger a restart loop');
+assert.equal(providerHttpFailure.body.diagnostics.llm.errorCode, 'LLM_UPSTREAM_HTTP_401');
+
+const llmHealthy = await runLlmRecoveryCase([
+    { protocolVersion: 'galgame.llm-health.v1', ok: true, provider: 'claude', model: 'claude-sonnet-4-6' },
+]);
+assert.deepEqual(llmHealthy.calls, [], 'healthy LLM transport leaves the bridge process alone');
+assert.equal(llmHealthy.body.diagnostics.llm.ok, true);
+
+const pendingBridge = await runLlmRecoveryCase([
+    { protocolVersion: 'galgame.llm-health.v1', ok: false, errorCode: 'LLM_UPSTREAM_TIMEOUT' },
+], { bridgeProbeOverride: { reachable: true, healthy: false, pending: true, stale: false, stopping: false } });
+assert.deepEqual(pendingBridge.calls, [], 'active generation blocks LLM-driven process replacement');
+assert.equal(pendingBridge.llmCalls, 0, 'LLM diagnostics are skipped while a generation is pending');
+const stoppingBridge = await runLlmRecoveryCase([
+    { protocolVersion: 'galgame.llm-health.v1', ok: false, errorCode: 'LLM_UPSTREAM_TIMEOUT' },
+], { bridgeProbeOverride: { reachable: true, healthy: false, pending: false, stale: false, stopping: true } });
+assert.deepEqual(stoppingBridge.calls, [], 'a stopping bridge is never replaced by the LLM recovery path');
+assert.equal(stoppingBridge.llmCalls, 0);
+const racedGeneration = await runLlmRecoveryCase([
+    { protocolVersion: 'galgame.llm-health.v1', ok: false, errorCode: 'LLM_UPSTREAM_TIMEOUT' },
+], { gateResult: { ok: false, errorCode: 'BRIDGE_SHUTDOWN_GATE_BUSY', pending: true, stale: false, stopping: false } });
+assert.deepEqual(racedGeneration.lifecycle, ['gate'], 'if a generation wins the admission race, the bridge gate refuses replacement');
+assert.deepEqual(racedGeneration.calls, []);
+
+const postRestartFailure = await runLlmRecoveryCase([
+    { protocolVersion: 'galgame.llm-health.v1', ok: false, errorCode: 'LLM_UPSTREAM_TIMEOUT' },
+    { protocolVersion: 'galgame.llm-health.v1', ok: false, errorCode: 'LLM_UPSTREAM_HTTP_503' },
+]);
+assert.equal(postRestartFailure.body.diagnostics.llm.errorCode, 'LLM_UPSTREAM_HTTP_503',
+    'a failed post-restart check remains visible rather than being reported as recovered');
+
+let simulatedShutdownGate = false;
+let simulatedLeaseReleases = 0;
+let startupProbeCalls = 0;
+let pendingLlmCalls = 0;
+const gatedBridgeProbes = Object.fromEntries(names.map((name) => [name, async () => {
+    if (name !== 'runtimeBridge') return { reachable: true, healthy: true };
+    startupProbeCalls += 1;
+    return simulatedShutdownGate
+        ? { reachable: true, healthy: false, pending: false, stale: false, stopping: false, recoveryRequired: false }
+        : { reachable: true, healthy: true, pending: false, stale: false, stopping: false, recoveryRequired: false };
+}]));
+const gatedStartupServer = createProcessSupervisor({
+    allowedOrigins: ['http://127.0.0.1:8000'],
+    probes: gatedBridgeProbes,
+    optionalProbes: readyOptionalProbes,
+    startupConfirmationTimeoutMs: 0,
+    startupProbeIntervalMs: 1,
+    llmRestartConfirmationTimeoutMs: 5,
+    launcher: async () => ({ started: true }),
+    bridgeShutdownGate: async () => {
+        simulatedShutdownGate = true;
+        return { ok: true, gateId: 'simulated-gate', pending: false, stale: false, stopping: false };
+    },
+    bridgeShutdownGateRelease: async () => { simulatedLeaseReleases += 1; simulatedShutdownGate = false; return true; },
+    llmProbe: async () => ({
+        protocolVersion: 'galgame.llm-health.v1', ok: false,
+        errorCode: pendingLlmCalls++ === 0 ? 'LLM_UPSTREAM_TIMEOUT' : 'SHOULD_NOT_RUN_BEFORE_READY',
+    }),
+});
+await new Promise((resolve) => gatedStartupServer.listen(0, '127.0.0.1', resolve));
+try {
+    const response = await fetch(`http://127.0.0.1:${gatedStartupServer.address().port}/v1/recover`, {
+        method: 'POST',
+        headers: { Origin: 'http://127.0.0.1:8000', 'Content-Type': 'application/json', 'X-Galgame-Recovery': '1' },
+        body: JSON.stringify({ protocolVersion: 'galgame.process-supervisor.v1' }),
+    });
+    const body = await response.json();
+    assert.equal(simulatedLeaseReleases, 1, 'startup timeout releases the old bridge gate');
+    assert.equal(simulatedShutdownGate, false, 'launcher failure cannot leave the old bridge shutdown-gated');
+    assert.ok(startupProbeCalls >= 2, 'the supervisor waits for the replacement bridge health state');
+    assert.equal(body.services.runtimeBridge.status, 'starting', 'unconfirmed replacement remains pending for the player');
+    assert.equal(body.diagnostics.llm.pending, true, 'the prior bridge failure is not presented as the final post-restart result');
+    assert.equal(body.diagnostics.llm.errorCode, 'LLM_RECOVERY_BRIDGE_STARTING');
+    assert.equal(pendingLlmCalls, 1, 'LLM health is not re-probed before the replacement bridge is ready');
+} finally {
+    await new Promise((resolve) => gatedStartupServer.close(resolve));
+}
+
+const llmProbeRequest = await probeRuntimeBridgeLlm({
+    timeoutMs: 1_000,
+    fetchImpl: async (url, options) => {
+        assert.equal(url, 'http://127.0.0.1:8795/v1/llm-health');
+        assert.deepEqual(JSON.parse(options.body), { protocolVersion: 'galgame.llm-health.v1' });
+        assert.equal(options.headers['Content-Type'], 'application/json');
+        return { ok: true, status: 200, json: async () => ({
+            protocolVersion: 'galgame.llm-health.v1', ok: true, provider: 'claude', model: 'claude-sonnet-4-6', proxyPassword: 'must-not-leak',
+        }) };
+    },
+});
+assert.deepEqual(llmProbeRequest, {
+    protocolVersion: 'galgame.llm-health.v1', ok: true, provider: 'claude', model: 'claude-sonnet-4-6', errorCode: '',
+});
+const llmProbeHttpError = await probeRuntimeBridgeLlm({
+    fetchImpl: async () => ({ ok: false, status: 503, json: async () => ({
+        protocolVersion: 'galgame.llm-health.v1', ok: false, errorCode: 'LLM_UPSTREAM_HTTP_503', rawBody: 'must-not-leak',
+    }) }),
+});
+assert.deepEqual(llmProbeHttpError, {
+    protocolVersion: 'galgame.llm-health.v1', ok: false, errorCode: 'LLM_UPSTREAM_HTTP_503',
+});
 
 const generatingProbes = Object.fromEntries(names.map((name) => [name, async () => name === 'runtimeBridge'
     ? { reachable: true, healthy: false, stale: false, pending: true, stopping: false }

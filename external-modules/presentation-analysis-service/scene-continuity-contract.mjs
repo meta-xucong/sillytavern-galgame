@@ -17,7 +17,7 @@ import {
     validateSceneContinuityAnalysisResponse,
 } from '../../frontend/shared/src/scene-continuity-analysis.js';
 
-export const SCENE_CONTINUITY_PROMPT_VERSION = 'scene-continuity-analyzer.v4';
+export const SCENE_CONTINUITY_PROMPT_VERSION = 'scene-continuity-analyzer.v6';
 
 export const SCENE_CONTINUITY_ANALYSIS_MODEL_JSON_SCHEMA = Object.freeze({
     type: 'object',
