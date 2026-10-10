@@ -10,7 +10,7 @@
 
 ## 2026-10-06 说话人标题 Demo 与身份投影隔离
 
-标题 Demo 只增加原文可定位的 display-only 说话人提示。已有完整有效投影为当前页提供的标题仍优先；不能仅凭完整段数组的存在认定该页已有有效标题。显式结构提示或 page-window Annotation 只能填补当前页缺失/unknown 的标题，包括附加到当前页 identityRef=unknown 的投影段；这仅对标题覆盖旧文“page-window 只补 source-only unknown base page”的范围限制，不改变段正文、分页、source span、identityRef、角色视觉候选、头像唯一绑定、roster、Annotation v1 或聊天/存档。page-window 结果须以相同 message index/full hash，且 `coreSpan` 与一个当前实际显示页 `sourceSpan` 完全相等且只匹配一个页面，才可附加；不完全对齐时保留原标题/unknown。跨页引语续接只允许使用前一相邻页已有的来源/hash/page-span 均有效的单一说话人标题证据；续接页的 classification span 必须在当前 core 的引语内容内，姓名 span 可在 lookbehind 内。该窄例外只修正标题显示优先级，不改变本规范的 identity/roster 完整性门槛。具体输入模式、处理顺序、文件清单及验收用例见 `docs/GALGAME_SPEAKER_LABEL_HYBRID_DEMO_DEVELOPMENT_SPEC_2026-10-06.md`。
+标题 Demo 只增加原文可定位的 display-only 说话人提示。已有完整有效投影为当前页提供的标题仍优先；不能仅凭完整段数组的存在认定该页已有有效标题。显式结构提示或 page-window Annotation 只能填补当前页缺失/unknown 的标题，包括附加到当前页 identityRef=unknown 的投影段；这仅对标题覆盖旧文“page-window 只补 source-only unknown base page”的范围限制，不改变段正文、分页、source span、identityRef、角色视觉候选、头像唯一绑定、roster、Annotation v1 或聊天/存档。page-window 结果须以相同 message index/full hash，且 `coreSpan` 与一个当前实际显示页 `sourceSpan` 完全相等且只匹配一个页面，才可附加；不完全对齐时保留原标题/unknown。跨页引语续接只允许使用前一相邻页已有的来源/hash/page-span 均有效的单一说话人标题证据；续接页的 classification span 必须在当前 core 的引语内容内，姓名 span 可在 lookbehind 内。该窄例外只修正标题显示优先级，不改变本规范的 identity/roster 完整性门槛。具体输入模式、处理顺序、文件清单及验收用例见 `docs/archive/speaker-attribution/GALGAME_SPEAKER_LABEL_HYBRID_DEMO_DEVELOPMENT_SPEC_2026-10-06.md`。
 
 2026-10-07 标题证据来源补充：上述“相邻页”限制只描述旧路径，已被 `docs/GALGAME_NATIVE_FIRST_DEVELOPMENT_SPEC.md` 的完整消息证据索引条款取代。标题可以使用同一原版消息中的直接署名锚点投影跨页的同一对白，但仍须满足精确 source/hash/span 校验及 unknown-safe；不改变 identity、avatar 或 roster 投影，也不将结构证据送入语义上下文。
 

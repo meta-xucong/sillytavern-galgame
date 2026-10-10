@@ -120,7 +120,7 @@ V3 validator enforces source/config exact keys, per-chat unique `sourceId` and r
 
 ## 实施文件白名单
 
-- `docs/GALGAME_SPEAKER_ATTRIBUTION_V81_UNIVERSAL_ADAPTER_TASKSPEC_2026-10-09.md`
+- `docs/archive/speaker-attribution/GALGAME_SPEAKER_ATTRIBUTION_V81_UNIVERSAL_ADAPTER_TASKSPEC_2026-10-09.md`
 - `frontend/player/tools/speaker-candidate-scopes.mjs`
 - `frontend/player/tools/speaker-structure-replay.mjs`
 - `frontend/player/tests/speaker-candidate-scopes.test.mjs`

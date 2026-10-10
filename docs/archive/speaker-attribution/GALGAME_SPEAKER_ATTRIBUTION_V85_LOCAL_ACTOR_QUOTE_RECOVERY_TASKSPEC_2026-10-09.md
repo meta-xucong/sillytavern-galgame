@@ -27,7 +27,7 @@
 
 ## 范围
 
-- `docs/GALGAME_SPEAKER_ATTRIBUTION_V85_LOCAL_ACTOR_QUOTE_RECOVERY_TASKSPEC_2026-10-09.md`
+- `docs/archive/speaker-attribution/GALGAME_SPEAKER_ATTRIBUTION_V85_LOCAL_ACTOR_QUOTE_RECOVERY_TASKSPEC_2026-10-09.md`
 - 三份基线规范的现行版本摘要
 - `frontend/shared/src/sillytavern-adapter.js`
 - `frontend/shared/tests/sillytavern-adapter.test.mjs`

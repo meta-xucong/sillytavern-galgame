@@ -161,7 +161,7 @@ v52 当前全历史只读回放：158 chats、950 assistant messages、18,562 pa
 
 ## 2026-10-06 说话人标题 Demo 产品边界
 
-玩家当前页可先显示有明确原文归属证据的说话人标题；speaker identity 不明时不猜人物；闭合对白显示“旁白”fallback，未闭合引语仍为“未识别”，匿名首次登场为“？？？”。普通无标记正文允许使用粗略“旁白”标题 fallback，但不得据此创建 narrator identity、头像或队伍状态。该标题优化只用于呈现，不改变故事正文、角色身份、头像、队伍或存档。仅就标题补充而言，本条窄例外 supersedes 本文长回复分页段落中的“只给 source-only unknown base page 附加 label evidence”限制，允许补当前实际显示页的 unknown 投影段；page-window 结果必须按同消息索引和完整消息 hash，与唯一实际显示页 `sourceSpan` 精确相等后才可附加，否则保留原标题/unknown。已归属引语在页边界处按现有 v5 合同续接；parser v10 对同一未归属引语跨度的 probable 标题仅回看同一消息的即时前一或前两张生产页，必须对当前页所有未归属 quote span 唯一命中同一有效 seed；不滚动使用 derived continuation。相邻关系、前页普通标题和消息作者名均不能单独作为推断依据。结构快路与语义注释的优先级及开发清单见 `docs/GALGAME_SPEAKER_LABEL_HYBRID_DEMO_DEVELOPMENT_SPEC_2026-10-06.md`。
+玩家当前页可先显示有明确原文归属证据的说话人标题；speaker identity 不明时不猜人物；闭合对白显示“旁白”fallback，未闭合引语仍为“未识别”，匿名首次登场为“？？？”。普通无标记正文允许使用粗略“旁白”标题 fallback，但不得据此创建 narrator identity、头像或队伍状态。该标题优化只用于呈现，不改变故事正文、角色身份、头像、队伍或存档。仅就标题补充而言，本条窄例外 supersedes 本文长回复分页段落中的“只给 source-only unknown base page 附加 label evidence”限制，允许补当前实际显示页的 unknown 投影段；page-window 结果必须按同消息索引和完整消息 hash，与唯一实际显示页 `sourceSpan` 精确相等后才可附加，否则保留原标题/unknown。已归属引语在页边界处按现有 v5 合同续接；parser v10 对同一未归属引语跨度的 probable 标题仅回看同一消息的即时前一或前两张生产页，必须对当前页所有未归属 quote span 唯一命中同一有效 seed；不滚动使用 derived continuation。相邻关系、前页普通标题和消息作者名均不能单独作为推断依据。结构快路与语义注释的优先级及开发清单见 `docs/archive/speaker-attribution/GALGAME_SPEAKER_LABEL_HYBRID_DEMO_DEVELOPMENT_SPEC_2026-10-06.md`。
 
 2026-10-06 当日补充：为恢复基本叙述标题，未带引号、非行首对白格式、且无疑似姓名冒号前缀的普通 character 正文可临时显示“旁白”。这是刻意粗略的标题 fallback；它不修改段落语义、speaker identity、头像或 roster。语义结果一旦识别为对白，此标题不得保留。未加引号的对白可能暂时误显示为旁白，歧义闭合对白按 v51 显示“旁白”fallback；未闭合引语仍显示“未识别”。
 
@@ -830,7 +830,7 @@ MVP 必须完成：
 
 规则边界补充：当前显示页中，唯一开放至页尾的引语可由同页直接署名标出当前页标题；这只初始化该页的说话人。后续页必须通过同消息的相邻 source span、完整原文 hash 和引号状态检查，不能只继承标题。
 
-玩家端标题识别按 `docs/GALGAME_STRUCTURAL_SPEAKER_TITLE_BACKTEST_DEVELOPMENT_SPEC_2026-10-06.md` 采用可定位原文的结构规则优先路径。解析结果只是当前显示页的标题提示，不代表该页每一段都已完成语义分类。结构明确时可以显示角色原文名或“多人对话”；含有无法归属的对白、候选冲突或证据不完整时，speaker identity 仍 unresolved；闭合/完整对白标题按 v51 显示“旁白”fallback，未闭合引语仍显示“未识别”。既有有效语义标题保持优先。此项不改变对白正文、分页、身份、头像、roster、Annotation v1、剧情状态或 SillyTavern 聊天；结构规则回测使用只读、无 provider 的 replay，准确率只按人工核验 gold 计算。本补充取代本文件同日 Demo 对标题快路的窄枚举，不取代“不得将固定句式/动作词表作为通用语义识别”的原边界。
+玩家端标题识别按 `docs/archive/speaker-attribution/GALGAME_STRUCTURAL_SPEAKER_TITLE_BACKTEST_DEVELOPMENT_SPEC_2026-10-06.md` 采用可定位原文的结构规则优先路径。解析结果只是当前显示页的标题提示，不代表该页每一段都已完成语义分类。结构明确时可以显示角色原文名或“多人对话”；含有无法归属的对白、候选冲突或证据不完整时，speaker identity 仍 unresolved；闭合/完整对白标题按 v51 显示“旁白”fallback，未闭合引语仍显示“未识别”。既有有效语义标题保持优先。此项不改变对白正文、分页、身份、头像、roster、Annotation v1、剧情状态或 SillyTavern 聊天；结构规则回测使用只读、无 provider 的 replay，准确率只按人工核验 gold 计算。本补充取代本文件同日 Demo 对标题快路的窄枚举，不取代“不得将固定句式/动作词表作为通用语义识别”的原边界。
 
 2026-10-07 覆盖面校正规则：行内叙述中的书名/物品名等引用短语不单独算作对白；直接说话 cue 支持有限的语法修饰，而不维护固定语气词字典。有效的 semantic `unattributed-dialogue` 仍保持 semantic type=unattributed-dialogue 与 identity=unknown；闭合对白的 display title 按 v51 显示“旁白”fallback；有明确署名的角色对白可为同页标题，即使同页另有旁白或未归属引语，该未归属引语的 semantic identity 仍 unknown。明确冲突的说话人或证据不完整时，semantic identity 保持 unknown；闭合对白标题按 v51 显示“旁白”fallback，未闭合引语保持“未识别”。以 Native-first 2026-10-07 补充及后续 v40 规则为权威；正文和原版分页完全不变。
 
@@ -853,7 +853,7 @@ MVP 必须完成：
 
 说话人标题只根据当前原版消息中可定位的原文证据生成。明确说话谓词、唯一角色主体后接动作描写与冒号引语、间接发话谓词、`角色名的回合：` 这类对白轮次标记可支持标题；相同句子中多个并列行动主体无法安全归属单人时保持未识别。地图、图表、信件、账本、铭文、系统提示和状态/检定记录等来源框架优先作为旁白，避免把附近执行动作的角色误认成信息发言人；直接说话谓词仍可明确建立人物对白。玩家破折号引语显示为“你”。
 
-标题仅附加于既有生产页，不改变正文、分页、段落、顺序、source span、身份、头像绑定、队伍或剧情状态。不能证明唯一说话人的对白仍保持 unresolved identity；闭合对白标题按 v51 显示“旁白”fallback，未闭合引语保持“未识别”；该覆盖结果是结构覆盖，不代表准确率。v26 与 v25 同源快照回放：158 chats、950 assistant messages、18,562 pages；5,548→5,662 个对白候选页，2,606→2,969 个明确归属页，2,687→2,482 个未决候选页，唯一未决引语跨度 2,831→2,600。活跃剧本聊天同快照：未决候选页 1,536→1,285。无逐页金标，speaker accuracy 仍为 `INSUFFICIENT_EVIDENCE`；回放只读、无聊天写回、无外部模型调用。细节见 `docs/GALGAME_FRONTEND_DEVELOPMENT_SPEC.md` 与 `docs/GALGAME_SPEAKER_CANDIDATE_SHAPE_AND_REPLAY_DEVELOPMENT_SPEC_2026-10-07.md`。
+标题仅附加于既有生产页，不改变正文、分页、段落、顺序、source span、身份、头像绑定、队伍或剧情状态。不能证明唯一说话人的对白仍保持 unresolved identity；闭合对白标题按 v51 显示“旁白”fallback，未闭合引语保持“未识别”；该覆盖结果是结构覆盖，不代表准确率。v26 与 v25 同源快照回放：158 chats、950 assistant messages、18,562 pages；5,548→5,662 个对白候选页，2,606→2,969 个明确归属页，2,687→2,482 个未决候选页，唯一未决引语跨度 2,831→2,600。活跃剧本聊天同快照：未决候选页 1,536→1,285。无逐页金标，speaker accuracy 仍为 `INSUFFICIENT_EVIDENCE`；回放只读、无聊天写回、无外部模型调用。细节见 `docs/GALGAME_FRONTEND_DEVELOPMENT_SPEC.md` 与 `docs/archive/speaker-attribution/GALGAME_SPEAKER_CANDIDATE_SHAPE_AND_REPLAY_DEVELOPMENT_SPEC_2026-10-07.md`。
 ### 2026-10-07 结构说话人归属收敛（parser v27）
 
 结构识别使用有界句法关系，而非角色专名规则：仅当 roster 中的明确主体与动作/说话线索、引语及当前消息局部结构一致时，才产生显示标题证据。内心思考、地图展示/递交等可能引出物件文字的来源框架不作为口头对白归属；多人主体、代词竞争、新角色描述仍保守未归属。已有获确认的“角色动作引出引语”（如翻开账本/地图后直接对白）继续支持。

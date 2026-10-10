@@ -3,7 +3,7 @@
 > 日期：2026-10-06
 > 审计类型：开发前文档审计 + 首版实施审计 + 2026-10-06 当前存档页问题回归审计
 > 范围：说话人标题 Demo；未修改聊天、存档、上游 provider、密钥或 SillyTavern 原版代码
-> 主规范：`docs/GALGAME_SPEAKER_LABEL_HYBRID_DEMO_DEVELOPMENT_SPEC_2026-10-06.md`
+> 主规范：`docs/archive/speaker-attribution/GALGAME_SPEAKER_LABEL_HYBRID_DEMO_DEVELOPMENT_SPEC_2026-10-06.md`
 
 ## 2026-10-06 当前页复核与修订
 

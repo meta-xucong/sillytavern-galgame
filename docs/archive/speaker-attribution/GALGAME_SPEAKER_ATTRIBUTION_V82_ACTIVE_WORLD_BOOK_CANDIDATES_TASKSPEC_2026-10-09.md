@@ -21,7 +21,7 @@ V82 是 V81 候选来源方案的窄范围后继版本。V82 只取代 V81 中�
 - I2：当前聊天、场景 manifest、原版 API 世界书需要精确交叉绑定，并确保 API 故障、in-flight 请求和标题异步更新不影响游戏推进。
 - A1：精确来源绑定、跨聊天隔离、页面 source spans 不变、原版代码冻结及历史对照均需独立审计。
 - 允许变更的文件：
-  - `docs/GALGAME_SPEAKER_ATTRIBUTION_V82_ACTIVE_WORLD_BOOK_CANDIDATES_TASKSPEC_2026-10-09.md`
+  - `docs/archive/speaker-attribution/GALGAME_SPEAKER_ATTRIBUTION_V82_ACTIVE_WORLD_BOOK_CANDIDATES_TASKSPEC_2026-10-09.md`
   - `docs/GALGAME_NATIVE_FIRST_DEVELOPMENT_SPEC.md`
   - `docs/GALGAME_DESIGN_SPEC.md`
   - `docs/GALGAME_FRONTEND_DEVELOPMENT_SPEC.md`

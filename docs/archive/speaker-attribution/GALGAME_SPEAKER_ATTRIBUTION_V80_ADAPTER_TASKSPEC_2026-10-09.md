@@ -80,7 +80,7 @@
 
 ## 允许改动文件
 
-- `docs/GALGAME_SPEAKER_ATTRIBUTION_V80_ADAPTER_TASKSPEC_2026-10-09.md`
+- `docs/archive/speaker-attribution/GALGAME_SPEAKER_ATTRIBUTION_V80_ADAPTER_TASKSPEC_2026-10-09.md`
 - `frontend/player/tools/speaker-candidate-scopes.mjs`
 - `frontend/player/tools/speaker-structure-replay.mjs`
 - `frontend/player/tests/speaker-candidate-scopes.test.mjs`
